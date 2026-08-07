@@ -108,6 +108,8 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "loadPointer", marker: "load" },
         { kind: "call-marker", exportName: "storePointer", marker: "store" },
         { kind: "call-marker", exportName: "equalPointer", marker: "equal-pointer" },
+        { kind: "call-marker", exportName: "hashPointer", marker: "hash-pointer" },
+        { kind: "call-marker", exportName: "projectPointer", marker: "project-pointer" },
       ],
     }],
   });
@@ -460,6 +462,8 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
       loadPointer,
       storePointer,
       equalPointer,
+      hashPointer,
+      projectPointer,
     } from "@example/native/lang.js";
     import * as lang from "@example/native/lang.js";
     import { addressOf as localAddressOf } from "./local.js";
@@ -478,6 +482,12 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     storePointer(allocated, loaded);
     const equal = equalPointer(direct, aliased);
     const nilEqual = equalPointer<int>(undefined, undefined);
+    const hash = hashPointer(direct);
+    const projected = projectPointer<int, int>(
+      direct,
+      (source) => source,
+      (target) => target,
+    );
     const rejected = addressOf(box.frozen);
     const rejectedExpression = addressOf(value + 1);
     const local = localAddressOf(value);
@@ -523,6 +533,14 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     getCallExpression(index, "equalPointer", 1),
     pointerOperationFactKey,
   );
+  const hash = extended.extensionHost.facts.get(
+    getCallExpression(index, "hashPointer", 0),
+    pointerOperationFactKey,
+  );
+  const projected = extended.extensionHost.facts.get(
+    getCallExpression(index, "projectPointer", 0),
+    pointerOperationFactKey,
+  );
   const rejectedCall = getCallExpression(index, "addressOf", 2);
   const rejectedExpressionCall = getCallExpression(index, "addressOf", 3);
   const localCall = getCallExpression(index, "localAddressOf", 0);
@@ -539,6 +557,20 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   assert.equal(stored?.operation, "store");
   assert.equal(equal?.operation, "equal-pointer");
   assert.equal(nilEqual?.operation, "equal-pointer");
+  assert.equal(hash?.operation, "hash-pointer");
+  assert.equal(projected?.operation, "project-pointer");
+  assert.equal(
+    projected?.operation === "project-pointer"
+      ? projected.pointerExpression
+      : undefined,
+    Node_Arguments(projected?.call)?.[0],
+  );
+  assert.equal(
+    projected?.operation === "project-pointer"
+      ? projected.fromSourceExpression
+      : undefined,
+    Node_Arguments(projected?.call)?.[1],
+  );
   assert.equal(
     equal?.operation === "equal-pointer" ? equal.leftExpression : undefined,
     Node_Arguments(equal?.call)?.[0],
@@ -774,6 +806,8 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function loadPointer<T>(pointer: ptr<T>): T;",
       "export declare function storePointer<T>(pointer: ptr<T>, value: T): void;",
       "export declare function equalPointer<T>(left: ptr<T> | undefined, right: ptr<T> | undefined): boolean;",
+      "export declare function hashPointer<T>(pointer: ptr<T> | undefined): number;",
+      "export declare function projectPointer<F, T>(pointer: ptr<F> | undefined, fromSource: (value: F) => T, toSource: (value: T) => F): ptr<T> | undefined;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {
