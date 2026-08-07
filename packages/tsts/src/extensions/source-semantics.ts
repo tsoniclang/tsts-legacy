@@ -12,13 +12,14 @@ import {
   Node_Parameters,
   Node_PropertyName,
   Node_Properties,
+  SourceFile_Path,
   Node_Statements,
   Node_Symbol,
   Node_Text,
   Node_TypeArguments,
   Node_TypeParameters,
 } from "../internal/ast/ast.js";
-import { Node_ForEachChild, Node_Name } from "../internal/ast/spine.js";
+import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
 import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindArrayBindingPattern,
@@ -42,7 +43,7 @@ import {
   KindTupleType,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { GetSymbolId, IsFunctionLike, IsLeftHandSideExpression } from "../internal/ast/utilities.js";
+import { GetSourceFileOfNode, GetSymbolId, IsFunctionLike, IsLeftHandSideExpression } from "../internal/ast/utilities.js";
 import {
   argumentPassingFactKey,
   attributeFactKey,
@@ -83,6 +84,7 @@ import type {
   ExtensionFactSubject,
   SourceAnalysisFactAccess,
 } from "./host.js";
+import { encodeIdentityTuple } from "./identity-tuple.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
 type SourceSemanticsFactAccess = Pick<SourceAnalysisFactAccess, "get" | "set">;
@@ -515,7 +517,11 @@ function recordPointerOperation(
       message: `${marker.exportName}(...) requires one exact selected pointee type.`,
       nodeOrSpan: callExpression,
       evidence,
-      identity: `source-semantics-pointer-type:${marker.exportName}:${String(callExpression.id)}`,
+      identity: sourceSemanticsDiagnosticIdentity(
+        "pointer-type",
+        marker.exportName,
+        callExpression,
+      ),
     });
     return;
   }
@@ -536,7 +542,11 @@ function recordPointerOperation(
           message: `${marker.exportName}(...) requires writable storage.`,
           nodeOrSpan: storageArgument.expression,
           evidence,
-          identity: `source-semantics-writable-storage:${marker.exportName}:${String(callExpression.id)}`,
+          identity: sourceSemanticsDiagnosticIdentity(
+            "writable-storage",
+            marker.exportName,
+            callExpression,
+          ),
         });
         return;
       }
@@ -674,8 +684,28 @@ function recordArgumentPassingMarker(
     message: `${marker.exportName}(...) requires a storage expression.`,
     nodeOrSpan: target,
     evidence,
-    identity: `source-semantics-non-storage:${marker.exportName}:${String(target?.id ?? "unknown")}`,
+    identity: sourceSemanticsDiagnosticIdentity(
+      "non-storage",
+      marker.exportName,
+      target,
+    ),
   });
+}
+
+function sourceSemanticsDiagnosticIdentity(
+  diagnostic: string,
+  exportName: string,
+  node: Node,
+): string {
+  const sourceFile = GetSourceFileOfNode(node);
+  return encodeIdentityTuple([
+    "source-semantics",
+    diagnostic,
+    exportName,
+    sourceFile === undefined ? undefined : SourceFile_Path(sourceFile),
+    Node_Pos(node),
+    Node_End(node),
+  ]);
 }
 
 function getArgumentPassingMode(kind: ArgumentPassingMarkerKind): ArgumentPassingFact["mode"] {
