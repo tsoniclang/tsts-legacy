@@ -3,6 +3,7 @@ import type { FileReference, SourceFile } from "../internal/ast/ast.js";
 import { AsSourceFile } from "../internal/ast/ast.js";
 import type { Node, NodeList } from "../internal/ast/spine.js";
 import {
+  NewNodeFactory,
   Node_End,
   NodeList_End,
   NodeList_Pos,
@@ -14,6 +15,19 @@ import {
   TargetAstNodeDataString,
   targetAstNodeEncoding,
 } from "../internal/ast/generated/encoder.js";
+import type {
+  TargetAstEncodedChild,
+  TargetAstNodeEncoding,
+} from "../internal/ast/generated/encoder.js";
+import {
+  NewIdentifier,
+  NewKeywordTypeNode,
+} from "../internal/ast/generated/factory.js";
+import {
+  KindPropertyAssignment,
+  KindPropertySignature,
+  KindUnknownKeyword,
+} from "../internal/ast/generated/kinds.js";
 import {
   HEADER_OFFSET_EXTENDED_DATA,
   HEADER_OFFSET_METADATA,
@@ -56,20 +70,35 @@ class TargetAstEncoder {
   readonly #structured: number[] = [];
   readonly #nodeValues = new Array<number>(NODE_LEN / 4).fill(0);
   readonly #active = new Set<Node>();
+  readonly #unknownType: Node;
+  readonly #undefinedExpression: Node;
   #nodeCount = 0;
   #parentIndex = 0;
   #previousIndex = 0;
+
+  constructor() {
+    const factory = NewNodeFactory({});
+    this.#unknownType = requiredProtocolNode(
+      NewKeywordTypeNode(factory, KindUnknownKeyword),
+      "property-assignment type completion",
+    );
+    this.#undefinedExpression = requiredProtocolNode(
+      NewIdentifier(factory, "undefined"),
+      "property-signature initializer completion",
+    );
+  }
 
   encode(sourceFile: SourceFile): Uint8Array {
     const root = sourceFile.data.AsNode();
     if (root === undefined) {
       throw new TargetAstEncodingError("target source file has no root node");
     }
+    const encoding = this.#encoding(root);
     this.#nodeCount = 1;
-    this.#appendNodeRow(root, 0, this.#nodeData(root));
+    this.#appendNodeRow(root, 0, this.#nodeData(root, encoding));
     this.#parentIndex = 1;
     this.#previousIndex = 0;
-    this.#visitChildren(root);
+    this.#visitChildren(root, encoding);
     return this.#finish();
   }
 
@@ -82,14 +111,19 @@ class TargetAstEncoder {
     }
     this.#active.add(node);
     try {
+      const encoding = this.#encoding(node);
       this.#nodeCount += 1;
       const current = this.#nodeCount;
       this.#linkPrevious(current);
-      this.#appendNodeRow(node, this.#parentIndex, this.#nodeData(node));
+      this.#appendNodeRow(
+        node,
+        this.#parentIndex,
+        this.#nodeData(node, encoding),
+      );
       const savedParent = this.#parentIndex;
       this.#parentIndex = current;
       this.#previousIndex = 0;
-      this.#visitChildren(node);
+      this.#visitChildren(node, encoding);
       this.#previousIndex = current;
       this.#parentIndex = savedParent;
     } finally {
@@ -118,8 +152,7 @@ class TargetAstEncoder {
     this.#parentIndex = savedParent;
   }
 
-  #visitChildren(node: Node): void {
-    const encoding = targetAstNodeEncoding(node);
+  #visitChildren(node: Node, encoding: TargetAstNodeEncoding): void {
     for (const child of encoding.children) {
       if (!child.present) {
         if (child.required) {
@@ -148,8 +181,7 @@ class TargetAstEncoder {
     }
   }
 
-  #nodeData(node: Node): number {
-    const encoding = targetAstNodeEncoding(node);
+  #nodeData(node: Node, encoding: TargetAstNodeEncoding): number {
     switch (encoding.dataType) {
       case TargetAstNodeDataChildren:
         return (NODE_DATA_TYPE_CHILDREN |
@@ -170,6 +202,26 @@ class TargetAstEncoder {
         this.#appendExtended(node, encoding);
         return (NODE_DATA_TYPE_EXTENDED | encoding.commonData | offset) >>> 0;
       }
+    }
+  }
+
+  #encoding(node: Node): TargetAstNodeEncoding {
+    const encoding = targetAstNodeEncoding(node);
+    switch (node.Kind) {
+      case KindPropertyAssignment:
+        return withRequiredProtocolChild(
+          encoding,
+          "Type",
+          this.#unknownType,
+        );
+      case KindPropertySignature:
+        return withRequiredProtocolChild(
+          encoding,
+          "Initializer",
+          this.#undefinedExpression,
+        );
+      default:
+        return encoding;
     }
   }
 
@@ -358,6 +410,50 @@ function appendMessagePackString(destination: number[], value: string): void {
     );
   }
   destination.push(...bytes);
+}
+
+function withRequiredProtocolChild(
+  encoding: TargetAstNodeEncoding,
+  name: string,
+  node: Node,
+): TargetAstNodeEncoding {
+  let matches = 0;
+  const children = encoding.children.map((child): TargetAstEncodedChild => {
+    if (child.name !== name) {
+      return child;
+    }
+    matches += 1;
+    if (!child.required || child.raw || child.nodes !== undefined) {
+      throw new TargetAstEncodingError(
+        "target AST protocol completion does not own one required node",
+        undefined,
+        name,
+      );
+    }
+    return child.present ? child : {
+      ...child,
+      present: true,
+      node,
+    };
+  });
+  if (matches !== 1) {
+    throw new TargetAstEncodingError(
+      `target AST protocol completion found ${matches} '${name}' fields`,
+      undefined,
+      name,
+    );
+  }
+  return { ...encoding, children };
+}
+
+function requiredProtocolNode(
+  node: GoPtr<Node>,
+  subject: string,
+): Node {
+  if (node === undefined) {
+    throw new TargetAstEncodingError(`${subject} was not created`);
+  }
+  return node;
 }
 
 function childMask(
