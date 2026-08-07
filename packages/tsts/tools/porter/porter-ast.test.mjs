@@ -84,10 +84,12 @@ function astFixtureConfig(root) {
   );
   writeFileSync(path.join(schemaDir, "nodeflags.go"), "package ast\n\ntype NodeFlags uint32\n\nconst (\n\tNodeFlagsNone NodeFlags = 0\n)\n");
   writeFileSync(path.join(schemaDir, "symbolflags.go"), "package ast\n\ntype SymbolFlags uint32\n\nconst (\n\tSymbolFlagsNone SymbolFlags = 0\n)\n");
+  writeFileSync(path.join(schemaDir, "protocol.ts"), "export const PROTOCOL_VERSION = 5;\n");
   return {
     tsRoot: rel(path.join(root, "src")),
     astSchemaDir: rel(schemaDir),
     astGeneratedDir: "internal/ast/generated",
+    astProtocolInput: rel(path.join(schemaDir, "protocol.ts")),
     astSchemaInputs: [
       rel(path.join(schemaDir, "ast.json")),
       rel(path.join(schemaDir, "nodeflags.go")),
@@ -176,6 +178,21 @@ test("ast-generator: a schema input content change makes committed output stale"
   }
 });
 
+test("ast-generator: protocol input drift makes only the protocol artifact stale", () => {
+  const root = mkdtempSync(path.join(repoRoot, ".temp/porter-test-"));
+  try {
+    const config = astFixtureConfig(root);
+    writeAstGenerated(config, "rev-protocol-1");
+    writeFileSync(path.join(root, "schema/protocol.ts"), "export const PROTOCOL_VERSION = 6;\n");
+    assert.deepEqual(
+      buildAstGeneratedArtifactStatus(config, "rev-protocol-1").stale.map(({ path: stalePath }) => stalePath),
+      ["internal/ast/generated/protocol.ts"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // AST node/data/factory/etc emitter tests (free-fn/adapter model).
 // ───────────────────────────────────────────────────────────────────────────
@@ -226,6 +243,24 @@ test("ast-generator: NewIdentifier and AsIdentifier emit the faithful factory/ca
   );
   const casts = files.get("internal/ast/generated/casts.ts");
   assert.match(casts, /export function AsIdentifier\(n: GoPtr<Node>\): GoPtr<Identifier> \{\s*return n!\.data\[goReceiverKey\] as GoPtr<Identifier>;/);
+});
+
+test("ast-generator: target encoder is generated from every pinned concrete kind", () => {
+  const files = buildAstGeneratedFiles(baseConfig, "rev-target-encoder");
+  const encoder = files.get("internal/ast/generated/encoder.ts");
+  const schema = new AstSchema(
+    JSON.parse(readFileSync(resolveRepo("packages/tsts/schema/tsgo/ast.json"), "utf8")),
+  );
+  const dispatch = encoder.slice(
+    encoder.indexOf("export function targetAstNodeEncoding"),
+    encoder.indexOf("\nfunction encode", encoder.indexOf("export function targetAstNodeEncoding")),
+  );
+  const cases = dispatch.match(/^    case Kind/gmu) ?? [];
+  const concreteKinds = new Set(
+    schema.nodeNames().flatMap((owner) => schema.kindTypesOf(owner).kindNames),
+  );
+  assert.equal(cases.length, concreteKinds.size);
+  assert.match(encoder, /readonly list\?: GoPtr<NodeList>;/);
 });
 
 test("ast-schema-model: raw string lists are not children; node raw lists are GoPtr<Node>", () => {

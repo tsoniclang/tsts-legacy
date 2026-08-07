@@ -32,6 +32,7 @@ export function astConfig(config) {
     tsRoot,
     schemaDir: config.astSchemaDir ?? "packages/tsts/schema/tsgo",
     generatedDir: config.astGeneratedDir ?? "internal/ast/generated",
+    protocolInput: config.astProtocolInput ?? "packages/tsts/schema/tsgo/protocol.ts",
     schemaInputs: config.astSchemaInputs ?? [
       "packages/tsts/schema/tsgo/ast.json",
       "packages/tsts/schema/tsgo/ast.schema.json",
@@ -49,6 +50,7 @@ export function loadAstSchema(config) {
   return {
     ast: JSON.parse(readFileSync(astJsonPath, "utf8")),
     nodeFlagsSource: readFileSync(nodeFlagsPath, "utf8"),
+    protocolSource: readFileSync(resolveRepo(ac.protocolInput), "utf8"),
     symbolFlagsSource: readFileSync(symbolFlagsPath, "utf8"),
   };
 }
