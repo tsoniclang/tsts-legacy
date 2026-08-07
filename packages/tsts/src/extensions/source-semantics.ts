@@ -134,7 +134,8 @@ export type SourceCallMarkerKind =
   | "address-of"
   | "allocate"
   | "load"
-  | "store";
+  | "store"
+  | "equal-pointer";
 
 type ArgumentPassingMarkerKind = Extract<
   SourceCallMarkerKind,
@@ -463,6 +464,7 @@ function recordSourceSemanticsCallMarker(
     case "allocate":
     case "load":
     case "store":
+    case "equal-pointer":
       recordPointerOperation(
         facts,
         diagnostics,
@@ -616,6 +618,26 @@ function recordPointerOperation(
         pointerType: pointer.type,
         valueExpression: value.expression,
         valueType: value.type,
+      } satisfies PointerOperationFact;
+      facts.set(callExpression, pointerOperationFactKey, fact, evidence);
+      return;
+    }
+    case "equal-pointer": {
+      const left = exactSourceCallArgument(callInfo, 0, 2);
+      const right = exactSourceCallArgument(callInfo, 1, 2);
+      if (left === undefined || right === undefined) {
+        return;
+      }
+      const fact = {
+        operation: "equal-pointer",
+        call: callExpression,
+        pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: callInfo.sourceResultType,
+        leftExpression: left.expression,
+        leftType: left.type,
+        rightExpression: right.expression,
+        rightType: right.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;

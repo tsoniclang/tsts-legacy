@@ -45,6 +45,16 @@ test("authored source fact payloads reject arbitrary identity objects", () => {
       initialType: invalidType,
       locationIdentity: invalidNode,
     }),
+    () => pointerOperationFactKey.snapshot({
+      operation: "equal-pointer",
+      call: invalidNode,
+      pointeeType: invalidType,
+      resultType: invalidType,
+      leftExpression: invalidNode,
+      leftType: invalidType,
+      rightExpression: invalidNode,
+      rightType: invalidType,
+    }),
   ];
 
   for (const snapshot of cases) {
