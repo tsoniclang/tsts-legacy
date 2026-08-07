@@ -515,10 +515,12 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
 
   assert.equal(direct?.operation, "address-of");
   assert.equal(direct?.locationIdentity, direct?.storageExpression);
+  assert.equal(direct?.explicitPointeeTypeNode, undefined);
   assert.equal(aliased?.operation, "address-of");
   assert.equal(indexed?.operation, "address-of");
   assert.equal(allocated?.operation, "allocate");
   assert.equal(allocated?.locationIdentity, allocated?.call);
+  assert.equal(allocated?.explicitPointeeTypeNode?.Kind, KindTypeReference);
   assert.equal(loaded?.operation, "load");
   assert.equal(stored?.operation, "store");
   assert.equal(

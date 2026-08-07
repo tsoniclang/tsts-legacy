@@ -500,6 +500,9 @@ function recordPointerOperation(
   const pointeeType = selectedTypeArguments.length === 1
     ? selectedTypeArguments[0]?.selectedType
     : undefined;
+  const explicitPointeeTypeNode = selectedTypeArguments.length === 1
+    ? selectedTypeArguments[0]?.explicitTypeNode
+    : undefined;
   if (pointeeType === undefined) {
     diagnostics.append({
       extensionId,
@@ -539,6 +542,7 @@ function recordPointerOperation(
         operation: "address-of",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         storageExpression: storage.storageExpression,
         storageType: storage.type,
@@ -560,6 +564,7 @@ function recordPointerOperation(
         operation: "allocate",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         initialExpression: initial.expression,
         initialType: initial.type,
@@ -577,6 +582,7 @@ function recordPointerOperation(
         operation: "load",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
@@ -594,6 +600,7 @@ function recordPointerOperation(
         operation: "store",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
