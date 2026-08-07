@@ -475,6 +475,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     const loaded = loadPointer(direct);
     storePointer(allocated, loaded);
     const rejected = addressOf(box.frozen);
+    const rejectedExpression = addressOf(value + 1);
     const local = localAddressOf(value);
   `, new Map([
     ["/src/local.ts", [
@@ -511,6 +512,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     pointerOperationFactKey,
   );
   const rejectedCall = getCallExpression(index, "addressOf", 2);
+  const rejectedExpressionCall = getCallExpression(index, "addressOf", 3);
   const localCall = getCallExpression(index, "localAddressOf", 0);
 
   assert.equal(direct?.operation, "address-of");
@@ -528,12 +530,19 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     undefined,
   );
   assert.equal(
+    extended.extensionHost.facts.get(
+      rejectedExpressionCall,
+      pointerOperationFactKey,
+    ),
+    undefined,
+  );
+  assert.equal(
     extended.extensionHost.facts.get(localCall, pointerOperationFactKey),
     undefined,
   );
   assert.deepEqual(
     extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
-    ["TSTS_SOURCE_SEMANTICS_0002"],
+    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"],
   );
 });
 
