@@ -64,6 +64,7 @@ export {
 } from "./target-ast-encoding.js";
 export * from "../internal/ast/generated/casts.js";
 export * from "../internal/ast/generated/factory.js";
+export * from "../internal/ast/generated/flags.js";
 export * from "../internal/ast/generated/kinds.js";
 export * from "../internal/ast/generated/predicates.js";
 export { AsSourceFile, NodeFactory_UpdateSourceFile } from "../internal/ast/ast.js";
