@@ -132,8 +132,8 @@ export type {
   ResolvedSourceStorageInfo,
   TypeCheckerQueries,
 } from "./services/type-checker.js";
-export { createCompilerHost, createInMemoryFileSystem, getBundledLibraryPath, withBundledLibraries } from "./services/embedding-host.js";
-export type { CompilerFileSystem, CompilerHostOptions, CompilerTraceCallback, InMemoryFileSystemOptions } from "./services/embedding-host.js";
+export { createCompilerHost, createInMemoryFileSystem, getBundledLibraryClosure, getBundledLibraryPath, withBundledLibraries } from "./services/embedding-host.js";
+export type { BundledLibrarySource, CompilerFileSystem, CompilerHostOptions, CompilerTraceCallback, InMemoryFileSystemOptions } from "./services/embedding-host.js";
 export type { AstAuthoredRange, AstModifierKind, AstReader, AstVariableDeclarationKind } from "./services/ast-reader.js";
 export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "./services/compiler-session.js";
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
