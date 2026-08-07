@@ -306,15 +306,10 @@ export function ChangeTrackerWriter_setLastNonTriviaPosition(receiver: GoPtr<Cha
   const bytes = utf8Encoder.encode(s);
   if (force || SkipTrivia(s, 0 as int) !== byteLen(s)) {
     receiver!.lastNonTriviaPosition = textWriter_GetTextPos(receiver!.__tsgoEmbedded0);
-    const trailing = ((): int => {
-      const loop = (i: int): int => {
-        if (IsWhiteSpaceLike(bytes[bytes.length - i - 1]! as int)) {
-          return loop((i + 1) as int);
-        }
-        return i;
-      };
-      return loop(0 as int);
-    })();
+    let trailing = 0 as int;
+    while (IsWhiteSpaceLike(bytes[bytes.length - trailing - 1]! as int)) {
+      trailing = (trailing + 1) as int;
+    }
     // trim trailing whitespaces
     receiver!.lastNonTriviaPosition = (receiver!.lastNonTriviaPosition - trailing) as int;
   }

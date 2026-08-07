@@ -771,12 +771,12 @@ export function PositionIsSynthesized(pos: int): bool {
  * }
  */
 export function FindLastVisibleNode(nodes: GoSlice<GoPtr<Node>>): GoPtr<Node> {
-  const loop = (fromEnd: int): GoPtr<Node> => {
-    if (fromEnd > nodes.length) return undefined;
-    if ((nodes[nodes.length - fromEnd]!.Flags & NodeFlagsReparsed) === 0) return nodes[nodes.length - fromEnd];
-    return loop((fromEnd + 1) as int);
-  };
-  return loop(1 as int);
+  let fromEnd = 1 as int;
+  while (fromEnd <= nodes.length &&
+    (nodes[nodes.length - fromEnd]!.Flags & NodeFlagsReparsed) !== 0) {
+    fromEnd = (fromEnd + 1) as int;
+  }
+  return fromEnd <= nodes.length ? nodes[nodes.length - fromEnd] : undefined;
 }
 
 /**
@@ -862,11 +862,10 @@ export function IsAssignmentExpression(node: GoPtr<Node>, excludeCompoundAssignm
  * }
  */
 export function GetRightMostAssignedExpression(node: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (!IsAssignmentExpression(current, false /*excludeCompoundAssignment*/)) return current;
-    return loop(AsBinaryExpression(current)!.Right);
-  };
-  return loop(node);
+  while (IsAssignmentExpression(node, false /*excludeCompoundAssignment*/)) {
+    node = AsBinaryExpression(node)!.Right;
+  }
+  return node;
 }
 
 /**
@@ -1035,7 +1034,8 @@ export function IsAssignmentTarget(node: GoPtr<Node>): bool {
  * }
  */
 export function GetAssignmentTarget(node: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
+  let current = node;
+  while (true) {
     const parent = current!.Parent;
     switch (parent!.Kind) {
       case KindBinaryExpression:
@@ -1058,20 +1058,23 @@ export function GetAssignmentTarget(node: GoPtr<Node>): GoPtr<Node> {
       case KindArrayLiteralExpression:
       case KindSpreadElement:
       case KindNonNullExpression:
-        return loop(parent);
+        current = parent;
+        continue;
       case KindSpreadAssignment:
-        return loop(parent!.Parent);
+        current = parent!.Parent;
+        continue;
       case KindShorthandPropertyAssignment:
         if (Node_Name(parent) !== current) return undefined;
-        return loop(parent!.Parent);
+        current = parent!.Parent;
+        continue;
       case KindPropertyAssignment:
         if (Node_Name(parent) === current) return undefined;
-        return loop(parent!.Parent);
+        current = parent!.Parent;
+        continue;
       default:
         return undefined;
     }
-  };
-  return loop(node);
+  }
 }
 
 /**
@@ -1141,15 +1144,18 @@ export function IsLogicalOrCoalescingAssignmentExpression(expr: GoPtr<Node>): bo
  * }
  */
 export function IsLogicalExpression(node: GoPtr<Node>): bool {
-  const loop = (current: GoPtr<Node>): bool => {
-    if (current!.Kind === KindParenthesizedExpression) return loop(Node_Expression(current));
-    if (current!.Kind === KindPrefixUnaryExpression &&
-      AsPrefixUnaryExpression(current)!.Operator === KindExclamationToken) {
-      return loop(AsPrefixUnaryExpression(current)!.Operand);
+  while (true) {
+    if (node!.Kind === KindParenthesizedExpression) {
+      node = Node_Expression(node);
+      continue;
     }
-    return IsLogicalOrCoalescingBinaryExpression(current);
-  };
-  return loop(node);
+    if (node!.Kind === KindPrefixUnaryExpression &&
+      AsPrefixUnaryExpression(node)!.Operator === KindExclamationToken) {
+      node = AsPrefixUnaryExpression(node)!.Operand;
+      continue;
+    }
+    return IsLogicalOrCoalescingBinaryExpression(node);
+  }
 }
 
 /**
@@ -2502,11 +2508,10 @@ export function IsOuterExpression(node: GoPtr<Expression>, kinds: OuterExpressio
  * }
  */
 export function SkipOuterExpressions(node: GoPtr<Expression>, kinds: OuterExpressionKinds): GoPtr<Expression> {
-  const loop = (current: GoPtr<Expression>): GoPtr<Expression> => {
-    if (!IsOuterExpression(current, kinds)) return current;
-    return loop(Node_Expression(current));
-  };
-  return loop(node);
+  while (IsOuterExpression(node, kinds)) {
+    node = Node_Expression(node);
+  }
+  return node;
 }
 
 /**
@@ -2533,11 +2538,10 @@ export function SkipParentheses(node: GoPtr<Expression>): GoPtr<Expression> {
  * }
  */
 export function SkipTypeParentheses(node: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (!IsParenthesizedTypeNode(current)) return current;
-    return loop(Node_Type(current));
-  };
-  return loop(node);
+  while (IsParenthesizedTypeNode(node)) {
+    node = Node_Type(node);
+  }
+  return node;
 }
 
 /**
@@ -2564,11 +2568,11 @@ export function SkipPartiallyEmittedExpressions(node: GoPtr<Expression>): GoPtr<
  * }
  */
 export function WalkUpParenthesizedExpressions(node: GoPtr<Expression>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (current === undefined || current!.Kind !== KindParenthesizedExpression) return current;
-    return loop(current!.Parent);
-  };
-  return loop(node);
+  let current: GoPtr<Node> = node;
+  while (current !== undefined && current.Kind === KindParenthesizedExpression) {
+    current = current.Parent;
+  }
+  return current;
 }
 
 /**
@@ -2583,11 +2587,11 @@ export function WalkUpParenthesizedExpressions(node: GoPtr<Expression>): GoPtr<N
  * }
  */
 export function WalkUpParenthesizedTypes(node: GoPtr<TypeNode>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (current === undefined || current!.Kind !== KindParenthesizedType) return current;
-    return loop(current!.Parent);
-  };
-  return loop(node);
+  let current: GoPtr<Node> = node;
+  while (current !== undefined && current.Kind === KindParenthesizedType) {
+    current = current.Parent;
+  }
+  return current;
 }
 
 /**
@@ -2605,12 +2609,14 @@ export function WalkUpParenthesizedTypes(node: GoPtr<TypeNode>): GoPtr<Node> {
  * }
  */
 export function GetSourceFileOfNode(node: GoPtr<Node>): GoPtr<SourceFile> {
-  const loop = (current: GoPtr<Node>): GoPtr<SourceFile> => {
-    if (current === undefined) return undefined;
-    if (current!.Kind === KindSourceFile) return AsSourceFile(current);
-    return loop(current!.Parent);
-  };
-  return loop(node);
+  let current = node;
+  while (current !== undefined) {
+    if (current.Kind === KindSourceFile) {
+      return AsSourceFile(current);
+    }
+    current = current.Parent;
+  }
+  return undefined;
 }
 
 /**
@@ -2840,12 +2846,10 @@ export function FindAncestorOrQuit(node: GoPtr<Node>, callback: (arg0: GoPtr<Nod
  * }
  */
 export function IsNodeDescendantOf(node: GoPtr<Node>, ancestor: GoPtr<Node>): bool {
-  const loop = (current: GoPtr<Node>): bool => {
-    if (current === undefined) return false as bool;
+  for (let current = node; current !== undefined; current = current.Parent) {
     if (current === ancestor) return true as bool;
-    return loop(current!.Parent);
-  };
-  return loop(node);
+  }
+  return false as bool;
 }
 
 /**
@@ -3242,11 +3246,10 @@ export function ForEachReturnStatement(body: GoPtr<Node>, visitor: (stmt: GoPtr<
  * }
  */
 export function GetRootDeclaration(node: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (current!.Kind !== KindBindingElement) return current;
-    return loop(current!.Parent!.Parent);
-  };
-  return loop(node);
+  while (node!.Kind === KindBindingElement) {
+    node = node!.Parent!.Parent;
+  }
+  return node;
 }
 
 /**
@@ -3408,12 +3411,12 @@ export function IsDeprecatedDeclarationWithCachedFlags(declaration: GoPtr<Node>,
   }
   // Walk up to find the node that directly has the flag, since JSDoc is
   // attached to that node (e.g. VariableStatement, not VariableDeclaration).
-  const loop = (n: GoPtr<Node>): bool => {
-    if (n === undefined) return false as bool;
-    if ((n!.Flags & NodeFlagsPossiblyContainsDeprecatedTag) !== 0) return (GetJSDocDeprecatedTag(n) !== undefined) as bool;
-    return loop(n!.Parent);
-  };
-  return loop(declaration);
+  for (let node = declaration; node !== undefined; node = node.Parent) {
+    if ((node.Flags & NodeFlagsPossiblyContainsDeprecatedTag) !== 0) {
+      return (GetJSDocDeprecatedTag(node) !== undefined) as bool;
+    }
+  }
+  return false as bool;
 }
 
 /**
@@ -3494,11 +3497,11 @@ export function IsImportMeta(node: GoPtr<Node>): bool {
  * }
  */
 export function WalkUpBindingElementsAndPatterns(binding: GoPtr<Node>): GoPtr<Node> {
-  const loop = (node: GoPtr<Node>): GoPtr<Node> => {
-    if (!IsBindingElement(node!.Parent)) return node;
-    return loop(node!.Parent!.Parent);
-  };
-  return loop(binding!.Parent)!.Parent;
+  let node = binding!.Parent;
+  while (IsBindingElement(node!.Parent)) {
+    node = node!.Parent!.Parent;
+  }
+  return node!.Parent;
 }
 
 /**
@@ -3862,11 +3865,10 @@ export function GetElementOrPropertyAccessName(node: GoPtr<Node>): GoPtr<Node> {
  * }
  */
 export function GetInitializerOfBinaryExpression(expr: GoPtr<BinaryExpression>): GoPtr<Expression> {
-  const loop = (current: GoPtr<BinaryExpression>): GoPtr<Expression> => {
-    if (!IsBinaryExpression(current!.Right)) return Node_Expression(current!.Right);
-    return loop(AsBinaryExpression(current!.Right));
-  };
-  return loop(expr);
+  while (IsBinaryExpression(expr!.Right)) {
+    expr = AsBinaryExpression(expr!.Right);
+  }
+  return Node_Expression(expr!.Right);
 }
 
 /**
@@ -4691,11 +4693,10 @@ export function getHeritageClauses(node: GoPtr<Node>): GoPtr<NodeList> {
  * }
  */
 export function IsPartOfTypeQuery(node: GoPtr<Node>): bool {
-  const loop = (current: GoPtr<Node>): bool => {
-    if (current!.Kind !== KindQualifiedName && current!.Kind !== KindIdentifier) return (current!.Kind === KindTypeQuery) as bool;
-    return loop(current!.Parent);
-  };
-  return loop(node);
+  while (node!.Kind === KindQualifiedName || node!.Kind === KindIdentifier) {
+    node = node!.Parent;
+  }
+  return (node!.Kind === KindTypeQuery) as bool;
 }
 
 /**
@@ -4777,26 +4778,32 @@ export function IsInTopLevelContext(node: GoPtr<Node>): bool {
  * }
  */
 export function GetThisContainer(node: GoPtr<Node>, includeArrowFunctions: bool, includeClassComputedPropertyName: bool): GoPtr<Node> {
-  const loop = (n: GoPtr<Node>): GoPtr<Node> => {
+  let current = node!.Parent;
+  while (true) {
+    const n = current;
     if (n === undefined) throw new globalThis.Error("nil parent in getThisContainer");
     switch (n!.Kind) {
       case KindComputedPropertyName:
         if (includeClassComputedPropertyName && IsClassLike(n!.Parent!.Parent)) return n;
-        return loop(n!.Parent!.Parent!.Parent);
+        current = n!.Parent!.Parent!.Parent;
+        continue;
       case KindDecorator:
         if (n!.Parent!.Kind === KindParameter && IsClassElement(n!.Parent!.Parent)) {
           // If the decorator's parent is a ParameterDeclaration, we resolve the this container from
           // the grandparent class declaration.
-          return loop(n!.Parent!.Parent!.Parent);
+          current = n!.Parent!.Parent!.Parent;
         } else if (IsClassElement(n!.Parent)) {
           // If the decorator's parent is a class element, we resolve the 'this' container
           // from the parent class declaration.
-          return loop(n!.Parent!.Parent);
+          current = n!.Parent!.Parent;
+        } else {
+          current = n!.Parent;
         }
-        return loop(n!.Parent);
+        continue;
       case KindArrowFunction:
         if (includeArrowFunctions) return n;
-        return loop(n!.Parent);
+        current = n!.Parent;
+        continue;
       case KindFunctionDeclaration:
       case KindFunctionExpression:
       case KindModuleDeclaration:
@@ -4815,10 +4822,9 @@ export function GetThisContainer(node: GoPtr<Node>, includeArrowFunctions: bool,
       case KindSourceFile:
         return n;
       default:
-        return loop(n!.Parent);
+        current = n!.Parent;
     }
-  };
-  return loop(node!.Parent);
+  }
 }
 
 /**
@@ -4854,15 +4860,21 @@ export function GetThisContainer(node: GoPtr<Node>, includeArrowFunctions: bool,
  * }
  */
 export function GetSuperContainer(node: GoPtr<Node>, stopOnFunctions: bool): GoPtr<Node> {
-  const loop = (n: GoPtr<Node>): GoPtr<Node> => {
+  let current = node!.Parent;
+  while (true) {
+    const n = current;
     if (n === undefined) return undefined;
     switch (n!.Kind) {
       case KindComputedPropertyName:
-        return loop(n!.Parent!.Parent);
+        current = n!.Parent!.Parent;
+        continue;
       case KindFunctionDeclaration:
       case KindFunctionExpression:
       case KindArrowFunction:
-        if (!stopOnFunctions) return loop(n!.Parent);
+        if (!stopOnFunctions) {
+          current = n!.Parent;
+          continue;
+        }
         return n;
       case KindPropertyDeclaration:
       case KindPropertySignature:
@@ -4878,18 +4890,19 @@ export function GetSuperContainer(node: GoPtr<Node>, stopOnFunctions: bool): GoP
         if (n!.Parent!.Kind === KindParameter && IsClassElement(n!.Parent!.Parent)) {
           // If the decorator's parent is a ParameterDeclaration, we resolve the this container from
           // the grandparent class declaration.
-          return loop(n!.Parent!.Parent!.Parent);
+          current = n!.Parent!.Parent!.Parent;
         } else if (IsClassElement(n!.Parent)) {
           // If the decorator's parent is a class element, we resolve the 'this' container
           // from the parent class declaration.
-          return loop(n!.Parent!.Parent);
+          current = n!.Parent!.Parent;
+        } else {
+          current = n!.Parent;
         }
-        return loop(n!.Parent);
+        continue;
       default:
-        return loop(n!.Parent);
+        current = n!.Parent;
     }
-  };
-  return loop(node!.Parent);
+  }
 }
 
 /**
@@ -4913,13 +4926,13 @@ export function GetSuperContainer(node: GoPtr<Node>, stopOnFunctions: bool): GoP
  */
 export function GetImmediatelyInvokedFunctionExpression(fn: GoPtr<Node>): GoPtr<Node> {
   if (IsFunctionExpressionOrArrowFunction(fn)) {
-    const loop = (prev: GoPtr<Node>, parent: GoPtr<Node>): GoPtr<Node> => {
-      if (!IsParenthesizedExpression(parent)) {
-        return (IsCallExpression(parent) && Node_Expression(parent) === prev) ? parent : undefined;
-      }
-      return loop(parent, parent!.Parent);
-    };
-    return loop(fn, fn!.Parent);
+    let previous = fn;
+    let parent = fn!.Parent;
+    while (IsParenthesizedExpression(parent)) {
+      previous = parent;
+      parent = parent!.Parent;
+    }
+    return (IsCallExpression(parent) && Node_Expression(parent) === previous) ? parent : undefined;
   }
   return undefined;
 }
@@ -5208,11 +5221,10 @@ export function IsExpressionNode(node: GoPtr<Node>): bool {
     case KindExpressionWithTypeArguments:
       return !IsHeritageClause(node!.Parent) as bool;
     case KindQualifiedName: {
-      const findRoot = (current: GoPtr<Node>): GoPtr<Node> => {
-        if (current!.Parent!.Kind !== KindQualifiedName) return current;
-        return findRoot(current!.Parent);
-      };
-      const root = findRoot(node);
+      let root = node;
+      while (root!.Parent!.Kind === KindQualifiedName) {
+        root = root!.Parent;
+      }
       return (IsTypeQueryNode(root!.Parent) || IsJSDocLinkLike(root!.Parent) || IsJSDocNameReference(root!.Parent) || IsJsxTagName(root)) as bool;
     }
     case KindPrivateIdentifier:
@@ -6323,9 +6335,8 @@ export function getModuleInstanceStateForAliasTarget(node: GoPtr<Node>, ancestor
     // Skip for invalid syntax like this: export { "x" }
     return ModuleInstanceStateInstantiated;
   }
-  const [initAncestors, initP] = popAncestor(ancestors, node);
-  const outerLoop = (currentAncestors: GoSlice<GoPtr<Node>>, p: GoPtr<Node>): ModuleInstanceState => {
-    if (p === undefined) return ModuleInstanceStateInstantiated;
+  let [currentAncestors, p] = popAncestor(ancestors, node);
+  while (p !== undefined) {
     const [nextAncestors, nextP] = popAncestor(currentAncestors, p);
     if (IsBlock(p) || IsModuleBlock(p) || IsSourceFile(p)) {
       const statementsAncestors: GoSlice<GoPtr<Node>> = pushAncestor(currentAncestors, p);
@@ -6352,10 +6363,11 @@ export function getModuleInstanceStateForAliasTarget(node: GoPtr<Node>, ancestor
         return foundBox.value;
       }
     }
-    return outerLoop(nextAncestors, nextP);
-  };
+    currentAncestors = nextAncestors;
+    p = nextP;
+  }
   // Couldn't locate, assume could refer to a value
-  return outerLoop(initAncestors, initP);
+  return ModuleInstanceStateInstantiated;
 }
 
 /**
@@ -6876,7 +6888,8 @@ export function IsParseTreeNode(node: GoPtr<Node>): bool {
  * }
  */
 export function GetNodeAtPosition(file: GoPtr<SourceFile>, position: int, includeJSDoc: bool): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
+  let current = NodeDefault_AsNode(file);
+  while (true) {
     const jsdocChild: GoPtr<Node> = includeJSDoc ? (() => {
       const found = { value: undefined as GoPtr<Node> };
       for (const jsdoc of Node_JSDoc(current, file)) {
@@ -6893,9 +6906,8 @@ export function GetNodeAtPosition(file: GoPtr<SourceFile>, position: int, includ
       return found.value;
     })();
     if (child === undefined || IsMetaProperty(child)) return current;
-    return loop(child);
-  };
-  return loop(NodeDefault_AsNode(file));
+    current = child;
+  }
 }
 
 /**
@@ -7036,8 +7048,8 @@ export function findImportOrRequire(text: string, start: int): [int, int] {
 export function ForEachDynamicImportOrRequireCall(file: GoPtr<SourceFile>, includeTypeSpaceImports: bool, requireStringLiteralLikeArgument: bool, cb: (node: GoPtr<Node>, argument: GoPtr<Expression>) => bool): bool {
   const isJavaScriptFile: bool = IsInJSFile(NodeDefault_AsNode(file));
   const text: string = SourceFile_Text(file);
-  const loop = (lastIndex: int, size: int): bool => {
-    if (lastIndex < 0) return false as bool;
+  let [lastIndex, size] = findImportOrRequire(text, 0 as int);
+  while (lastIndex >= 0) {
     const node: GoPtr<Node> = GetNodeAtPosition(file, lastIndex, (isJavaScriptFile && includeTypeSpaceImports) as bool);
     if (isJavaScriptFile && IsRequireCall(node, requireStringLiteralLikeArgument)) {
       if (cb(node, Node_Arguments(node)![0])) return true as bool;
@@ -7047,11 +7059,9 @@ export function ForEachDynamicImportOrRequireCall(file: GoPtr<SourceFile>, inclu
       if (cb(node, AsLiteralTypeNode(AsImportTypeNode(node)!.Argument)!.Literal)) return true as bool;
     }
     // skip past import/require
-    const [nextIndex, nextSize] = findImportOrRequire(text, (lastIndex + size) as int);
-    return loop(nextIndex, nextSize);
-  };
-  const [initIndex, initSize] = findImportOrRequire(text, 0 as int);
-  return loop(initIndex, initSize);
+    [lastIndex, size] = findImportOrRequire(text, (lastIndex + size) as int);
+  }
+  return false as bool;
 }
 
 /**
@@ -7393,11 +7403,10 @@ export function IsPlainJSFile(file: GoPtr<SourceFile>, checkJs: Tristate): bool 
  * }
  */
 export function GetLeftmostAccessExpression(expr: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (!IsAccessExpression(current)) return current;
-    return loop(Node_Expression(current));
-  };
-  return loop(expr);
+  while (IsAccessExpression(expr)) {
+    expr = Node_Expression(expr);
+  }
+  return expr;
 }
 
 /**
@@ -7640,11 +7649,10 @@ export function IsThisInTypeQuery(node: GoPtr<Node>): bool {
   if (!IsThisIdentifier(node)) {
     return false as bool;
   }
-  const loop = (current: GoPtr<Node>): bool => {
-    if (IsQualifiedName(current!.Parent) && AsQualifiedName(current!.Parent)!.Left === current) return loop(current!.Parent);
-    return (current!.Parent!.Kind === KindTypeQuery) as bool;
-  };
-  return loop(node);
+  while (IsQualifiedName(node!.Parent) && AsQualifiedName(node!.Parent)!.Left === node) {
+    node = node!.Parent;
+  }
+  return (node!.Parent!.Kind === KindTypeQuery) as bool;
 }
 
 /**
@@ -8050,11 +8058,11 @@ export function isIdentifierInNonEmittingHeritageClause(node: GoPtr<Node>): bool
   if (!IsIdentifier(node)) {
     return false as bool;
   }
-  const loop = (parent: GoPtr<Node>): bool => {
-    if (IsPropertyAccessExpression(parent) || IsExpressionWithTypeArguments(parent)) return loop(parent!.Parent);
-    return (IsHeritageClause(parent) && (AsHeritageClause(parent)!.Token === KindImplementsKeyword || IsInterfaceDeclaration(parent!.Parent))) as bool;
-  };
-  return loop(node!.Parent);
+  let parent = node!.Parent;
+  while (IsPropertyAccessExpression(parent) || IsExpressionWithTypeArguments(parent)) {
+    parent = parent!.Parent;
+  }
+  return (IsHeritageClause(parent) && (AsHeritageClause(parent)!.Token === KindImplementsKeyword || IsInterfaceDeclaration(parent!.Parent))) as bool;
 }
 
 /**
@@ -8075,11 +8083,10 @@ export function isIdentifierInNonEmittingHeritageClause(node: GoPtr<Node>): bool
  * }
  */
 export function isPartOfPossiblyValidTypeOrAbstractComputedPropertyName(node: GoPtr<Node>): bool {
-  const findCurrent = (current: GoPtr<Node>): GoPtr<Node> => {
-    if (!NodeKindIs(current, KindIdentifier, KindPropertyAccessExpression)) return current;
-    return findCurrent(current!.Parent);
-  };
-  const current = findCurrent(node);
+  let current = node;
+  while (NodeKindIs(current, KindIdentifier, KindPropertyAccessExpression)) {
+    current = current!.Parent;
+  }
   if (current!.Kind !== KindComputedPropertyName) {
     return false as bool;
   }
@@ -11167,7 +11174,8 @@ export function GetReparsedNodeForNode(node: GoPtr<Node>): GoPtr<Node> {
  * }
  */
 export function findCloneInNode(node: GoPtr<Node>, original: GoPtr<Node>): GoPtr<Node> {
-  const loop = (current: GoPtr<Node>): GoPtr<Node> => {
+  let current = node;
+  while (true) {
     if (current!.Kind === original!.Kind &&
       TextRange_Pos(current!.Loc) === TextRange_Pos(original!.Loc) &&
       TextRange_End(current!.Loc) === TextRange_End(original!.Loc)) {
@@ -11182,9 +11190,8 @@ export function findCloneInNode(node: GoPtr<Node>, original: GoPtr<Node>): GoPtr
       return false as bool;
     });
     if (!foundContainingChild) return undefined;
-    return loop(container.next!);
-  };
-  return loop(node);
+    current = container.next!;
+  }
 }
 
 /**

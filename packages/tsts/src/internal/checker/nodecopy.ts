@@ -797,12 +797,12 @@ export function NodeBuilderImpl_rewriteModuleSpecifier(receiver: GoPtr<NodeBuild
  */
 export function NodeBuilderImpl_getEnclosingDeclarationIgnoringFakeScope(receiver: GoPtr<NodeBuilderImpl>): GoPtr<Node> {
   const links = receiver!.links as LinkStore<GoPtr<Node>, NodeBuilderLinks>;
-  const loop = (enc: GoPtr<Node>): GoPtr<Node> => {
-    if (enc === undefined) return undefined;
-    if (LinkStore_Get(links, enc)!.fakeScopeForSignatureDeclaration === undefined) return enc;
-    return loop(enc.Parent);
-  };
-  return loop(receiver!.ctx!.enclosingDeclaration);
+  let enclosing = receiver!.ctx!.enclosingDeclaration;
+  while (enclosing !== undefined &&
+    LinkStore_Get(links, enclosing)!.fakeScopeForSignatureDeclaration !== undefined) {
+    enclosing = enclosing.Parent;
+  }
+  return enclosing;
 }
 
 /**

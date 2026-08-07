@@ -1082,17 +1082,20 @@ export function Parser_parseExpression(receiver: GoPtr<Parser>): GoPtr<Expressio
   const saveContextFlags = receiver!.contextFlags;
   receiver!.contextFlags = receiver!.contextFlags & ~NodeFlagsDecoratorContext;
   const pos = Parser_nodePos(receiver);
-  const exprResult = ((): GoPtr<Expression> => {
-    const initial = Parser_parseAssignmentExpressionOrHigher(receiver);
-    const loop = (expr: GoPtr<Expression>): GoPtr<Expression> => {
-      const operatorToken = Parser_parseOptionalToken(receiver, KindCommaToken);
-      if (operatorToken === undefined) {
-        return expr;
-      }
-      return loop(Parser_makeBinaryExpression(receiver, expr, operatorToken, Parser_parseAssignmentExpressionOrHigher(receiver), pos));
-    };
-    return loop(initial);
-  })();
+  let exprResult = Parser_parseAssignmentExpressionOrHigher(receiver);
+  while (true) {
+    const operatorToken = Parser_parseOptionalToken(receiver, KindCommaToken);
+    if (operatorToken === undefined) {
+      break;
+    }
+    exprResult = Parser_makeBinaryExpression(
+      receiver,
+      exprResult,
+      operatorToken,
+      Parser_parseAssignmentExpressionOrHigher(receiver),
+      pos,
+    );
+  }
   receiver!.contextFlags = saveContextFlags;
   return exprResult;
 }
@@ -3224,15 +3227,14 @@ export function Parser_parseTemplateExpression(receiver: GoPtr<Parser>, isTagged
  */
 export function Parser_parseTemplateSpans(receiver: GoPtr<Parser>, isTaggedTemplate: bool): GoPtr<NodeList> {
   const pos = Parser_nodePos(receiver);
-  const collect = (list: GoSlice<GoPtr<Node>>): GoSlice<GoPtr<Node>> => {
+  const list: GoSlice<GoPtr<Node>> = [];
+  while (true) {
     const span = Parser_parseTemplateSpan(receiver, isTaggedTemplate);
-    const next = [...list, span];
+    list.push(span);
     if (AsTemplateSpan(span)!.Literal!.Kind !== KindTemplateMiddle) {
-      return next;
+      break;
     }
-    return collect(next);
-  };
-  const list = collect([]);
+  }
   return Parser_newNodeList(receiver, NewTextRange(pos, Parser_nodePos(receiver)), list);
 }
 

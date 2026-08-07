@@ -986,20 +986,16 @@ export function getSpaceSuggestion(expressionText: string): string {
 export function Parser_parseEntityName(receiver: GoPtr<Parser>, allowReservedWords: bool, diagnosticMessage: GoPtr<Message>): GoPtr<Node> {
   const pos = Parser_nodePos(receiver);
   // entity is rebound through the qualified-name loop; Go reassigns the local.
-  const initialEntity = allowReservedWords ? Parser_parseIdentifierNameWithDiagnostic(receiver, diagnosticMessage) : Parser_parseIdentifierWithDiagnostic(receiver, diagnosticMessage, undefined);
-  const loop = (entity: GoPtr<Node>): GoPtr<Node> => {
-    if (!Parser_parseOptional(receiver, KindDotToken)) {
-      return entity;
-    }
+  let entity = allowReservedWords ? Parser_parseIdentifierNameWithDiagnostic(receiver, diagnosticMessage) : Parser_parseIdentifierWithDiagnostic(receiver, diagnosticMessage, undefined);
+  while (Parser_parseOptional(receiver, KindDotToken)) {
     if (receiver!.token === KindLessThanToken) {
       // The entity is part of a JSDoc-style generic. We will use the gap between `typeName` and
       // `typeArguments` to report it as a grammar error in the checker.
-      return entity;
+      break;
     }
-    const next = Parser_finishNode(receiver, NewQualifiedName(receiver!.factory, entity, Parser_parseRightSideOfDot(receiver, allowReservedWords, false /*allowPrivateIdentifiers*/, true /*allowUnicodeEscapeSequenceInIdentifierName*/)), pos);
-    return loop(next);
-  };
-  return loop(initialEntity);
+    entity = Parser_finishNode(receiver, NewQualifiedName(receiver!.factory, entity, Parser_parseRightSideOfDot(receiver, allowReservedWords, false /*allowPrivateIdentifiers*/, true /*allowUnicodeEscapeSequenceInIdentifierName*/)), pos);
+  }
+  return entity;
 }
 
 /**
