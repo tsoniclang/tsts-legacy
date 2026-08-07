@@ -14,7 +14,7 @@ export type TargetAstRewrite = (
   original: Node,
   updated: Node,
   factory: NodeFactory,
-) => Node;
+) => Node | undefined;
 
 export function transformTargetSourceFile(
   sourceFile: SourceFile,
@@ -29,7 +29,7 @@ export function transformTargetSourceFile(
       }
       const updated = NodeVisitor_VisitEachChild(visitor, original);
       if (updated === undefined) {
-        throw new globalThis.Error("target AST rewrite removed a required node");
+        return undefined;
       }
       return rewrite(original, updated, factory);
     },
@@ -51,6 +51,6 @@ export * from "../internal/ast/generated/casts.js";
 export * from "../internal/ast/generated/factory.js";
 export * from "../internal/ast/generated/kinds.js";
 export * from "../internal/ast/generated/predicates.js";
-export { NodeFactory_UpdateSourceFile } from "../internal/ast/ast.js";
+export { AsSourceFile, NodeFactory_UpdateSourceFile } from "../internal/ast/ast.js";
 export { NodeFactory_NewNodeList } from "../internal/ast/spine.js";
 export type { Node, NodeFactory, SourceFile };

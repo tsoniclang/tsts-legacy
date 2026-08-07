@@ -10,6 +10,7 @@ import {
 } from "../internal/ast/generated/protocol.js";
 import {
   AsIdentifier,
+  AsImportDeclaration,
   encodeTargetSourceFileForPrinting,
   NewIdentifier,
   transformTargetSourceFile,
@@ -32,6 +33,15 @@ test("target AST rewrite transforms exact nodes without a second parser", () => 
   assert.equal(rewritten, 2);
   const payload = encodeTargetSourceFileForPrinting(transformed);
   assert.ok(payload.length > sourceText.length);
+});
+
+test("target AST rewrite removes list elements without a text patch", () => {
+  const transformed = transformTargetSourceFile(parse(sourceText), (original, updated) =>
+    AsImportDeclaration(original) === undefined ? updated : undefined,
+  );
+
+  assert.equal(transformed.Statements?.Nodes.length, 1);
+  assert.ok(AsImportDeclaration(transformed.Statements?.Nodes[0]) === undefined);
 });
 
 test("target AST print encoding preserves parsed node-list ranges", () => {
