@@ -10,8 +10,10 @@ import {
 } from "../internal/ast/generated/protocol.js";
 import {
   AsIdentifier,
-  AsImportDeclaration,
   encodeTargetSourceFileForPrinting,
+  IsIdentifier,
+  IsImportDeclaration,
+  IsSourceFile,
   NewIdentifier,
   transformTargetSourceFile,
 } from "./target-ast.js";
@@ -24,6 +26,7 @@ test("target AST rewrite transforms exact nodes without a second parser", () => 
   const sourceFile = parse(sourceText);
   let rewritten = 0;
   const transformed = transformTargetSourceFile(sourceFile, (original, updated, factory) => {
+    if (!IsIdentifier(original)) return updated;
     const identifier = AsIdentifier(original);
     if (identifier?.Text !== "original") return updated;
     rewritten += 1;
@@ -37,11 +40,20 @@ test("target AST rewrite transforms exact nodes without a second parser", () => 
 
 test("target AST rewrite removes list elements without a text patch", () => {
   const transformed = transformTargetSourceFile(parse(sourceText), (original, updated) =>
-    AsImportDeclaration(original) === undefined ? updated : undefined,
+    IsImportDeclaration(original) ? undefined : updated,
   );
 
   assert.equal(transformed.Statements?.Nodes.length, 1);
-  assert.ok(AsImportDeclaration(transformed.Statements?.Nodes[0]) === undefined);
+  assert.equal(IsImportDeclaration(transformed.Statements?.Nodes[0]), false);
+});
+
+test("target AST rewrite cannot remove the source-file root", () => {
+  assert.throws(
+    () => transformTargetSourceFile(parse(sourceText), (original, updated) =>
+      IsSourceFile(original) ? undefined : updated,
+    ),
+    /target AST rewrite removed the source file/u,
+  );
 });
 
 test("target AST print encoding preserves parsed node-list ranges", () => {
