@@ -12,13 +12,14 @@ import {
   Node_Parameters,
   Node_PropertyName,
   Node_Properties,
+  SourceFile_Path,
   Node_Statements,
   Node_Symbol,
   Node_Text,
   Node_TypeArguments,
   Node_TypeParameters,
 } from "../internal/ast/ast.js";
-import { Node_ForEachChild, Node_Name } from "../internal/ast/spine.js";
+import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
 import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindArrayBindingPattern,
@@ -42,7 +43,7 @@ import {
   KindTupleType,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { GetSymbolId, IsFunctionLike, IsLeftHandSideExpression } from "../internal/ast/utilities.js";
+import { GetSourceFileOfNode, GetSymbolId, IsFunctionLike, IsLeftHandSideExpression } from "../internal/ast/utilities.js";
 import {
   argumentPassingFactKey,
   attributeFactKey,
@@ -83,6 +84,7 @@ import type {
   ExtensionFactSubject,
   SourceAnalysisFactAccess,
 } from "./host.js";
+import { encodeIdentityTuple } from "./identity-tuple.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
 type SourceSemanticsFactAccess = Pick<SourceAnalysisFactAccess, "get" | "set">;
@@ -132,7 +134,8 @@ export type SourceCallMarkerKind =
   | "address-of"
   | "allocate"
   | "load"
-  | "store";
+  | "store"
+  | "equal-pointer";
 
 type ArgumentPassingMarkerKind = Extract<
   SourceCallMarkerKind,
@@ -461,6 +464,7 @@ function recordSourceSemanticsCallMarker(
     case "allocate":
     case "load":
     case "store":
+    case "equal-pointer":
       recordPointerOperation(
         facts,
         diagnostics,
@@ -500,6 +504,9 @@ function recordPointerOperation(
   const pointeeType = selectedTypeArguments.length === 1
     ? selectedTypeArguments[0]?.selectedType
     : undefined;
+  const explicitPointeeTypeNode = selectedTypeArguments.length === 1
+    ? selectedTypeArguments[0]?.explicitTypeNode
+    : undefined;
   if (pointeeType === undefined) {
     diagnostics.append({
       extensionId,
@@ -510,7 +517,11 @@ function recordPointerOperation(
       message: `${marker.exportName}(...) requires one exact selected pointee type.`,
       nodeOrSpan: callExpression,
       evidence,
-      identity: `source-semantics-pointer-type:${marker.exportName}:${String(callExpression.id)}`,
+      identity: sourceSemanticsDiagnosticIdentity(
+        "pointer-type",
+        marker.exportName,
+        callExpression,
+      ),
     });
     return;
   }
@@ -531,7 +542,11 @@ function recordPointerOperation(
           message: `${marker.exportName}(...) requires writable storage.`,
           nodeOrSpan: storageArgument.expression,
           evidence,
-          identity: `source-semantics-writable-storage:${marker.exportName}:${String(callExpression.id)}`,
+          identity: sourceSemanticsDiagnosticIdentity(
+            "writable-storage",
+            marker.exportName,
+            callExpression,
+          ),
         });
         return;
       }
@@ -539,6 +554,7 @@ function recordPointerOperation(
         operation: "address-of",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         storageExpression: storage.storageExpression,
         storageType: storage.type,
@@ -560,6 +576,7 @@ function recordPointerOperation(
         operation: "allocate",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         initialExpression: initial.expression,
         initialType: initial.type,
@@ -577,6 +594,7 @@ function recordPointerOperation(
         operation: "load",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
@@ -594,11 +612,32 @@ function recordPointerOperation(
         operation: "store",
         call: callExpression,
         pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
         resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
         valueExpression: value.expression,
         valueType: value.type,
+      } satisfies PointerOperationFact;
+      facts.set(callExpression, pointerOperationFactKey, fact, evidence);
+      return;
+    }
+    case "equal-pointer": {
+      const left = exactSourceCallArgument(callInfo, 0, 2);
+      const right = exactSourceCallArgument(callInfo, 1, 2);
+      if (left === undefined || right === undefined) {
+        return;
+      }
+      const fact = {
+        operation: "equal-pointer",
+        call: callExpression,
+        pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: callInfo.sourceResultType,
+        leftExpression: left.expression,
+        leftType: left.type,
+        rightExpression: right.expression,
+        rightType: right.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -645,8 +684,28 @@ function recordArgumentPassingMarker(
     message: `${marker.exportName}(...) requires a storage expression.`,
     nodeOrSpan: target,
     evidence,
-    identity: `source-semantics-non-storage:${marker.exportName}:${String(target?.id ?? "unknown")}`,
+    identity: sourceSemanticsDiagnosticIdentity(
+      "non-storage",
+      marker.exportName,
+      target,
+    ),
   });
+}
+
+function sourceSemanticsDiagnosticIdentity(
+  diagnostic: string,
+  exportName: string,
+  node: Node,
+): string {
+  const sourceFile = GetSourceFileOfNode(node);
+  return encodeIdentityTuple([
+    "source-semantics",
+    diagnostic,
+    exportName,
+    sourceFile === undefined ? undefined : SourceFile_Path(sourceFile),
+    Node_Pos(node),
+    Node_End(node),
+  ]);
 }
 
 function getArgumentPassingMode(kind: ArgumentPassingMarkerKind): ArgumentPassingFact["mode"] {

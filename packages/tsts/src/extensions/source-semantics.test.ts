@@ -107,6 +107,7 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "allocatePointer", marker: "allocate" },
         { kind: "call-marker", exportName: "loadPointer", marker: "load" },
         { kind: "call-marker", exportName: "storePointer", marker: "store" },
+        { kind: "call-marker", exportName: "equalPointer", marker: "equal-pointer" },
       ],
     }],
   });
@@ -458,6 +459,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
       allocatePointer,
       loadPointer,
       storePointer,
+      equalPointer,
     } from "@example/native/lang.js";
     import * as lang from "@example/native/lang.js";
     import { addressOf as localAddressOf } from "./local.js";
@@ -474,7 +476,10 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     const allocated = lang.allocatePointer<int>(2);
     const loaded = loadPointer(direct);
     storePointer(allocated, loaded);
+    const equal = equalPointer(direct, aliased);
+    const nilEqual = equalPointer<int>(undefined, undefined);
     const rejected = addressOf(box.frozen);
+    const rejectedExpression = addressOf(value + 1);
     const local = localAddressOf(value);
   `, new Map([
     ["/src/local.ts", [
@@ -510,19 +515,47 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     getCallExpression(index, "storePointer", 0),
     pointerOperationFactKey,
   );
+  const equal = extended.extensionHost.facts.get(
+    getCallExpression(index, "equalPointer", 0),
+    pointerOperationFactKey,
+  );
+  const nilEqual = extended.extensionHost.facts.get(
+    getCallExpression(index, "equalPointer", 1),
+    pointerOperationFactKey,
+  );
   const rejectedCall = getCallExpression(index, "addressOf", 2);
+  const rejectedExpressionCall = getCallExpression(index, "addressOf", 3);
   const localCall = getCallExpression(index, "localAddressOf", 0);
 
   assert.equal(direct?.operation, "address-of");
   assert.equal(direct?.locationIdentity, direct?.storageExpression);
+  assert.equal(direct?.explicitPointeeTypeNode, undefined);
   assert.equal(aliased?.operation, "address-of");
   assert.equal(indexed?.operation, "address-of");
   assert.equal(allocated?.operation, "allocate");
   assert.equal(allocated?.locationIdentity, allocated?.call);
+  assert.equal(allocated?.explicitPointeeTypeNode?.Kind, KindTypeReference);
   assert.equal(loaded?.operation, "load");
   assert.equal(stored?.operation, "store");
+  assert.equal(equal?.operation, "equal-pointer");
+  assert.equal(nilEqual?.operation, "equal-pointer");
+  assert.equal(
+    equal?.operation === "equal-pointer" ? equal.leftExpression : undefined,
+    Node_Arguments(equal?.call)?.[0],
+  );
+  assert.equal(
+    equal?.operation === "equal-pointer" ? equal.rightExpression : undefined,
+    Node_Arguments(equal?.call)?.[1],
+  );
   assert.equal(
     extended.extensionHost.facts.get(rejectedCall, pointerOperationFactKey),
+    undefined,
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(
+      rejectedExpressionCall,
+      pointerOperationFactKey,
+    ),
     undefined,
   );
   assert.equal(
@@ -531,7 +564,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   );
   assert.deepEqual(
     extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
-    ["TSTS_SOURCE_SEMANTICS_0002"],
+    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"],
   );
 });
 
@@ -740,6 +773,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function allocatePointer<T>(initial: T): ptr<T>;",
       "export declare function loadPointer<T>(pointer: ptr<T>): T;",
       "export declare function storePointer<T>(pointer: ptr<T>, value: T): void;",
+      "export declare function equalPointer<T>(left: ptr<T> | undefined, right: ptr<T> | undefined): boolean;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {
