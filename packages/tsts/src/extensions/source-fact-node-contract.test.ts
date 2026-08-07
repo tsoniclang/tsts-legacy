@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Node } from "../internal/ast/ast.js";
+import type { Type } from "../internal/checker/types.js";
 import {
   argumentPassingFactKey,
   attributeFactKey,
@@ -8,10 +9,12 @@ import {
   fieldFactKey,
   functionPointerFactKey,
   pointerFactKey,
+  pointerOperationFactKey,
 } from "./facts.js";
 
 test("authored source fact payloads reject arbitrary identity objects", () => {
   const invalidNode = {} as Node;
+  const invalidType = {} as Type;
   const cases: readonly (() => unknown)[] = [
     () => argumentPassingFactKey.snapshot({
       mode: "by-value",
@@ -32,7 +35,15 @@ test("authored source fact payloads reject arbitrary identity objects", () => {
     () => pointerFactKey.snapshot({
       pointee: invalidNode,
       mutability: "unspecified",
-      unsafeRequired: true,
+    }),
+    () => pointerOperationFactKey.snapshot({
+      operation: "allocate",
+      call: invalidNode,
+      pointeeType: invalidType,
+      resultType: invalidType,
+      initialExpression: invalidNode,
+      initialType: invalidType,
+      locationIdentity: invalidNode,
     }),
   ];
 

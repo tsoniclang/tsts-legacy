@@ -4,7 +4,17 @@ import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
-import { GetSourceFileOfNode, IsCallOrNewExpression } from "../internal/ast/utilities.js";
+import type { Expression } from "../internal/ast/generated/unions.js";
+import { NodeFlagsOptionalChain } from "../internal/ast/generated/flags.js";
+import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression } from "../internal/ast/generated/predicates.js";
+import {
+  GetSourceFileOfNode,
+  IsCallOrNewExpression,
+  OEKAssertions,
+  OEKParentheses,
+  SkipOuterExpressions,
+  type OuterExpressionKinds,
+} from "../internal/ast/utilities.js";
 import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
@@ -37,6 +47,8 @@ import type {
   ResolvedSourcePropertyAccessInfo as CheckerResolvedSourcePropertyAccessInfo,
 } from "../internal/checker/checker/symbols.js";
 import { Checker_getContextualType, Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
+import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
+import { AssignmentKindDefinite } from "../internal/checker/utilities.js";
 import { Checker_getResolvedSourceIterationInfo } from "../internal/checker/checker/syntax-checking.js";
 import type { ExtensionCheckedIterationSelection } from "../internal/checker/checker/iteration-evidence.js";
 import { Checker_GetConstantValue, Checker_GetExportsOfModule } from "../internal/checker/services.js";
@@ -59,6 +71,15 @@ export type ResolvedSourcePropertyAccessInfo = CheckerResolvedSourcePropertyAcce
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo;
 export type ResolvedSourceIterationInfo = ExtensionCheckedIterationSelection;
 
+export interface ResolvedSourceStorageInfo {
+  readonly expression: Node;
+  readonly storageExpression: Node;
+  readonly type: Type;
+  readonly symbol?: Symbol;
+  readonly declaration?: Node;
+  readonly writable: boolean;
+}
+
 export interface TypeCheckerQueries {
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
@@ -75,6 +96,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedPropertyAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyAccessInfo>;
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
+  readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
   readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
   readonly getCallSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -105,6 +127,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
+  const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
   const queries: TypeCheckerQueries = {
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
@@ -150,6 +173,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           Checker_getResolvedSourceIterationInfo(checker, node))),
+    getResolvedStorageInfo: (node) =>
+      memoizeResolvedNodeQuery(storageInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          getResolvedSourceStorageInfo(checker, node))),
     getReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => Checker_GetReturnTypeOfSignature(checker, signature)),
     getCallSignaturesOfType: (type) =>
@@ -182,6 +209,111 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getSignatureThisParameter: (signature) => signature?.thisParameter,
   };
   return Object.freeze(queries);
+}
+
+function getResolvedSourceStorageInfo(
+  checker: GoPtr<Checker>,
+  expression: GoPtr<Node>,
+): GoPtr<ResolvedSourceStorageInfo> {
+  if (checker === undefined || expression === undefined) {
+    return undefined;
+  }
+  const storageExpression = SkipOuterExpressions(
+    expression as GoPtr<Expression>,
+    (OEKAssertions | OEKParentheses) as OuterExpressionKinds,
+  ) as GoPtr<Node>;
+  if (
+    storageExpression === undefined
+    || (storageExpression.Flags & NodeFlagsOptionalChain) !== 0
+  ) {
+    return undefined;
+  }
+  if (IsIdentifier(storageExpression)) {
+    const symbol = getDiagnosticFreeResolvedSymbol(checker, storageExpression);
+    const type = Checker_GetTypeAtLocation(checker, storageExpression);
+    if (symbol === undefined || type === undefined) {
+      return undefined;
+    }
+    const declaration = getPrimarySymbolDeclaration(symbol);
+    return Object.freeze({
+      expression,
+      storageExpression,
+      type,
+      symbol,
+      ...(declaration === undefined ? {} : { declaration }),
+      writable: !Checker_isAssignmentToReadonlyEntity(
+        checker,
+        storageExpression,
+        symbol,
+        AssignmentKindDefinite,
+      ),
+    });
+  }
+  if (IsPropertyAccessExpression(storageExpression)) {
+    const selected = Checker_getResolvedSourcePropertyAccessInfo(
+      checker,
+      storageExpression,
+    );
+    const type = selectedAccessType(selected);
+    if (selected === undefined || type === undefined) {
+      return undefined;
+    }
+    return Object.freeze({
+      expression,
+      storageExpression,
+      type,
+      ...(selected.selectedSymbol === undefined
+        ? {}
+        : { symbol: selected.selectedSymbol }),
+      ...(selected.selectedDeclaration === undefined
+        ? {}
+        : { declaration: selected.selectedDeclaration }),
+      writable: selected.writable,
+    });
+  }
+  if (IsElementAccessExpression(storageExpression)) {
+    const selected = Checker_getResolvedSourceElementAccessInfo(
+      checker,
+      storageExpression,
+    );
+    const type = selectedAccessType(selected);
+    if (selected === undefined || type === undefined) {
+      return undefined;
+    }
+    return Object.freeze({
+      expression,
+      storageExpression,
+      type,
+      ...(selected.selectedSymbol === undefined
+        ? {}
+        : { symbol: selected.selectedSymbol }),
+      ...(selected.selectedDeclaration === undefined
+        ? {}
+        : { declaration: selected.selectedDeclaration }),
+      writable: selected.writable,
+    });
+  }
+  return undefined;
+}
+
+function selectedAccessType(
+  selected:
+    | CheckerResolvedSourcePropertyAccessInfo
+    | CheckerResolvedSourceElementAccessInfo
+    | undefined,
+): GoPtr<Type> {
+  if (selected === undefined) {
+    return undefined;
+  }
+  switch (selected.accessMode) {
+    case "read":
+    case "delete":
+      return selected.sourceReadType;
+    case "write":
+      return selected.sourceWriteType;
+    case "read-write":
+      return selected.sourceReadType;
+  }
 }
 
 function memoizeResolvedNodeQuery<T extends object>(

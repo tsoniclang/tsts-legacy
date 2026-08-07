@@ -58,6 +58,7 @@ import {
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,
+  pointerOperationFactKey,
   sourcePrimitive,
   sourcePrimitiveFactKey,
   structFactKey,
@@ -84,24 +85,28 @@ function createExampleSourceSemanticsExtension() {
         sourcePrimitive("SystemInt32", "int32", "number", true, 32),
         sourcePrimitive("uint", "uint32", "number", false, 32),
         sourcePrimitive("long", "int64", "bigint", true, 64),
-        { kind: "type-marker", exportName: "ptr", marker: "ptr" },
-        { kind: "type-marker", exportName: "fnptr", marker: "fnptr" },
+        { kind: "type-marker", exportName: "ptr", marker: "pointer" },
+        { kind: "type-marker", exportName: "fnptr", marker: "function-pointer" },
       ],
     }, {
       moduleSpecifier: exampleLangModule,
       packageName: "@example/native",
       subpath: "lang.js",
       exports: [
-        { kind: "call-marker", exportName: "out", marker: "out" },
-        { kind: "call-marker", exportName: "ref", marker: "ref" },
-        { kind: "call-marker", exportName: "inref", marker: "inref" },
-        { kind: "call-marker", exportName: "borrow", marker: "borrow" },
-        { kind: "call-marker", exportName: "borrowMut", marker: "borrowMut" },
+        { kind: "call-marker", exportName: "out", marker: "write-only-reference" },
+        { kind: "call-marker", exportName: "ref", marker: "read-write-reference" },
+        { kind: "call-marker", exportName: "inref", marker: "read-only-reference" },
+        { kind: "call-marker", exportName: "borrow", marker: "shared-borrow" },
+        { kind: "call-marker", exportName: "borrowMut", marker: "mutable-borrow" },
         { kind: "call-marker", exportName: "move", marker: "move" },
         { kind: "call-marker", exportName: "struct", marker: "struct" },
         { kind: "call-marker", exportName: "field", marker: "field" },
         { kind: "call-marker", exportName: "attribute", marker: "attribute" },
-        { kind: "call-marker", exportName: "defaultof", marker: "defaultof" },
+        { kind: "call-marker", exportName: "defaultof", marker: "default-value" },
+        { kind: "call-marker", exportName: "addressOf", marker: "address-of" },
+        { kind: "call-marker", exportName: "allocatePointer", marker: "allocate" },
+        { kind: "call-marker", exportName: "loadPointer", marker: "load" },
+        { kind: "call-marker", exportName: "storePointer", marker: "store" },
       ],
     }],
   });
@@ -431,8 +436,7 @@ test("source-semantics records ptr and fnptr type facts from canonical type mark
 
   assert.equal(pointerReference?.Kind, KindTypeReference);
   assert.equal(functionPointerReference?.Kind, KindTypeReference);
-  assert.equal(extended.extensionHost.facts.get(pointerReference, pointerFactKey)?.mutability, "unspecified");
-  assert.equal(extended.extensionHost.facts.get(pointerReference, pointerFactKey)?.unsafeRequired, true);
+  assert.equal(extended.extensionHost.facts.get(pointerReference, pointerFactKey)?.mutability, "readwrite");
   assert.equal((extended.extensionHost.facts.get(pointerReference, pointerFactKey)?.pointee as GoPtr<Node>)?.Kind, KindTypeReference);
   assert.equal(extended.extensionHost.facts.get(functionPointerReference, functionPointerFactKey)?.parameters.length, 1);
   assert.equal((extended.extensionHost.facts.get(functionPointerReference, functionPointerFactKey)?.parameters[0] as GoPtr<Node>)?.Kind, KindTypeReference);
@@ -441,8 +445,94 @@ test("source-semantics records ptr and fnptr type facts from canonical type mark
 
   assert.equal(finalizeExtensionSemantics(extended.program), extended.extensionHost);
   const consumer = createSourceFactQueries(extended.extensionHost);
-  assert.equal(consumer.getPointer(pointerReference)?.unsafeRequired, true);
+  assert.equal(consumer.getPointer(pointerReference)?.mutability, "readwrite");
   assert.equal(consumer.getFunctionPointer(functionPointerReference)?.parameters.length, 1);
+});
+
+test("source-semantics records exact typed pointer operations and rejects unwriteable storage", () => {
+  const { extended, program, index } = createProgram(`
+    import type { int, ptr } from "@example/native/types.js";
+    import {
+      addressOf,
+      addressOf as takeAddress,
+      allocatePointer,
+      loadPointer,
+      storePointer,
+    } from "@example/native/lang.js";
+    import * as lang from "@example/native/lang.js";
+    import { addressOf as localAddressOf } from "./local.js";
+
+    interface Box { value: int; readonly frozen: int; }
+    interface Slots { [index: number]: int; }
+
+    let value!: int;
+    let box!: Box;
+    let slots!: Slots;
+    const direct = addressOf(value);
+    const aliased = takeAddress(box.value);
+    const indexed = addressOf(slots[0]);
+    const allocated = lang.allocatePointer<int>(2);
+    const loaded = loadPointer(direct);
+    storePointer(allocated, loaded);
+    const rejected = addressOf(box.frozen);
+    const local = localAddressOf(value);
+  `, new Map([
+    ["/src/local.ts", [
+      "export type LocalPointer<T> = { value: T };",
+      "export function addressOf<T>(value: T): LocalPointer<T> { return { value }; }",
+    ].join("\n")],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const direct = extended.extensionHost.facts.get(
+    getCallExpression(index, "addressOf", 0),
+    pointerOperationFactKey,
+  );
+  const aliased = extended.extensionHost.facts.get(
+    getCallExpression(index, "takeAddress", 0),
+    pointerOperationFactKey,
+  );
+  const indexed = extended.extensionHost.facts.get(
+    getCallExpression(index, "addressOf", 1),
+    pointerOperationFactKey,
+  );
+  const allocated = extended.extensionHost.facts.get(
+    getCallExpression(index, "allocatePointer", 0),
+    pointerOperationFactKey,
+  );
+  const loaded = extended.extensionHost.facts.get(
+    getCallExpression(index, "loadPointer", 0),
+    pointerOperationFactKey,
+  );
+  const stored = extended.extensionHost.facts.get(
+    getCallExpression(index, "storePointer", 0),
+    pointerOperationFactKey,
+  );
+  const rejectedCall = getCallExpression(index, "addressOf", 2);
+  const localCall = getCallExpression(index, "localAddressOf", 0);
+
+  assert.equal(direct?.operation, "address-of");
+  assert.equal(direct?.locationIdentity, direct?.storageExpression);
+  assert.equal(aliased?.operation, "address-of");
+  assert.equal(indexed?.operation, "address-of");
+  assert.equal(allocated?.operation, "allocate");
+  assert.equal(allocated?.locationIdentity, allocated?.call);
+  assert.equal(loaded?.operation, "load");
+  assert.equal(stored?.operation, "store");
+  assert.equal(
+    extended.extensionHost.facts.get(rejectedCall, pointerOperationFactKey),
+    undefined,
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(localCall, pointerOperationFactKey),
+    undefined,
+  );
+  assert.deepEqual(
+    extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
+    ["TSTS_SOURCE_SEMANTICS_0002"],
+  );
 });
 
 test("source-semantics records struct field attribute and default facts from canonical imports only", () => {
@@ -635,6 +725,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export type fnptr<Args, Result> = unknown;",
     ].join("\n")],
     ["/src/node_modules/@example/native/lang.d.ts", [
+      "import type { ptr } from './types.js';",
       "export declare function out<T>(value: T): T;",
       "export declare function ref<T>(value: T): T;",
       "export declare function inref<T>(value: T): T;",
@@ -645,6 +736,10 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function field<T>(): T;",
       "export declare function attribute<T>(value?: unknown): unknown;",
       "export declare function defaultof<T>(): T;",
+      "export declare function addressOf<T>(storage: T): ptr<T>;",
+      "export declare function allocatePointer<T>(initial: T): ptr<T>;",
+      "export declare function loadPointer<T>(pointer: ptr<T>): T;",
+      "export declare function storePointer<T>(pointer: ptr<T>, value: T): void;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {

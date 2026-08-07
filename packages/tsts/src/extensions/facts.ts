@@ -9,6 +9,8 @@ import type {
 import type {
   Node,
 } from "../internal/ast/ast.js";
+import type { Symbol } from "../internal/ast/symbol.js";
+import type { Type } from "../internal/checker/types.js";
 import {
   isArgumentPassingMode,
   type ArgumentPassingMode,
@@ -82,8 +84,47 @@ export interface FunctionPointerFact {
 export interface PointerFact {
   readonly pointee: Node;
   readonly mutability: SourcePointerMutability;
-  readonly unsafeRequired: boolean;
 }
+
+export type PointerOperationFact =
+  | {
+      readonly operation: "address-of";
+      readonly call: Node;
+      readonly pointeeType: Type;
+      readonly resultType: Type;
+      readonly storageExpression: Node;
+      readonly storageType: Type;
+      readonly storageSymbol?: Symbol;
+      readonly storageDeclaration?: Node;
+      readonly locationIdentity: Node;
+    }
+  | {
+      readonly operation: "allocate";
+      readonly call: Node;
+      readonly pointeeType: Type;
+      readonly resultType: Type;
+      readonly initialExpression: Node;
+      readonly initialType: Type;
+      readonly locationIdentity: Node;
+    }
+  | {
+      readonly operation: "load";
+      readonly call: Node;
+      readonly pointeeType: Type;
+      readonly resultType: Type;
+      readonly pointerExpression: Node;
+      readonly pointerType: Type;
+    }
+  | {
+      readonly operation: "store";
+      readonly call: Node;
+      readonly pointeeType: Type;
+      readonly resultType: Type;
+      readonly pointerExpression: Node;
+      readonly pointerType: Type;
+      readonly valueExpression: Node;
+      readonly valueType: Type;
+    };
 
 export interface StructFact {
   readonly valueType: boolean;
@@ -198,8 +239,14 @@ export const pointerFactKey = markHostSourceReadableFactKey(defineExtensionFactK
   snapshot: snapshotPointerFact,
   equals: (left, right) =>
     left.pointee === right.pointee
-    && left.mutability === right.mutability
-    && left.unsafeRequired === right.unsafeRequired,
+    && left.mutability === right.mutability,
+}));
+
+export const pointerOperationFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<PointerOperationFact>({
+  extensionId: "tsts.source-semantics",
+  name: "pointerOperation",
+  snapshot: snapshotPointerOperationFact,
+  equals: pointerOperationFactEquals,
 }));
 
 export const structFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<StructFact>({
@@ -356,7 +403,7 @@ function snapshotFunctionPointerFact(value: FunctionPointerFact): FunctionPointe
 }
 
 function snapshotPointerFact(value: PointerFact): PointerFact {
-  const record = exactRecord(value, "PointerFact", ["pointee", "mutability", "unsafeRequired"]);
+  const record = exactRecord(value, "PointerFact", ["pointee", "mutability"]);
   const mutability = requiredString(record, "mutability", "PointerFact") as SourcePointerMutability;
   if (!pointerMutabilities.has(mutability)) {
     throw new Error(`PointerFact.mutability '${mutability}' is invalid.`);
@@ -364,8 +411,88 @@ function snapshotPointerFact(value: PointerFact): PointerFact {
   return Object.freeze({
     pointee: requiredNode(record, "pointee", "PointerFact"),
     mutability,
-    unsafeRequired: requiredBoolean(record, "unsafeRequired", "PointerFact"),
   });
+}
+
+function snapshotPointerOperationFact(value: PointerOperationFact): PointerOperationFact {
+  const operation = requiredPointerOperation(value);
+  const commonFields = ["operation", "call", "pointeeType", "resultType"];
+  switch (operation) {
+    case "address-of": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "storageExpression",
+        "storageType",
+        "storageSymbol",
+        "storageDeclaration",
+        "locationIdentity",
+      ]);
+      const storageSymbol = optionalCompilerSymbol(record, "storageSymbol", "PointerOperationFact");
+      const storageDeclaration = optionalNode(record, "storageDeclaration", "PointerOperationFact");
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        storageExpression: requiredNode(record, "storageExpression", "PointerOperationFact"),
+        storageType: requiredCompilerType(record, "storageType", "PointerOperationFact"),
+        ...(storageSymbol === undefined ? {} : { storageSymbol }),
+        ...(storageDeclaration === undefined ? {} : { storageDeclaration }),
+        locationIdentity: requiredNode(record, "locationIdentity", "PointerOperationFact"),
+      });
+    }
+    case "allocate": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "initialExpression",
+        "initialType",
+        "locationIdentity",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        initialExpression: requiredNode(record, "initialExpression", "PointerOperationFact"),
+        initialType: requiredCompilerType(record, "initialType", "PointerOperationFact"),
+        locationIdentity: requiredNode(record, "locationIdentity", "PointerOperationFact"),
+      });
+    }
+    case "load": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "pointerExpression",
+        "pointerType",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        pointerExpression: requiredNode(record, "pointerExpression", "PointerOperationFact"),
+        pointerType: requiredCompilerType(record, "pointerType", "PointerOperationFact"),
+      });
+    }
+    case "store": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "pointerExpression",
+        "pointerType",
+        "valueExpression",
+        "valueType",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        pointerExpression: requiredNode(record, "pointerExpression", "PointerOperationFact"),
+        pointerType: requiredCompilerType(record, "pointerType", "PointerOperationFact"),
+        valueExpression: requiredNode(record, "valueExpression", "PointerOperationFact"),
+        valueType: requiredCompilerType(record, "valueType", "PointerOperationFact"),
+      });
+    }
+  }
 }
 
 function snapshotStructFact(value: StructFact): StructFact {
@@ -568,6 +695,44 @@ function fieldFactEquals(left: FieldFact, right: FieldFact): boolean {
     && left.readonly === right.readonly;
 }
 
+function pointerOperationFactEquals(
+  left: PointerOperationFact,
+  right: PointerOperationFact,
+): boolean {
+  if (
+    left.operation !== right.operation
+    || left.call !== right.call
+    || left.pointeeType !== right.pointeeType
+    || left.resultType !== right.resultType
+  ) {
+    return false;
+  }
+  switch (left.operation) {
+    case "address-of":
+      return right.operation === "address-of"
+        && left.storageExpression === right.storageExpression
+        && left.storageType === right.storageType
+        && left.storageSymbol === right.storageSymbol
+        && left.storageDeclaration === right.storageDeclaration
+        && left.locationIdentity === right.locationIdentity;
+    case "allocate":
+      return right.operation === "allocate"
+        && left.initialExpression === right.initialExpression
+        && left.initialType === right.initialType
+        && left.locationIdentity === right.locationIdentity;
+    case "load":
+      return right.operation === "load"
+        && left.pointerExpression === right.pointerExpression
+        && left.pointerType === right.pointerType;
+    case "store":
+      return right.operation === "store"
+        && left.pointerExpression === right.pointerExpression
+        && left.pointerType === right.pointerType
+        && left.valueExpression === right.valueExpression
+        && left.valueType === right.valueType;
+  }
+}
+
 function optionalFieldArrayEquals(
   left: readonly FieldFact[] | undefined,
   right: readonly FieldFact[] | undefined,
@@ -703,6 +868,52 @@ function requiredSubject(
     throw new Error(`${name}.${field} must be an identity-bearing object.`);
   }
   return value;
+}
+
+function requiredCompilerType(
+  record: Readonly<Record<string, unknown>>,
+  field: string,
+  name: string,
+): Type {
+  const value = requiredSubject(record, field, name);
+  if (!("flags" in value) || typeof value.flags !== "number") {
+    throw new Error(`${name}.${field} must be a compiler semantic type.`);
+  }
+  return value as Type;
+}
+
+function optionalCompilerSymbol(
+  record: Readonly<Record<string, unknown>>,
+  field: string,
+  name: string,
+): Symbol | undefined {
+  const value = optionalSubject(record, field, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!("Flags" in value) || typeof value.Flags !== "number") {
+    throw new Error(`${name}.${field} must be a compiler symbol when present.`);
+  }
+  return value as Symbol;
+}
+
+function requiredPointerOperation(value: unknown): PointerOperationFact["operation"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("PointerOperationFact must be an object.");
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, "operation");
+  const operation = descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : undefined;
+  if (
+    operation !== "address-of"
+    && operation !== "allocate"
+    && operation !== "load"
+    && operation !== "store"
+  ) {
+    throw new Error(`PointerOperationFact.operation '${String(operation)}' is invalid.`);
+  }
+  return operation;
 }
 
 function optionalSubject(

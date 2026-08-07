@@ -5590,6 +5590,7 @@ interface ResolvedSourceElementAccessInfoBase {
   readonly selectedSymbol?: Symbol;
   readonly selectedDeclaration?: Node;
   readonly selectedElementIndex?: number;
+  readonly writable: boolean;
   readonly optionalChain: boolean;
   readonly callCallee: boolean;
 }
@@ -5640,6 +5641,7 @@ export function Checker_getResolvedSourceElementAccessInfo(
     ...(selected.selectedSymbol === undefined ? {} : { selectedSymbol: selected.selectedSymbol }),
     ...(selected.selectedDeclaration === undefined ? {} : { selectedDeclaration: selected.selectedDeclaration }),
     ...(selected.selectedElementIndex === undefined ? {} : { selectedElementIndex: selected.selectedElementIndex }),
+    writable: selectedElementAccessIsWritable(receiver, node, selected),
     ...resolvedSourceAccessTypes(
       accessMode,
       accessMode === "read" || accessMode === "delete" || accessMode === "read-write"
@@ -5652,6 +5654,23 @@ export function Checker_getResolvedSourceElementAccessInfo(
     optionalChain: IsOptionalChain(node),
     callCallee: Checker_isMethodAccessForCall(receiver, node),
   });
+}
+
+function selectedElementAccessIsWritable(
+  receiver: GoPtr<Checker>,
+  node: Node,
+  selected: SelectedElementAccessCheck,
+): boolean {
+  if (selected.selectedSymbol !== undefined) {
+    return !Checker_isAssignmentToReadonlyEntity(
+      receiver,
+      node,
+      selected.selectedSymbol,
+      AssignmentKindDefinite,
+    );
+  }
+  return selected.indexSelections.length > 0
+    && selected.indexSelections.every((selection) => selection.indexInfo?.isReadonly !== true);
 }
 
 function checkElementAccessExpressionWithEvidence(
@@ -6850,6 +6869,7 @@ interface ResolvedSourcePropertyAccessInfoBase {
   readonly sourceDeclaration?: Node;
   readonly selectedSymbol?: Symbol;
   readonly selectedDeclaration?: Node;
+  readonly writable: boolean;
   readonly optionalChain: boolean;
   readonly callCallee: boolean;
 }
@@ -6943,6 +6963,13 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
     ...(selected.sourceDeclaration === undefined ? {} : { sourceDeclaration: selected.sourceDeclaration }),
     ...(selected.selectedSymbol === undefined ? {} : { selectedSymbol: selected.selectedSymbol }),
     ...(selected.selectedDeclaration === undefined ? {} : { selectedDeclaration: selected.selectedDeclaration }),
+    writable: selected.selectedSymbol !== undefined
+      && !Checker_isAssignmentToReadonlyEntity(
+        receiver,
+        node,
+        selected.selectedSymbol,
+        AssignmentKindDefinite,
+      ),
     ...resolvedSourceAccessTypes(accessMode, sourceReadType, sourceWriteType),
     optionalChain: IsOptionalChain(node),
     callCallee: Checker_isMethodAccessForCall(receiver, node),

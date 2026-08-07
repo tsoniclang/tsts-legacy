@@ -9,6 +9,7 @@ import {
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,
+  pointerOperationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
@@ -25,6 +26,7 @@ import type {
   FlowStateFact,
   FunctionPointerFact,
   PointerFact,
+  PointerOperationFact,
   ProviderTypeFamilyFact,
   ProviderVirtualDeclarationFact,
   SourcePrimitiveFact,
@@ -84,6 +86,10 @@ export class SourceFactQueries implements ReadonlySourceFactResolver {
 
   getPointer(subject: ExtensionFactSubject | undefined): PointerFact | undefined {
     return this.getFact(subject, pointerFactKey);
+  }
+
+  getPointerOperation(subject: ExtensionFactSubject | undefined): PointerOperationFact | undefined {
+    return this.getFact(subject, pointerOperationFactKey);
   }
 
   getStruct(subject: ExtensionFactSubject | undefined): StructFact | undefined {

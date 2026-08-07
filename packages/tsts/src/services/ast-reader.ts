@@ -41,8 +41,13 @@ import {
   ModifierFlagsReadonly,
   ModifierFlagsStatic,
 } from "../internal/ast/modifierflags.js";
-import { GetCombinedNodeFlags, GetHeritageElements, GetSourceFileOfNode, HasModifier, IsConstAssertion, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, IsVarAwaitUsing, IsVarConst, IsVarLet, IsVarUsing } from "../internal/ast/utilities.js";
+import { GetCombinedNodeFlags, GetHeritageElements, GetSourceFileOfNode, HasModifier, IsConstAssertion, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, IsVarAwaitUsing, IsVarConst, IsVarLet, IsVarUsing, NodeIsSynthesized } from "../internal/ast/utilities.js";
 import { KindExtendsKeyword, KindImplementsKeyword } from "../internal/ast/generated/kinds.js";
+import {
+  ComputePositionMap,
+  PositionMap_UTF8ToUTF16,
+} from "../internal/ast/positionmap.js";
+import { GetTokenPosOfNode } from "../internal/scanner/scanner.js";
 
 export type AstModifierKind =
   | "public"
@@ -59,6 +64,14 @@ export type AstModifierKind =
   | "const";
 
 export type AstVariableDeclarationKind = "var" | "let" | "const" | "using" | "await using";
+
+export type AstAuthoredRange =
+  | {
+      readonly kind: "authored";
+      readonly start: number;
+      readonly end: number;
+    }
+  | { readonly kind: "synthetic" };
 
 export interface AstReader {
   readonly kind: (node: GoPtr<Node>) => Kind | undefined;
@@ -99,6 +112,8 @@ export interface AstReader {
   readonly isTypeOnlyImportOrExportDeclaration: (node: GoPtr<Node>) => boolean;
   readonly pos: (node: GoPtr<Node>) => number;
   readonly end: (node: GoPtr<Node>) => number;
+  /** Returns trivia-free UTF-16 offsets into the exact checked source text. */
+  readonly authoredRange: (node: GoPtr<Node>) => AstAuthoredRange;
   readonly getSourceFile: (node: GoPtr<Node>) => GoPtr<SourceFile>;
   readonly getFileName: (sourceFile: GoPtr<SourceFile>) => string;
   readonly getPath: (sourceFile: GoPtr<SourceFile>) => string;
@@ -170,6 +185,7 @@ export function createAstReader(): AstReader {
     },
     pos: (node) => node === undefined ? -1 : Node_Pos(node),
     end: (node) => node === undefined ? -1 : Node_End(node),
+    authoredRange,
     getSourceFile: (node) => GetSourceFileOfNode(node),
     getFileName: (sourceFile) => sourceFile === undefined ? "" : SourceFile_FileName(sourceFile),
     getPath: (sourceFile) => sourceFile === undefined ? "" : SourceFile_Path(sourceFile),
@@ -179,6 +195,43 @@ export function createAstReader(): AstReader {
     as: casts,
   };
   return Object.freeze(reader);
+}
+
+function authoredRange(node: GoPtr<Node>): AstAuthoredRange {
+  if (node === undefined || NodeIsSynthesized(node)) {
+    return Object.freeze({ kind: "synthetic" });
+  }
+  const sourceFile = GetSourceFileOfNode(node);
+  if (sourceFile === undefined) {
+    return Object.freeze({ kind: "synthetic" });
+  }
+  const positionMap = authoredPositionMap(sourceFile);
+  const start = PositionMap_UTF8ToUTF16(
+    positionMap,
+    GetTokenPosOfNode(node, sourceFile, false as bool),
+  );
+  const end = PositionMap_UTF8ToUTF16(positionMap, Node_End(node));
+  if (start < 0 || end < start) {
+    return Object.freeze({ kind: "synthetic" });
+  }
+  return Object.freeze({ kind: "authored", start, end });
+}
+
+const authoredPositionMaps = new WeakMap<SourceFile, NonNullable<ReturnType<typeof ComputePositionMap>>>();
+
+function authoredPositionMap(
+  sourceFile: SourceFile,
+): NonNullable<ReturnType<typeof ComputePositionMap>> {
+  const existing = authoredPositionMaps.get(sourceFile);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = ComputePositionMap(SourceFile_Text(sourceFile));
+  if (created === undefined) {
+    throw new Error("TS-Go position map construction returned no result.");
+  }
+  authoredPositionMaps.set(sourceFile, created);
+  return created;
 }
 
 function operatorKindName(node: GoPtr<Node>): string | undefined {

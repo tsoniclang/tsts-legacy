@@ -17,6 +17,7 @@ import {
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,
+  pointerOperationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
@@ -51,6 +52,7 @@ test("public root exports the complete source-only fact vocabulary", () => {
       flowStateFactKey,
       functionPointerFactKey,
       pointerFactKey,
+      pointerOperationFactKey,
       providerTypeFamilyFactKey,
       providerVirtualDeclarationFactKey,
       sourcePrimitiveFactKey,
@@ -67,6 +69,7 @@ test("public root exports the complete source-only fact vocabulary", () => {
       ["tsts.source-semantics", "flowState"],
       ["tsts.source-semantics", "functionPointer"],
       ["tsts.source-semantics", "pointer"],
+      ["tsts.source-semantics", "pointerOperation"],
       ["tsts.provider", "typeFamily"],
       ["tsts.provider", "virtualDeclaration"],
       ["tsts.source-semantics", "sourcePrimitive"],
@@ -193,6 +196,48 @@ test("public AST reader exposes exact optional-parameter question tokens", () =>
   assert.equal(checked.ast.questionToken(parameters[0]), undefined);
   assert.equal(checked.ast.kindName(checked.ast.questionToken(parameters[1])), "KindQuestionToken");
   assert.equal(checked.ast.questionToken(sourceFile), undefined);
+});
+
+test("public AST reader exposes trivia-free UTF-16 authored ranges", () => {
+  const sourceText = [
+    "// 😀 before the call",
+    "const prefix = \"😀\";",
+    "declare function value(): number;",
+    "export const result = /* leading */ value(); // trailing",
+  ].join("\r\n");
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: {
+      "/src/core.d.ts": core,
+      "/src/index.ts": sourceText,
+    },
+    compilerOptions: {
+      noLib: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+    },
+  });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const sourceFile = checked.getSourceFile("/src/index.ts");
+  const call = findNode(
+    sourceFile,
+    checked.ast,
+    (node) => checked.ast.is.IsCallExpression(node),
+  );
+  const range = checked.ast.authoredRange(call);
+  const expectedStart = sourceText.indexOf("value();");
+  assert.deepEqual(range, {
+    kind: "authored",
+    start: expectedStart,
+    end: expectedStart + "value()".length,
+  });
+  assert.equal(
+    range.kind === "authored" ? sourceText.slice(range.start, range.end) : "",
+    "value()",
+  );
+  assert.deepEqual(checked.ast.authoredRange(undefined), { kind: "synthetic" });
 });
 
 test("public AST reader exposes exact authored type nodes", () => {

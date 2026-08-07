@@ -16,6 +16,7 @@ export {
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,
+  pointerOperationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitive,
@@ -58,6 +59,7 @@ export type {
   FlowStateFact,
   FunctionPointerFact,
   PointerFact,
+  PointerOperationFact,
   ProviderDeclarationIdentity,
   ProviderDeclarationKind,
   ProviderDeclarationMaterialization,
@@ -127,11 +129,12 @@ export type {
   ResolvedSourceElementAccessInfo,
   ResolvedSourceIterationInfo,
   ResolvedSourcePropertyAccessInfo,
+  ResolvedSourceStorageInfo,
   TypeCheckerQueries,
 } from "./services/type-checker.js";
 export { createCompilerHost, createInMemoryFileSystem, getBundledLibraryPath, withBundledLibraries } from "./services/embedding-host.js";
 export type { CompilerFileSystem, CompilerHostOptions, CompilerTraceCallback, InMemoryFileSystemOptions } from "./services/embedding-host.js";
-export type { AstModifierKind, AstReader, AstVariableDeclarationKind } from "./services/ast-reader.js";
+export type { AstAuthoredRange, AstModifierKind, AstReader, AstVariableDeclarationKind } from "./services/ast-reader.js";
 export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "./services/compiler-session.js";
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
 export type {
