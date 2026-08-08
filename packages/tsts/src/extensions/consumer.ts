@@ -10,6 +10,8 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
@@ -27,6 +29,8 @@ import type {
   FunctionPointerFact,
   PointerFact,
   PointerOperationFact,
+  RawPointerFact,
+  RawPointerOperationFact,
   ProviderTypeFamilyFact,
   ProviderVirtualDeclarationFact,
   SourcePrimitiveFact,
@@ -90,6 +94,14 @@ export class SourceFactQueries implements ReadonlySourceFactResolver {
 
   getPointerOperation(subject: ExtensionFactSubject | undefined): PointerOperationFact | undefined {
     return this.getFact(subject, pointerOperationFactKey);
+  }
+
+  getRawPointer(subject: ExtensionFactSubject | undefined): RawPointerFact | undefined {
+    return this.getFact(subject, rawPointerFactKey);
+  }
+
+  getRawPointerOperation(subject: ExtensionFactSubject | undefined): RawPointerOperationFact | undefined {
+    return this.getFact(subject, rawPointerOperationFactKey);
   }
 
   getStruct(subject: ExtensionFactSubject | undefined): StructFact | undefined {

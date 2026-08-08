@@ -10,6 +10,8 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
 } from "./facts.js";
 
 test("authored source fact payloads reject arbitrary identity objects", () => {
@@ -55,7 +57,18 @@ test("authored source fact payloads reject arbitrary identity objects", () => {
       rightExpression: invalidNode,
       rightType: invalidType,
     }),
+    () => rawPointerOperationFactKey.snapshot({
+      operation: "bind-raw-pointer",
+      call: invalidNode,
+      resultType: invalidType,
+      identityExpression: invalidNode,
+      identityType: invalidType,
+    }),
   ];
+
+  assert.deepEqual(rawPointerFactKey.snapshot({ representation: "opaque-identity" }), {
+    representation: "opaque-identity",
+  });
 
   for (const snapshot of cases) {
     assert.throws(snapshot, /must be a compiler source node/);

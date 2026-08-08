@@ -54,6 +54,8 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
   structFactKey,
@@ -69,6 +71,8 @@ import type {
   FunctionPointerFact,
   PointerFact,
   PointerOperationFact,
+  RawPointerFact,
+  RawPointerOperationFact,
   SourcePrimitiveFact,
   SourcePrimitiveKind,
   StructFact,
@@ -138,7 +142,10 @@ export type SourceCallMarkerKind =
   | "equal-pointer"
   | "hash-pointer"
   | "bind-pointer"
-  | "project-pointer";
+  | "project-pointer"
+  | "bind-raw-pointer"
+  | "equal-raw-pointer"
+  | "hash-raw-pointer";
 
 type ArgumentPassingMarkerKind = Extract<
   SourceCallMarkerKind,
@@ -151,7 +158,7 @@ export interface SourceCallMarkerDeclaration {
   readonly marker: SourceCallMarkerKind;
 }
 
-export type SourceTypeMarkerKind = "pointer" | "function-pointer";
+export type SourceTypeMarkerKind = "pointer" | "function-pointer" | "raw-pointer";
 
 export interface SourceTypeMarkerDeclaration {
   readonly kind: "type-marker";
@@ -482,6 +489,11 @@ function recordSourceSemanticsCallMarker(
         evidence,
       );
       return;
+    case "bind-raw-pointer":
+    case "equal-raw-pointer":
+    case "hash-raw-pointer":
+      recordRawPointerOperation(facts, callExpression, callInfo, marker, evidence);
+      return;
   }
 }
 
@@ -737,6 +749,67 @@ function exactSourceCallArgument(
   return callInfo.sourceArguments.length === expectedCount
     ? callInfo.sourceArguments[index]
     : undefined;
+}
+
+function recordRawPointerOperation(
+  facts: SourceSemanticsFactAccess,
+  callExpression: Node,
+  callInfo: ResolvedSourceCallInfo,
+  marker: SourceCallMarkerDeclaration,
+  evidence: readonly ExtensionEvidence[],
+): void {
+  if (callInfo.sourceSelectedSignatureKind !== "resolved") {
+    return;
+  }
+  switch (marker.marker) {
+    case "bind-raw-pointer": {
+      const identity = exactSourceCallArgument(callInfo, 0, 1);
+      if (identity === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        identityExpression: identity.expression,
+        identityType: identity.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    case "equal-raw-pointer": {
+      const left = exactSourceCallArgument(callInfo, 0, 2);
+      const right = exactSourceCallArgument(callInfo, 1, 2);
+      if (left === undefined || right === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        leftExpression: left.expression,
+        leftType: left.type,
+        rightExpression: right.expression,
+        rightType: right.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    case "hash-raw-pointer": {
+      const pointer = exactSourceCallArgument(callInfo, 0, 1);
+      if (pointer === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        pointerExpression: pointer.expression,
+        pointerType: pointer.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 function recordArgumentPassingMarker(
@@ -1000,6 +1073,15 @@ function recordSourceSemanticsTypeMarker(
 ): void {
   const typeArguments = Node_TypeArguments(typeReference) ?? [];
   const evidence = createMarkerEvidence(marker.exportName);
+  if (marker.marker === "raw-pointer") {
+    if (typeArguments.length !== 0) {
+      return;
+    }
+    const fact = { representation: "opaque-identity" } satisfies RawPointerFact;
+    facts.set(typeReference, rawPointerFactKey, fact, evidence);
+    facts.set(typeName, rawPointerFactKey, fact, evidence);
+    return;
+  }
   if (marker.marker === "pointer") {
     if (typeArguments.length !== 1) {
       return;

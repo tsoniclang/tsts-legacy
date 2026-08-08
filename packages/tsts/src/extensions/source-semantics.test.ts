@@ -59,6 +59,8 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
   sourcePrimitive,
   sourcePrimitiveFactKey,
   structFactKey,
@@ -86,6 +88,7 @@ function createExampleSourceSemanticsExtension() {
         sourcePrimitive("uint", "uint32", "number", false, 32),
         sourcePrimitive("long", "int64", "bigint", true, 64),
         { kind: "type-marker", exportName: "ptr", marker: "pointer" },
+        { kind: "type-marker", exportName: "rawptr", marker: "raw-pointer" },
         { kind: "type-marker", exportName: "fnptr", marker: "function-pointer" },
       ],
     }, {
@@ -111,6 +114,9 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "hashPointer", marker: "hash-pointer" },
         { kind: "call-marker", exportName: "bindPointer", marker: "bind-pointer" },
         { kind: "call-marker", exportName: "projectPointer", marker: "project-pointer" },
+        { kind: "call-marker", exportName: "bindRawPointer", marker: "bind-raw-pointer" },
+        { kind: "call-marker", exportName: "equalRawPointer", marker: "equal-raw-pointer" },
+        { kind: "call-marker", exportName: "hashRawPointer", marker: "hash-raw-pointer" },
       ],
     }],
   });
@@ -629,6 +635,43 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   );
 });
 
+test("source-semantics records opaque raw-pointer identity operations by declaration identity", () => {
+  const { extended, program, index } = createProgram(`
+    import type { rawptr } from "@example/native/types.js";
+    import { bindRawPointer, equalRawPointer, hashRawPointer } from "@example/native/lang.js";
+    import * as lang from "@example/native/lang.js";
+    import { bindRawPointer as localBindRawPointer } from "./local.js";
+
+    type Raw = rawptr;
+    const identity = {};
+    const first = bindRawPointer(identity); const second = lang.bindRawPointer(identity);
+    const equal = equalRawPointer(first, second);
+    const hash = hashRawPointer(first);
+    const local = localBindRawPointer(identity);
+  `, new Map([
+    ["/src/local.ts", "export function bindRawPointer(identity: object): object { return identity; }"],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const rawType = getTypeAliasType(index, "Raw");
+  const first = extended.extensionHost.facts.get(getCallExpression(index, "bindRawPointer", 0), rawPointerOperationFactKey);
+  const second = extended.extensionHost.facts.get(getCallExpression(index, "bindRawPointer", 1), rawPointerOperationFactKey);
+  const equal = extended.extensionHost.facts.get(getCallExpression(index, "equalRawPointer", 0), rawPointerOperationFactKey);
+  const hash = extended.extensionHost.facts.get(getCallExpression(index, "hashRawPointer", 0), rawPointerOperationFactKey);
+
+  assert.equal(extended.extensionHost.facts.get(rawType, rawPointerFactKey)?.representation, "opaque-identity");
+  assert.equal(first?.operation, "bind-raw-pointer");
+  assert.equal(second?.operation, "bind-raw-pointer");
+  assert.equal(equal?.operation, "equal-raw-pointer");
+  assert.equal(hash?.operation, "hash-raw-pointer");
+  assert.equal(
+    extended.extensionHost.facts.get(getCallExpression(index, "localBindRawPointer", 0), rawPointerOperationFactKey),
+    undefined,
+  );
+});
+
 test("source-semantics records struct field attribute and default facts from canonical imports only", () => {
   const { extended, program, index } = createProgram(`
     import type { int } from "@example/native/types.js";
@@ -816,10 +859,11 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export type long = bigint;",
       "export type ulong = bigint;",
       "export type ptr<T> = T;",
+      "export interface rawptr { readonly __rawPointerIdentity: unique symbol; }",
       "export type fnptr<Args, Result> = unknown;",
     ].join("\n")],
     ["/src/node_modules/@example/native/lang.d.ts", [
-      "import type { ptr } from './types.js';",
+      "import type { ptr, rawptr } from './types.js';",
       "export declare function out<T>(value: T): T;",
       "export declare function ref<T>(value: T): T;",
       "export declare function inref<T>(value: T): T;",
@@ -838,6 +882,9 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function hashPointer<T>(pointer: ptr<T> | undefined): number;",
       "export declare function bindPointer<T>(identity: object, read: () => T, write: (value: T) => void): ptr<T>;",
       "export declare function projectPointer<F, T>(pointer: ptr<F> | undefined, fromSource: (value: F) => T, toSource: (value: T) => F): ptr<T> | undefined;",
+      "export declare function bindRawPointer(identity: object): rawptr;",
+      "export declare function equalRawPointer(left: rawptr | undefined, right: rawptr | undefined): boolean;",
+      "export declare function hashRawPointer(pointer: rawptr | undefined): number;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {
