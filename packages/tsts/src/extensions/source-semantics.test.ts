@@ -109,6 +109,7 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "storePointer", marker: "store" },
         { kind: "call-marker", exportName: "equalPointer", marker: "equal-pointer" },
         { kind: "call-marker", exportName: "hashPointer", marker: "hash-pointer" },
+        { kind: "call-marker", exportName: "bindPointer", marker: "bind-pointer" },
         { kind: "call-marker", exportName: "projectPointer", marker: "project-pointer" },
       ],
     }],
@@ -463,6 +464,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
       storePointer,
       equalPointer,
       hashPointer,
+      bindPointer,
       projectPointer,
     } from "@example/native/lang.js";
     import * as lang from "@example/native/lang.js";
@@ -483,6 +485,12 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     const equal = equalPointer(direct, aliased);
     const nilEqual = equalPointer<int>(undefined, undefined);
     const hash = hashPointer(direct);
+    const storage = { value: 3 };
+    const bound = bindPointer<int>(
+      storage,
+      () => storage.value,
+      (next) => { storage.value = next; },
+    );
     const projected = projectPointer<int, int>(
       direct,
       (source) => source,
@@ -537,6 +545,10 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     getCallExpression(index, "hashPointer", 0),
     pointerOperationFactKey,
   );
+  const bound = extended.extensionHost.facts.get(
+    getCallExpression(index, "bindPointer", 0),
+    pointerOperationFactKey,
+  );
   const projected = extended.extensionHost.facts.get(
     getCallExpression(index, "projectPointer", 0),
     pointerOperationFactKey,
@@ -558,6 +570,23 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   assert.equal(equal?.operation, "equal-pointer");
   assert.equal(nilEqual?.operation, "equal-pointer");
   assert.equal(hash?.operation, "hash-pointer");
+  assert.equal(bound?.operation, "bind-pointer");
+  assert.equal(
+    bound?.operation === "bind-pointer" ? bound.locationIdentity : undefined,
+    bound?.operation === "bind-pointer" ? bound.identityExpression : undefined,
+  );
+  assert.equal(
+    bound?.operation === "bind-pointer"
+      ? bound.readExpression
+      : undefined,
+    Node_Arguments(bound?.call)?.[1],
+  );
+  assert.equal(
+    bound?.operation === "bind-pointer"
+      ? bound.writeExpression
+      : undefined,
+    Node_Arguments(bound?.call)?.[2],
+  );
   assert.equal(projected?.operation, "project-pointer");
   assert.equal(
     projected?.operation === "project-pointer"
@@ -807,6 +836,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function storePointer<T>(pointer: ptr<T>, value: T): void;",
       "export declare function equalPointer<T>(left: ptr<T> | undefined, right: ptr<T> | undefined): boolean;",
       "export declare function hashPointer<T>(pointer: ptr<T> | undefined): number;",
+      "export declare function bindPointer<T>(identity: object, read: () => T, write: (value: T) => void): ptr<T>;",
       "export declare function projectPointer<F, T>(pointer: ptr<F> | undefined, fromSource: (value: F) => T, toSource: (value: T) => F): ptr<T> | undefined;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
