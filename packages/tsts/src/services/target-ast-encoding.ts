@@ -26,6 +26,7 @@ import {
 import {
   KindPropertyAssignment,
   KindPropertySignature,
+  KindShorthandPropertyAssignment,
   KindUnknownKeyword,
 } from "../internal/ast/generated/kinds.js";
 import {
@@ -209,6 +210,7 @@ class TargetAstEncoder {
     const encoding = targetAstNodeEncoding(node);
     switch (node.Kind) {
       case KindPropertyAssignment:
+      case KindShorthandPropertyAssignment:
         return withRequiredProtocolChild(
           encoding,
           "Type",

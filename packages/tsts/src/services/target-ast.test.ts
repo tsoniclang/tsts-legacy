@@ -12,11 +12,13 @@ import {
   AsIdentifier,
   AsPropertyAssignment,
   AsPropertySignatureDeclaration,
+  AsShorthandPropertyAssignment,
   encodeTargetSourceFileForPrinting,
   IsIdentifier,
   IsImportDeclaration,
   IsPropertyAssignment,
   IsPropertySignatureDeclaration,
+  IsShorthandPropertyAssignment,
   IsSourceFile,
   NewIdentifier,
   transformTargetSourceFile,
@@ -82,12 +84,15 @@ test("target AST print encoding preserves parsed node-list ranges", () => {
 
 test("target AST print encoding completes parser-optional wire metadata", () => {
   const sourceFile = parse(`interface Shape { value: number }
-export const shape = { value: 1 };
+const shorthand = 2;
+export const shape = { value: 1, shorthand };
 `);
   let propertyAssignments = 0;
   let propertySignatures = 0;
+  let shorthandAssignments = 0;
   let propertyAssignment: ReturnType<typeof AsPropertyAssignment>;
   let propertySignature: ReturnType<typeof AsPropertySignatureDeclaration>;
+  let shorthandAssignment: ReturnType<typeof AsShorthandPropertyAssignment>;
   transformTargetSourceFile(sourceFile, (original, updated) => {
     if (IsPropertyAssignment(original)) {
       propertyAssignments += 1;
@@ -99,14 +104,21 @@ export const shape = { value: 1 };
       propertySignature = AsPropertySignatureDeclaration(original);
       assert.equal(propertySignature?.Initializer, undefined);
     }
+    if (IsShorthandPropertyAssignment(original)) {
+      shorthandAssignments += 1;
+      shorthandAssignment = AsShorthandPropertyAssignment(original);
+      assert.equal(shorthandAssignment?.Type, undefined);
+    }
     return updated;
   });
 
   assert.equal(propertyAssignments, 1);
   assert.equal(propertySignatures, 1);
+  assert.equal(shorthandAssignments, 1);
   assert.ok(encodeTargetSourceFileForPrinting(sourceFile).length > sourceText.length);
   assert.equal(propertyAssignment?.Type, undefined);
   assert.equal(propertySignature?.Initializer, undefined);
+  assert.equal(shorthandAssignment?.Type, undefined);
 });
 
 function parse(text: string) {
