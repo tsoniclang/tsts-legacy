@@ -6,6 +6,13 @@ export const providerAncillaryDataLimits = Object.freeze({
   maxTotalScalarCodeUnits: 262_144,
 });
 
+export const providerModuleContextLimits = Object.freeze({
+  maxArrayEntries: 65_536,
+  maxTotalEntries: 65_536,
+  maxStringCodeUnits: 65_536,
+  maxTotalScalarCodeUnits: 4_194_304,
+});
+
 export const providerDeclarationModelLimits = Object.freeze({
   maxNestingDepth: 256,
   maxPhysicalNodeAndArrayEntries: 65_536,

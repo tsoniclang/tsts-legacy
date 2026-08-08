@@ -11,6 +11,7 @@ import {
   testProviderIdentity,
   testProviderModel,
 } from "./source-provider-test-support.js";
+import { providerModuleContextLimits } from "./provider-resource-limits.js";
 
 test("malformed ownership outcomes fail closed before later provider stages", () => {
   const cases: readonly {
@@ -234,6 +235,61 @@ test("unreadable request contexts reject before ownership callbacks", () => {
     /unreadable module context/,
   );
   assert.deepEqual(host.providers.getVirtualDeclarationDocuments(), []);
+});
+
+test("large valid import slices reach ownership while the context bound remains closed", () => {
+  const providerSpecifier = "@test/context-budget-provider.js";
+  const sourceProvider = validProvider(
+    "test.context-budget",
+    providerSpecifier,
+    testProviderModel(providerSpecifier, "Test.ContextBudget"),
+  );
+  let ownershipCalls = 0;
+  Reflect.set(sourceProvider, "ownsModule", () => {
+    ownershipCalls += 1;
+    return { kind: "unowned" };
+  });
+  const host = hostFor(sourceProvider);
+  const productContext: ProviderModuleContext = {
+    importSlice: {
+      moduleSpecifier: "./interface-types.js",
+      kind: "named",
+      requestedExports: Array.from({ length: 4_000 }, (_, index) => ({
+        exportedName: `$goDynamicType_${index.toString().padStart(6, "0")}_${"x".repeat(48)}`,
+        localName: `$goDynamicType_${index.toString().padStart(6, "0")}_${"x".repeat(48)}`,
+        kind: "value",
+      })),
+    },
+  };
+  assert.equal(
+    host.providers.resolveVirtualModule("./interface-types.js", productContext).kind,
+    "unowned",
+  );
+  assert.equal(ownershipCalls, 1);
+  assert.deepEqual(host.diagnostics.all(), []);
+
+  const overLimit = Array.from({
+    length: providerModuleContextLimits.maxTotalScalarCodeUnits
+      / providerModuleContextLimits.maxStringCodeUnits,
+  }, () => ({
+    exportedName: "x".repeat(providerModuleContextLimits.maxStringCodeUnits),
+  }));
+  assert.equal(Number.isInteger(overLimit.length), true);
+  assert.equal(
+    host.providers.resolveVirtualModule("./too-large.js", {
+      importSlice: {
+        moduleSpecifier: "./too-large.js",
+        kind: "named",
+        requestedExports: overLimit,
+      },
+    }).kind,
+    "rejected",
+  );
+  assert.equal(ownershipCalls, 1);
+  assert.equal(
+    host.diagnostics.all().at(-1)?.extensionCode,
+    "INVALID_PROVIDER_MODULE_CONTEXT",
+  );
 });
 
 test("provider registration captures identity and callback methods exactly once", () => {
