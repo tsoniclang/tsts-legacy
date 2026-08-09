@@ -306,6 +306,9 @@ function recordSourceSemanticsDeclarationAliases(
   checker: TypeCheckerQueries,
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
+  if (facts.get(sourceFile, providerVirtualDeclarationFactKey) !== undefined) {
+    return;
+  }
   visitSourceSemanticsNodePost(sourceFile, (node) => {
     if (
       node === undefined ||
