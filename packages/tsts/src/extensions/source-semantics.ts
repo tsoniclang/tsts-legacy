@@ -57,6 +57,7 @@ import {
   rawPointerFactKey,
   rawPointerOperationFactKey,
   providerVirtualDeclarationFactKey,
+  sourceMarkerFactKey,
   sourcePrimitiveFactKey,
   structFactKey,
 } from "./facts.js";
@@ -73,8 +74,11 @@ import type {
   PointerOperationFact,
   RawPointerFact,
   RawPointerOperationFact,
+  SourceCallMarkerKind,
+  SourceMarkerFact,
   SourcePrimitiveFact,
   SourcePrimitiveKind,
+  SourceTypeMarkerKind,
   StructFact,
 } from "./facts.js";
 import type { ResolvedSourceCallInfo, TypeCheckerQueries } from "../services/type-checker.js";
@@ -124,28 +128,7 @@ export interface SourcePrimitiveDeclaration extends Omit<SourcePrimitiveFact, "k
   readonly primitive: SourcePrimitiveKind;
 }
 
-export type SourceCallMarkerKind =
-  | "write-only-reference"
-  | "read-write-reference"
-  | "read-only-reference"
-  | "shared-borrow"
-  | "mutable-borrow"
-  | "move"
-  | "struct"
-  | "field"
-  | "attribute"
-  | "default-value"
-  | "address-of"
-  | "allocate"
-  | "load"
-  | "store"
-  | "equal-pointer"
-  | "hash-pointer"
-  | "bind-pointer"
-  | "project-pointer"
-  | "bind-raw-pointer"
-  | "equal-raw-pointer"
-  | "hash-raw-pointer";
+export type { SourceCallMarkerKind, SourceTypeMarkerKind } from "./facts.js";
 
 type ArgumentPassingMarkerKind = Extract<
   SourceCallMarkerKind,
@@ -157,8 +140,6 @@ export interface SourceCallMarkerDeclaration {
   readonly exportName: string;
   readonly marker: SourceCallMarkerKind;
 }
-
-export type SourceTypeMarkerKind = "pointer" | "function-pointer" | "raw-pointer";
 
 export interface SourceTypeMarkerDeclaration {
   readonly kind: "type-marker";
@@ -322,12 +303,14 @@ function recordSourceSemanticsImportClause(
       recordSourcePrimitiveImport(facts, importSpecifier, moduleIdentity, exportName, primitiveFact, typedImport);
       continue;
     }
-    if (moduleIdentity.callMarkersByExportName.has(exportName)) {
-      recordSourceSemanticsSymbolImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value");
+    const callMarker = moduleIdentity.callMarkersByExportName.get(exportName);
+    if (callMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", callMarker);
       continue;
     }
-    if (moduleIdentity.typeMarkersByExportName.has(exportName)) {
-      recordSourceSemanticsSymbolImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value");
+    const typeMarker = moduleIdentity.typeMarkersByExportName.get(exportName);
+    if (typeMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", typeMarker);
     }
   }
 }
@@ -1609,6 +1592,33 @@ function recordSourceSemanticsSymbolImport(
   const identity = createExportIdentity(moduleIdentity, exportName, importKind, getSymbolFactId(localSymbol));
   facts.set(importSpecifier, canonicalIdentityFactKey, identity, createModuleEvidence(moduleIdentity));
   facts.set(localSymbol, canonicalIdentityFactKey, identity, createModuleEvidence(moduleIdentity));
+}
+
+function recordSourceSemanticsMarkerImport(
+  facts: SourceSemanticsFactAccess,
+  importSpecifier: Node,
+  moduleIdentity: SourceSemanticsModuleIdentity,
+  exportName: string,
+  importKind: ExtensionImportKind,
+  marker: SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration,
+): void {
+  recordSourceSemanticsSymbolImport(
+    facts,
+    importSpecifier,
+    moduleIdentity,
+    exportName,
+    importKind,
+  );
+  const localSymbol = Node_Symbol(importSpecifier);
+  if (localSymbol === undefined) {
+    return;
+  }
+  const fact: SourceMarkerFact = marker.kind === "call-marker"
+    ? { kind: marker.kind, marker: marker.marker }
+    : { kind: marker.kind, marker: marker.marker };
+  const evidence = createMarkerEvidence(exportName);
+  facts.set(importSpecifier, sourceMarkerFactKey, fact, evidence);
+  facts.set(localSymbol, sourceMarkerFactKey, fact, evidence);
 }
 
 function createModuleIdentity(moduleIdentity: SourceSemanticsModuleIdentity, importKind: ExtensionImportKind, canonicalSymbolId: string): ExtensionCanonicalIdentity {

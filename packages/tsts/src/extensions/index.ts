@@ -38,6 +38,7 @@ export {
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
+  sourceMarkerFactKey,
   structFactKey,
 } from "./facts.js";
 
@@ -144,6 +145,7 @@ export type {
   ProviderTypeFamilyVariantFact,
   ProviderVirtualDeclarationFact,
   SourcePointerMutability,
+  SourceMarkerFact,
   SourcePrimitiveFact,
   SourcePrimitiveKind,
   StructFact,

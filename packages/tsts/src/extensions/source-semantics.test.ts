@@ -62,6 +62,7 @@ import {
   rawPointerFactKey,
   rawPointerOperationFactKey,
   sourcePrimitive,
+  sourceMarkerFactKey,
   sourcePrimitiveFactKey,
   structFactKey,
 } from "./index.js";
@@ -161,6 +162,33 @@ test("source-semantics records configured primitive facts from canonical named i
   const consumer = createSourceFactQueries(extended.extensionHost);
   assert.equal(consumer.getSourcePrimitive(i32Symbol)?.kind, "int32");
   assert.equal(consumer.getSourcePrimitive(longSymbol)?.kind, "int64");
+});
+
+test("source-semantics records exact marker identity on unused named imports", () => {
+  const { extended, program, index } = createProgram(`
+    import type { ptr } from "@example/native/types.js";
+    import { loadPointer } from "@example/native/lang.js";
+
+    export const value = 1;
+  `);
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const pointerImport = getNamedImportSpecifier(index, "ptr");
+  const loadImport = getNamedImportSpecifier(index, "loadPointer");
+  assert.deepEqual(
+    extended.extensionHost.facts.get(pointerImport, sourceMarkerFactKey),
+    { kind: "type-marker", marker: "pointer" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(loadImport, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(Node_Symbol(loadImport), sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
 });
 
 test("source-semantics primitive spelling is entirely consumer configured", () => {

@@ -63,6 +63,41 @@ export interface ExtensionCanonicalIdentity {
 
 export type SourcePointerMutability = "readonly" | "readwrite" | "unspecified";
 
+export type SourceCallMarkerKind =
+  | "write-only-reference"
+  | "read-write-reference"
+  | "read-only-reference"
+  | "shared-borrow"
+  | "mutable-borrow"
+  | "move"
+  | "struct"
+  | "field"
+  | "attribute"
+  | "default-value"
+  | "address-of"
+  | "allocate"
+  | "load"
+  | "store"
+  | "equal-pointer"
+  | "hash-pointer"
+  | "bind-pointer"
+  | "project-pointer"
+  | "bind-raw-pointer"
+  | "equal-raw-pointer"
+  | "hash-raw-pointer";
+
+export type SourceTypeMarkerKind = "pointer" | "function-pointer" | "raw-pointer";
+
+export type SourceMarkerFact =
+  | {
+    readonly kind: "call-marker";
+    readonly marker: SourceCallMarkerKind;
+  }
+  | {
+    readonly kind: "type-marker";
+    readonly marker: SourceTypeMarkerKind;
+  };
+
 export interface SourcePrimitiveFact {
   readonly kind: SourcePrimitiveKind;
   readonly signed?: boolean;
@@ -274,6 +309,15 @@ export const sourcePrimitiveFactKey = markHostSourceReadableFactKey(defineExtens
     && left.runtimeBase === right.runtimeBase,
 }));
 
+export const sourceMarkerFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<SourceMarkerFact>({
+  extensionId: "tsts.source-semantics",
+  name: "sourceMarker",
+  snapshot: snapshotSourceMarkerFact,
+  equals: (left, right) =>
+    left.kind === right.kind
+    && left.marker === right.marker,
+}));
+
 export const argumentPassingFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<ArgumentPassingFact>({
   extensionId: "tsts.source-semantics",
   name: "argumentPassing",
@@ -452,6 +496,19 @@ function snapshotSourcePrimitiveFact(value: SourcePrimitiveFact): SourcePrimitiv
     ...(signed === undefined ? {} : { signed }),
     ...(width === undefined ? {} : { width }),
   });
+}
+
+function snapshotSourceMarkerFact(value: SourceMarkerFact): SourceMarkerFact {
+  const record = exactRecord(value, "SourceMarkerFact", ["kind", "marker"]);
+  const kind = requiredString(record, "kind", "SourceMarkerFact");
+  const marker = requiredString(record, "marker", "SourceMarkerFact");
+  if (kind === "call-marker" && sourceCallMarkerKinds.has(marker as SourceCallMarkerKind)) {
+    return Object.freeze({ kind, marker: marker as SourceCallMarkerKind });
+  }
+  if (kind === "type-marker" && sourceTypeMarkerKinds.has(marker as SourceTypeMarkerKind)) {
+    return Object.freeze({ kind, marker: marker as SourceTypeMarkerKind });
+  }
+  throw new Error(`SourceMarkerFact '${kind}:${marker}' is invalid.`);
 }
 
 function snapshotArgumentPassingFact(value: ArgumentPassingFact): ArgumentPassingFact {
@@ -1382,6 +1439,34 @@ const sourceRuntimeBases = new Set<SourcePrimitiveFact["runtimeBase"]>([
   "bigint",
   "string",
   "object",
+]);
+const sourceCallMarkerKinds = new Set<SourceCallMarkerKind>([
+  "write-only-reference",
+  "read-write-reference",
+  "read-only-reference",
+  "shared-borrow",
+  "mutable-borrow",
+  "move",
+  "struct",
+  "field",
+  "attribute",
+  "default-value",
+  "address-of",
+  "allocate",
+  "load",
+  "store",
+  "equal-pointer",
+  "hash-pointer",
+  "bind-pointer",
+  "project-pointer",
+  "bind-raw-pointer",
+  "equal-raw-pointer",
+  "hash-raw-pointer",
+]);
+const sourceTypeMarkerKinds = new Set<SourceTypeMarkerKind>([
+  "pointer",
+  "function-pointer",
+  "raw-pointer",
 ]);
 const pointerMutabilities = new Set<SourcePointerMutability>(["readonly", "readwrite", "unspecified"]);
 const flowStates = new Set<FlowStateFact["state"]>(["moved", "borrowed-shared", "borrowed-mut"]);

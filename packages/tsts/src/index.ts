@@ -24,6 +24,7 @@ export {
   sourcePrimitive,
   sourceSemanticsExtensionId,
   sourcePrimitiveFactKey,
+  sourceMarkerFactKey,
   structFactKey,
 } from "./extensions/index.js";
 export type {
@@ -110,6 +111,7 @@ export type {
   SourceDeclarationMaterializationMode,
   SourceFileQueries,
   SourcePointerMutability,
+  SourceMarkerFact,
   SourceProgramQueries,
   SourcePrimitiveDeclaration,
   SourcePrimitiveFact,
