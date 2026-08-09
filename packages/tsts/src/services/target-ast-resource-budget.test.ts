@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  defaultTargetAstEncodingLimits,
   TargetAstResourceBudget,
   type TargetAstEncodingLimits,
 } from "./target-ast-resource-budget.js";
@@ -26,6 +27,15 @@ test("target AST resource budgets accept every exact finite boundary", () => {
   budget.reserveExtendedWords(2);
   budget.reserveStructuredBytes(2);
   budget.requireEncodedBytes(8);
+});
+
+test("default target AST node-row budget is finite at its exact boundary", () => {
+  const budget = new TargetAstResourceBudget(defaultTargetAstEncodingLimits);
+  budget.reserveNodeRows(defaultTargetAstEncodingLimits.maximumNodeRows);
+  assert.throws(
+    () => budget.reserveNodeRows(1),
+    /node rows .* exceeds limit 2097152/u,
+  );
 });
 
 test("target AST resource budgets reject each independent dimension", () => {
