@@ -22,9 +22,12 @@ import {
 import { Node_ForEachChild, Node_Name } from "../internal/ast/spine.js";
 import { AsExportDeclaration, AsImportClause, AsNamespaceImport, AsQualifiedName, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
+  KindClassDeclaration,
   KindExportDeclaration,
   KindCallExpression,
+  KindFunctionDeclaration,
   KindImportDeclaration,
+  KindInterfaceDeclaration,
   KindNamedImports,
   KindNamedExports,
   KindNamespaceImport,
@@ -316,6 +319,51 @@ test("source-semantics records primitive facts on type references from explicit 
   assert.equal(extended.extensionHost.facts.get(namespacedReference, sourcePrimitiveFactKey)?.kind, "uint32");
   assert.equal(extended.extensionHost.facts.get(namespacedTypeName, canonicalIdentityFactKey)?.id, `${exampleTypesModule}::uint`);
   assert.equal(extended.extensionHost.facts.get(AsQualifiedName(namespacedTypeName)!.Right, sourcePrimitiveFactKey)?.kind, "uint32");
+});
+
+test("source-semantics selects primitive references by exact checked declaration across generic shadows", () => {
+  const { extended, program, index } = createProgram(`
+    import type { int } from "@example/native/types.js";
+
+    class Box<int> {
+      value!: int;
+    }
+
+    interface Shape<int> {
+      value: int;
+    }
+
+    type Alias<int> = int;
+
+    function identity<int>(value: int): int {
+      return value;
+    }
+
+    export type Imported = int;
+  `);
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const shadowOwners = [
+    getTopLevelDeclaration(index, KindClassDeclaration, "Box"),
+    getTopLevelDeclaration(index, KindInterfaceDeclaration, "Shape"),
+    getTopLevelDeclaration(index, KindTypeAliasDeclaration, "Alias"),
+    getTopLevelDeclaration(index, KindFunctionDeclaration, "identity"),
+  ];
+  const shadowedReferences = shadowOwners.flatMap((owner) =>
+    findNodes(owner, (node) =>
+      node?.Kind === KindTypeReference &&
+      Node_Text(AsTypeReferenceNode(node)?.TypeName) === "int"));
+  assert.equal(shadowedReferences.length, 5);
+  for (const reference of shadowedReferences) {
+    assert.equal(extended.extensionHost.facts.get(reference, sourcePrimitiveFactKey), undefined);
+    assert.equal(extended.extensionHost.facts.get(reference, canonicalIdentityFactKey), undefined);
+  }
+
+  const importedReference = getTypeAliasType(index, "Imported");
+  assert.equal(extended.extensionHost.facts.get(importedReference, sourcePrimitiveFactKey)?.kind, "int32");
+  assert.equal(extended.extensionHost.facts.get(importedReference, canonicalIdentityFactKey)?.id, `${exampleTypesModule}::int`);
 });
 
 test("source-semantics fact resolver returns primitive type-reference facts from canonical imports", () => {
@@ -1176,6 +1224,18 @@ function findNode(root: GoPtr<Node>, predicate: (node: GoPtr<Node>) => boolean):
   Node_ForEachChild(root, (child) => {
     found = findNode(child, predicate);
     return (found !== undefined) as bool;
+  });
+  return found;
+}
+
+function findNodes(root: GoPtr<Node>, predicate: (node: GoPtr<Node>) => boolean): readonly Node[] {
+  if (root === undefined) {
+    return [];
+  }
+  const found = predicate(root) ? [root] : [];
+  Node_ForEachChild(root, (child) => {
+    found.push(...findNodes(child, predicate));
+    return false as bool;
   });
   return found;
 }
