@@ -46,6 +46,11 @@ import {
   NODE_STRING_INDEX_MASK,
   PROTOCOL_VERSION,
 } from "../internal/ast/generated/protocol.js";
+import {
+  defaultTargetAstEncodingLimits,
+  TargetAstResourceBudget,
+  TargetAstResourceLimitError,
+} from "./target-ast-resource-budget.js";
 
 const noStructuredData = 0xffff_ffff;
 
@@ -62,11 +67,19 @@ export class TargetAstEncodingError extends Error {
 }
 
 export function encodeTargetSourceFileForPrinting(sourceFile: SourceFile): Uint8Array {
-  return new TargetAstEncoder().encode(sourceFile);
+  try {
+    return new TargetAstEncoder().encode(sourceFile);
+  } catch (error) {
+    if (error instanceof TargetAstResourceLimitError) {
+      throw new TargetAstEncodingError(error.message);
+    }
+    throw error;
+  }
 }
 
 class TargetAstEncoder {
-  readonly #strings = new StringTable();
+  readonly #budget: TargetAstResourceBudget;
+  readonly #strings: StringTable;
   readonly #extended: number[] = [];
   readonly #structured: number[] = [];
   readonly #nodeValues = new Array<number>(NODE_LEN / 4).fill(0);
@@ -78,6 +91,9 @@ class TargetAstEncoder {
   #previousIndex = 0;
 
   constructor() {
+    this.#budget = new TargetAstResourceBudget(defaultTargetAstEncodingLimits);
+    this.#budget.reserveNodeRows(1);
+    this.#strings = new StringTable(this.#budget);
     const factory = NewNodeFactory({});
     this.#unknownType = requiredProtocolNode(
       NewKeywordTypeNode(factory, KindUnknownKeyword),
@@ -95,21 +111,30 @@ class TargetAstEncoder {
       throw new TargetAstEncodingError("target source file has no root node");
     }
     const encoding = this.#encoding(root);
+    this.#budget.requireDepth(1);
+    this.#budget.reserveNodeRows(1);
     this.#nodeCount = 1;
     this.#appendNodeRow(root, 0, this.#nodeData(root, encoding));
     this.#parentIndex = 1;
     this.#previousIndex = 0;
-    this.#visitChildren(root, encoding);
+    this.#active.add(root);
+    try {
+      this.#visitChildren(root, encoding, 1);
+    } finally {
+      this.#active.delete(root);
+    }
     return this.#finish();
   }
 
-  #visitNode(node: GoPtr<Node>): void {
+  #visitNode(node: GoPtr<Node>, depth: number): void {
     if (node === undefined) {
       throw new TargetAstEncodingError("present target AST child is absent");
     }
     if (this.#active.has(node)) {
       throw new TargetAstEncodingError("cycle in target AST", node.Kind);
     }
+    this.#budget.requireDepth(depth);
+    this.#budget.reserveNodeRows(1);
     this.#active.add(node);
     try {
       const encoding = this.#encoding(node);
@@ -124,7 +149,7 @@ class TargetAstEncoder {
       const savedParent = this.#parentIndex;
       this.#parentIndex = current;
       this.#previousIndex = 0;
-      this.#visitChildren(node, encoding);
+      this.#visitChildren(node, encoding, depth);
       this.#previousIndex = current;
       this.#parentIndex = savedParent;
     } finally {
@@ -132,7 +157,13 @@ class TargetAstEncoder {
     }
   }
 
-  #visitNodeList(nodes: readonly GoPtr<Node>[], list: GoPtr<NodeList>): void {
+  #visitNodeList(
+    nodes: readonly GoPtr<Node>[],
+    list: GoPtr<NodeList>,
+    depth: number,
+  ): void {
+    this.#budget.requireDepth(depth);
+    this.#budget.reserveNodeRows(1);
     this.#nodeCount += 1;
     const current = this.#nodeCount;
     this.#linkPrevious(current);
@@ -148,12 +179,16 @@ class TargetAstEncoder {
     const savedParent = this.#parentIndex;
     this.#parentIndex = current;
     this.#previousIndex = 0;
-    for (const node of nodes) this.#visitNode(node);
+    for (const node of nodes) this.#visitNode(node, depth + 1);
     this.#previousIndex = current;
     this.#parentIndex = savedParent;
   }
 
-  #visitChildren(node: Node, encoding: TargetAstNodeEncoding): void {
+  #visitChildren(
+    node: Node,
+    encoding: TargetAstNodeEncoding,
+    depth: number,
+  ): void {
     for (const child of encoding.children) {
       if (!child.present) {
         if (child.required) {
@@ -166,7 +201,9 @@ class TargetAstEncoder {
         continue;
       }
       if (child.raw) {
-        for (const rawChild of child.nodes ?? []) this.#visitNode(rawChild);
+        for (const rawChild of child.nodes ?? []) {
+          this.#visitNode(rawChild, depth + 1);
+        }
       } else if (child.nodes !== undefined || child.node === undefined) {
         if (child.list === undefined) {
           throw new TargetAstEncodingError(
@@ -175,9 +212,9 @@ class TargetAstEncoder {
             child.name,
           );
         }
-        this.#visitNodeList(child.nodes ?? [], child.list);
+        this.#visitNodeList(child.nodes ?? [], child.list, depth + 1);
       } else {
-        this.#visitNode(child.node);
+        this.#visitNode(child.node, depth + 1);
       }
     }
   }
@@ -196,7 +233,11 @@ class TargetAstEncoder {
         return (NODE_DATA_TYPE_STRING | encoding.commonData | index) >>> 0;
       }
       case TargetAstNodeDataExtended: {
-        const offset = this.#extended.length * 4;
+        const offset = checkedProduct(
+          this.#extended.length,
+          4,
+          "extended-data byte offset",
+        );
         if (offset > NODE_EXTENDED_DATA_MASK) {
           throw new TargetAstEncodingError("extended-data offset exceeds protocol width", node.Kind);
         }
@@ -233,12 +274,14 @@ class TargetAstEncoder {
   ): void {
     switch (encoding.extended) {
       case "literal":
+        this.#budget.reserveExtendedWords(2);
         this.#extended.push(
           this.#strings.add(requiredText(node, encoding.text)),
           encoding.tokenFlags ?? 0,
         );
         return;
       case "template":
+        this.#budget.reserveExtendedWords(3);
         this.#extended.push(
           this.#strings.add(requiredText(node, encoding.text)),
           this.#strings.add(requiredText(node, encoding.rawText)),
@@ -265,15 +308,22 @@ class TargetAstEncoder {
     if (path.length === 0) {
       throw new TargetAstEncodingError("source path is absent", source.Kind, "Path");
     }
-    const references = appendFileReferences(this.#structured, source.ReferencedFiles);
+    const references = appendFileReferences(
+      this.#structured,
+      source.ReferencedFiles,
+      this.#budget,
+    );
     const typeReferences = appendFileReferences(
       this.#structured,
       source.TypeReferenceDirectives,
+      this.#budget,
     );
     const libReferences = appendFileReferences(
       this.#structured,
       source.LibReferenceDirectives,
+      this.#budget,
     );
+    this.#budget.reserveExtendedWords(12);
     this.#extended.push(
       this.#strings.add(source.Text()),
       this.#strings.add(fileName),
@@ -298,7 +348,7 @@ class TargetAstEncoder {
       0,
       parent,
       data,
-      node.Flags,
+      node.Flags ?? 0,
     );
   }
 
@@ -315,11 +365,33 @@ class TargetAstEncoder {
     const structured = Uint8Array.from(this.#structured);
     const nodes = uint32Bytes(this.#nodeValues);
     const offsetStringOffsets = HEADER_SIZE;
-    const offsetStringData = offsetStringOffsets + stringOffsets.length;
-    const offsetExtended = offsetStringData + stringData.length;
-    const offsetStructured = offsetExtended + extended.length;
-    const offsetNodes = offsetStructured + structured.length;
-    const result = new Uint8Array(offsetNodes + nodes.length);
+    const offsetStringData = checkedWireOffset(
+      offsetStringOffsets,
+      stringOffsets.length,
+      "string-table data",
+    );
+    const offsetExtended = checkedWireOffset(
+      offsetStringData,
+      stringData.length,
+      "extended data",
+    );
+    const offsetStructured = checkedWireOffset(
+      offsetExtended,
+      extended.length,
+      "structured data",
+    );
+    const offsetNodes = checkedWireOffset(
+      offsetStructured,
+      structured.length,
+      "node data",
+    );
+    const encodedLength = checkedWireOffset(
+      offsetNodes,
+      nodes.length,
+      "encoded payload",
+    );
+    this.#budget.requireEncodedBytes(encodedLength);
+    const result = new Uint8Array(encodedLength);
     const view = new DataView(result.buffer);
     view.setUint32(HEADER_OFFSET_METADATA, PROTOCOL_VERSION << 24, true);
     view.setUint32(HEADER_OFFSET_STRING_TABLE_OFFSETS, offsetStringOffsets, true);
@@ -338,15 +410,21 @@ class TargetAstEncoder {
 
 class StringTable {
   readonly offsets: number[] = [];
+  readonly #budget: TargetAstResourceBudget;
   readonly #parts: Uint8Array[] = [];
   #length = 0;
 
+  constructor(budget: TargetAstResourceBudget) {
+    this.#budget = budget;
+  }
+
   add(value: string): number {
     const bytes = new TextEncoder().encode(value);
+    this.#budget.reserveString(bytes.length);
     const index = this.offsets.length;
     const start = this.#length;
     this.#parts.push(bytes);
-    this.#length += bytes.length;
+    this.#length = checkedSum(start, bytes.length, "string-table byte length");
     this.offsets.push(start, this.#length);
     return index;
   }
@@ -365,45 +443,97 @@ class StringTable {
 function appendFileReferences(
   destination: number[],
   references: readonly GoPtr<FileReference>[],
+  budget: TargetAstResourceBudget,
 ): number {
   if (references.length === 0) return noStructuredData;
   const offset = destination.length;
-  appendArrayHeader(destination, references.length);
+  appendArrayHeader(destination, references.length, budget);
   for (const reference of references) {
     if (reference === undefined) {
       throw new TargetAstEncodingError("source file reference is absent");
     }
-    appendArrayHeader(destination, 5);
-    appendMessagePackUint(destination, reference.pos);
-    appendMessagePackUint(destination, reference.end);
-    appendMessagePackString(destination, reference.FileName);
-    appendMessagePackUint(destination, reference.ResolutionMode);
-    destination.push(reference.Preserve ? 0xc3 : 0xc2);
+    appendArrayHeader(destination, 5, budget);
+    appendMessagePackUint(destination, reference.pos, budget);
+    appendMessagePackUint(destination, reference.end, budget);
+    appendMessagePackString(destination, reference.FileName, budget);
+    appendMessagePackUint(destination, reference.ResolutionMode, budget);
+    appendStructuredBytes(destination, budget, reference.Preserve ? 0xc3 : 0xc2);
   }
   return offset;
 }
 
-function appendArrayHeader(destination: number[], length: number): void {
-  if (length <= 0x0f) destination.push(0x90 | length);
-  else if (length <= 0xffff) destination.push(0xdc, length >>> 8, length);
-  else destination.push(0xdd, length >>> 24, length >>> 16, length >>> 8, length);
-}
-
-function appendMessagePackUint(destination: number[], value: number): void {
-  if (value <= 0x7f) destination.push(value);
-  else if (value <= 0xff) destination.push(0xcc, value);
-  else if (value <= 0xffff) destination.push(0xcd, value >>> 8, value);
-  else destination.push(0xce, value >>> 24, value >>> 16, value >>> 8, value);
-}
-
-function appendMessagePackString(destination: number[], value: string): void {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.length <= 0x1f) destination.push(0xa0 | bytes.length);
-  else if (bytes.length <= 0xff) destination.push(0xd9, bytes.length);
-  else if (bytes.length <= 0xffff) {
-    destination.push(0xda, bytes.length >>> 8, bytes.length);
+function appendArrayHeader(
+  destination: number[],
+  length: number,
+  budget: TargetAstResourceBudget,
+): void {
+  requireUint32(length, "structured array length");
+  if (length <= 0x0f) {
+    appendStructuredBytes(destination, budget, 0x90 | length);
+  } else if (length <= 0xffff) {
+    appendStructuredBytes(destination, budget, 0xdc, length >>> 8, length);
   } else {
-    destination.push(
+    appendStructuredBytes(
+      destination,
+      budget,
+      0xdd,
+      length >>> 24,
+      length >>> 16,
+      length >>> 8,
+      length,
+    );
+  }
+}
+
+function appendMessagePackUint(
+  destination: number[],
+  value: number,
+  budget: TargetAstResourceBudget,
+): void {
+  requireUint32(value, "structured unsigned integer");
+  if (value <= 0x7f) {
+    appendStructuredBytes(destination, budget, value);
+  } else if (value <= 0xff) {
+    appendStructuredBytes(destination, budget, 0xcc, value);
+  } else if (value <= 0xffff) {
+    appendStructuredBytes(destination, budget, 0xcd, value >>> 8, value);
+  } else {
+    appendStructuredBytes(
+      destination,
+      budget,
+      0xce,
+      value >>> 24,
+      value >>> 16,
+      value >>> 8,
+      value,
+    );
+  }
+}
+
+function appendMessagePackString(
+  destination: number[],
+  value: string,
+  budget: TargetAstResourceBudget,
+): void {
+  const bytes = new TextEncoder().encode(value);
+  requireUint32(bytes.length, "structured string byte length");
+  if (bytes.length <= 0x1f) {
+    appendStructuredBytes(destination, budget, 0xa0 | bytes.length);
+  } else if (bytes.length <= 0xff) {
+    appendStructuredBytes(destination, budget, 0xd9, bytes.length);
+  }
+  else if (bytes.length <= 0xffff) {
+    appendStructuredBytes(
+      destination,
+      budget,
+      0xda,
+      bytes.length >>> 8,
+      bytes.length,
+    );
+  } else {
+    appendStructuredBytes(
+      destination,
+      budget,
       0xdb,
       bytes.length >>> 24,
       bytes.length >>> 16,
@@ -411,7 +541,26 @@ function appendMessagePackString(destination: number[], value: string): void {
       bytes.length,
     );
   }
-  destination.push(...bytes);
+  budget.reserveStructuredBytes(bytes.length);
+  for (const byte of bytes) {
+    destination.push(byte);
+  }
+}
+
+function appendStructuredBytes(
+  destination: number[],
+  budget: TargetAstResourceBudget,
+  ...bytes: readonly number[]
+): void {
+  budget.reserveStructuredBytes(bytes.length);
+  for (const byte of bytes) {
+    if (!Number.isInteger(byte) || byte < 0 || byte > 0xff) {
+      throw new TargetAstEncodingError(
+        "structured target AST data contains a non-byte value",
+      );
+    }
+    destination.push(byte);
+  }
 }
 
 function withRequiredProtocolChild(
@@ -469,14 +618,67 @@ function childMask(
 }
 
 function encodedPosition(value: number): number {
-  return value < 0 ? 0 : value;
+  if (value < 0) {
+    return 0;
+  }
+  requireUint32(value, "target AST source position");
+  return value;
 }
 
 function uint32Bytes(values: readonly number[]): Uint8Array {
-  const result = new Uint8Array(values.length * 4);
+  const byteLength = checkedProduct(values.length, 4, "uint32 data length");
+  const result = new Uint8Array(byteLength);
   const view = new DataView(result.buffer);
-  values.forEach((value, index) => view.setUint32(index * 4, value >>> 0, true));
+  values.forEach((value, index) => {
+    requireUint32(value, `uint32 value at index ${index}`);
+    view.setUint32(index * 4, value, true);
+  });
   return result;
+}
+
+function checkedWireOffset(
+  offset: number,
+  length: number,
+  subject: string,
+): number {
+  const result = checkedSum(offset, length, `${subject} offset`);
+  requireUint32(result, `${subject} offset`);
+  return result;
+}
+
+function checkedProduct(left: number, right: number, subject: string): number {
+  requireNonNegativeSafeInteger(left, `${subject} left operand`);
+  requireNonNegativeSafeInteger(right, `${subject} right operand`);
+  const result = left * right;
+  if (!Number.isSafeInteger(result)) {
+    throw new TargetAstEncodingError(`${subject} exceeds safe integer range`);
+  }
+  return result;
+}
+
+function checkedSum(left: number, right: number, subject: string): number {
+  requireNonNegativeSafeInteger(left, `${subject} left operand`);
+  requireNonNegativeSafeInteger(right, `${subject} right operand`);
+  const result = left + right;
+  if (!Number.isSafeInteger(result)) {
+    throw new TargetAstEncodingError(`${subject} exceeds safe integer range`);
+  }
+  return result;
+}
+
+function requireUint32(value: number, subject: string): void {
+  requireNonNegativeSafeInteger(value, subject);
+  if (value > 0xffff_ffff) {
+    throw new TargetAstEncodingError(`${subject} exceeds uint32 range`);
+  }
+}
+
+function requireNonNegativeSafeInteger(value: number, subject: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TargetAstEncodingError(
+      `${subject} must be a non-negative safe integer`,
+    );
+  }
 }
 
 function requiredText(node: Node, value: string | undefined): string {

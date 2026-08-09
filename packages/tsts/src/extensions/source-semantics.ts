@@ -25,8 +25,10 @@ import {
   KindArrayBindingPattern,
   KindCallExpression,
   KindExportDeclaration,
+  KindExportSpecifier,
   KindIdentifier,
   KindImportDeclaration,
+  KindImportSpecifier,
   KindNamedImports,
   KindNamedExports,
   KindNamespaceImport,
@@ -43,7 +45,14 @@ import {
   KindTupleType,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { GetSourceFileOfNode, GetSymbolId, IsFunctionLike, IsLeftHandSideExpression } from "../internal/ast/utilities.js";
+import {
+  GetSourceFileOfNode,
+  GetSymbolId,
+  IsDeclarationName,
+  IsFunctionLike,
+  IsLeftHandSideExpression,
+  IsRightSideOfQualifiedNameOrPropertyAccess,
+} from "../internal/ast/utilities.js";
 import {
   argumentPassingFactKey,
   attributeFactKey,
@@ -92,6 +101,7 @@ import type {
   ExtensionFactSubject,
   SourceAnalysisFactAccess,
 } from "./host.js";
+import { defineExtensionFactKey } from "./fact-key.js";
 import { encodeIdentityTuple } from "./identity-tuple.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
@@ -147,9 +157,20 @@ export interface SourceTypeMarkerDeclaration {
   readonly marker: SourceTypeMarkerKind;
 }
 
-interface SourceSemanticsMarkerImportIndex {
+type SourceMarkerDeclaration = SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration;
+
+const selectedSourceMarkerDeclarationFactKey = defineExtensionFactKey<SourceMarkerDeclaration>({
+  extensionId: sourceSemanticsExtensionId,
+  name: "selectedSourceMarkerDeclaration",
+  snapshot: (value) => Object.freeze({ ...value }),
+  equals: (left, right) =>
+    left.kind === right.kind
+    && left.exportName === right.exportName
+    && left.marker === right.marker,
+});
+
+interface SourcePrimitiveImportIndex {
   readonly primitivesByLocalName: ReadonlyMap<string, SourcePrimitiveImportBinding>;
-  readonly typeMarkersByLocalName: ReadonlyMap<string, SourceMarkerImportBinding<SourceTypeMarkerDeclaration>>;
   readonly namespacesByLocalName: ReadonlyMap<string, SourceNamespaceImportBinding>;
 }
 
@@ -158,11 +179,6 @@ interface SourcePrimitiveImportBinding {
   readonly localName: string;
   readonly exportName: string;
   readonly primitiveFact: SourcePrimitiveDeclaration;
-}
-
-interface SourceMarkerImportBinding<TMarker> {
-  readonly localName: string;
-  readonly marker: TMarker;
 }
 
 interface SourceNamespaceImportBinding {
@@ -219,10 +235,25 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
         resolveSourcePrimitiveFact(subject, resolverContext, modules));
     },
     analyzeSource(context): void {
-      for (const sourceFile of context.source.getSourceFiles()) {
-        if (sourceFile === undefined) {
-          continue;
-        }
+      const sourceFiles = context.source.getSourceFiles().filter(
+        (sourceFile): sourceFile is SourceFile => sourceFile !== undefined,
+      );
+      for (const sourceFile of sourceFiles) {
+        recordConfiguredSourceSemanticsDeclarations(
+          sourceFile,
+          context.source.getSourceFileQueries(sourceFile).checker,
+          context.facts,
+          modules,
+        );
+      }
+      for (const sourceFile of sourceFiles) {
+        recordSourceSemanticsMarkerAliases(
+          context.facts,
+          sourceFile,
+          context.source.getSourceFileQueries(sourceFile).checker,
+        );
+      }
+      for (const sourceFile of sourceFiles) {
         recordSourceSemanticsFacts(
           sourceFile,
           context.source.getSourceFileQueries(sourceFile).checker,
@@ -236,40 +267,110 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
   };
 }
 
-function recordSourceSemanticsFacts(
-  sourceFile: GoPtr<SourceFile>,
+function recordConfiguredSourceSemanticsDeclarations(
+  sourceFile: SourceFile,
   checker: TypeCheckerQueries,
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
-  if (sourceFile === undefined) {
-    return;
-  }
-
   for (const statement of Node_Statements(sourceFile) ?? []) {
     if (statement?.Kind === KindImportDeclaration) {
       const moduleIdentity = getSourceSemanticsModuleIdentity(statement, modules);
       if (moduleIdentity !== undefined) {
-        recordSourceSemanticsImportClause(facts, statement, moduleIdentity);
+        recordSourceSemanticsImportClause(
+          facts,
+          checker,
+          statement,
+          moduleIdentity,
+        );
       }
       continue;
     }
     if (statement?.Kind === KindExportDeclaration) {
       const moduleIdentity = getSourceSemanticsModuleIdentity(statement, modules);
       if (moduleIdentity !== undefined) {
-        recordSourceSemanticsExportClause(facts, statement, moduleIdentity);
+        recordSourceSemanticsExportClause(
+          facts,
+          checker,
+          statement,
+          moduleIdentity,
+        );
       }
     }
   }
-  const markerImportIndex = createSourceSemanticsMarkerImportIndex(sourceFile, modules);
-  recordSourceSemanticsCallMarkers(facts, diagnostics, extensionId, sourceFile, checker, modules);
-  recordSourceSemanticsTypeReferences(facts, sourceFile, modules, markerImportIndex);
+}
+
+function recordSourceSemanticsMarkerAliases(
+  facts: SourceSemanticsFactAccess,
+  sourceFile: SourceFile,
+  checker: TypeCheckerQueries,
+): void {
+  visitSourceSemanticsNodePost(sourceFile, (node) => {
+    if (
+      node === undefined ||
+      (node.Kind !== KindImportSpecifier && node.Kind !== KindExportSpecifier)
+    ) {
+      return;
+    }
+    const localSymbol = Node_Symbol(node);
+    if (localSymbol === undefined) {
+      return;
+    }
+    const selectedSymbol = checker.getAliasedSymbol(localSymbol);
+    if (selectedSymbol === undefined) {
+      return;
+    }
+    const marker = facts.get(
+      selectedSymbol,
+      selectedSourceMarkerDeclarationFactKey,
+    );
+    if (marker === undefined) {
+      return;
+    }
+    const markerFact: SourceMarkerFact = marker.kind === "call-marker"
+      ? { kind: marker.kind, marker: marker.marker }
+      : { kind: marker.kind, marker: marker.marker };
+    const evidence = createMarkerEvidence(marker.exportName);
+    facts.set(node, selectedSourceMarkerDeclarationFactKey, marker, evidence);
+    facts.set(node, sourceMarkerFactKey, markerFact, evidence);
+    facts.set(localSymbol, selectedSourceMarkerDeclarationFactKey, marker, evidence);
+    facts.set(localSymbol, sourceMarkerFactKey, markerFact, evidence);
+  });
+}
+
+function recordSourceSemanticsFacts(
+  sourceFile: SourceFile,
+  checker: TypeCheckerQueries,
+  facts: SourceSemanticsFactAccess,
+  diagnostics: ExtensionDiagnosticWriter,
+  extensionId: string,
+  modules: readonly SourceSemanticsModuleRuntime[],
+): void {
+  const primitiveImportIndex = createSourcePrimitiveImportIndex(sourceFile, modules);
+  recordSourceSemanticsMarkerReferences(
+    facts,
+    sourceFile,
+    checker,
+    modules,
+  );
+  recordSourceSemanticsCallMarkers(
+    facts,
+    diagnostics,
+    extensionId,
+    sourceFile,
+    checker,
+  );
+  recordSourceSemanticsTypeReferences(
+    facts,
+    sourceFile,
+    modules,
+    primitiveImportIndex,
+  );
 }
 
 function recordSourceSemanticsImportClause(
   facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
   importDeclaration: GoPtr<Node>,
   moduleIdentity: SourceSemanticsModuleRuntime,
 ): void {
@@ -305,18 +406,19 @@ function recordSourceSemanticsImportClause(
     }
     const callMarker = moduleIdentity.callMarkersByExportName.get(exportName);
     if (callMarker !== undefined) {
-      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", callMarker);
+      recordSourceSemanticsMarkerImport(facts, checker, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", callMarker);
       continue;
     }
     const typeMarker = moduleIdentity.typeMarkersByExportName.get(exportName);
     if (typeMarker !== undefined) {
-      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", typeMarker);
+      recordSourceSemanticsMarkerImport(facts, checker, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", typeMarker);
     }
   }
 }
 
 function recordSourceSemanticsExportClause(
   facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
   exportDeclaration: GoPtr<Node>,
   moduleIdentity: SourceSemanticsModuleRuntime,
 ): void {
@@ -341,14 +443,84 @@ function recordSourceSemanticsExportClause(
       continue;
     }
     const specifierIsTypeOnly = AsExportSpecifier(exportSpecifier)!.IsTypeOnly;
-    if (moduleIdentity.callMarkersByExportName.has(sourceName)) {
-      recordSourceSemanticsSymbolImport(facts, exportSpecifier, moduleIdentity, sourceName, declarationIsTypeOnly || specifierIsTypeOnly ? "type" : "value");
+    const callMarker = moduleIdentity.callMarkersByExportName.get(sourceName);
+    if (callMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(
+        facts,
+        checker,
+        exportSpecifier,
+        moduleIdentity,
+        sourceName,
+        declarationIsTypeOnly || specifierIsTypeOnly ? "type" : "value",
+        callMarker,
+      );
       continue;
     }
-    if (moduleIdentity.typeMarkersByExportName.has(sourceName)) {
-      recordSourceSemanticsSymbolImport(facts, exportSpecifier, moduleIdentity, sourceName, declarationIsTypeOnly || specifierIsTypeOnly ? "type" : "value");
+    const typeMarker = moduleIdentity.typeMarkersByExportName.get(sourceName);
+    if (typeMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(
+        facts,
+        checker,
+        exportSpecifier,
+        moduleIdentity,
+        sourceName,
+        declarationIsTypeOnly || specifierIsTypeOnly ? "type" : "value",
+        typeMarker,
+      );
     }
   }
+}
+
+function recordSourceSemanticsMarkerReferences(
+  facts: SourceSemanticsFactAccess,
+  sourceFile: SourceFile,
+  checker: TypeCheckerQueries,
+  modules: readonly SourceSemanticsModuleRuntime[],
+): void {
+  visitSourceSemanticsNodePost(sourceFile, (node) => {
+    if (
+      node === undefined ||
+      (node.Kind !== KindIdentifier &&
+        node.Kind !== KindPropertyAccessExpression &&
+        node.Kind !== KindQualifiedName) ||
+      IsDeclarationName(node) ||
+      IsRightSideOfQualifiedNameOrPropertyAccess(node)
+    ) {
+      return;
+    }
+    const callMarker = resolveMarkerFromCheckedReference(
+      facts,
+      checker,
+      node,
+      modules,
+      "call-marker",
+    );
+    const marker = callMarker ?? resolveMarkerFromCheckedReference(
+      facts,
+      checker,
+      node,
+      modules,
+      "type-marker",
+    );
+    if (marker === undefined) {
+      return;
+    }
+    const fact: SourceMarkerFact = marker.kind === "call-marker"
+      ? { kind: marker.kind, marker: marker.marker }
+      : { kind: marker.kind, marker: marker.marker };
+    facts.set(
+      node,
+      selectedSourceMarkerDeclarationFactKey,
+      marker,
+      createMarkerEvidence(marker.exportName),
+    );
+    facts.set(
+      node,
+      sourceMarkerFactKey,
+      fact,
+      createMarkerEvidence(marker.exportName),
+    );
+  });
 }
 
 function recordSourceSemanticsCallMarkers(
@@ -357,14 +529,13 @@ function recordSourceSemanticsCallMarkers(
   extensionId: string,
   sourceFile: GoPtr<SourceFile>,
   checker: TypeCheckerQueries,
-  modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
   visitSourceSemanticsNodePost(sourceFile, (node) => {
     if (node?.Kind !== KindCallExpression) {
       return;
     }
     const callInfo = checker.getResolvedCallInfo(node);
-    const marker = resolveSelectedSourceSemanticsCallMarker(facts, callInfo, modules);
+    const marker = resolveSelectedSourceSemanticsCallMarker(facts, callInfo);
     if (marker === undefined || callInfo === undefined) {
       return;
     }
@@ -1014,7 +1185,7 @@ function recordSourceSemanticsTypeReferences(
   facts: SourceSemanticsFactAccess,
   sourceFile: GoPtr<SourceFile>,
   modules: readonly SourceSemanticsModuleRuntime[],
-  markerImportIndex: SourceSemanticsMarkerImportIndex,
+  primitiveImportIndex: SourcePrimitiveImportIndex,
 ): void {
   visitSourceSemanticsNode(sourceFile, (node) => {
     if (node?.Kind !== KindTypeReference) {
@@ -1024,11 +1195,16 @@ function recordSourceSemanticsTypeReferences(
     if (typeName === undefined) {
       return;
     }
-    const marker = resolveSourceSemanticsTypeMarkerReference(facts, typeName, modules, markerImportIndex);
+    const marker = resolveSourceSemanticsTypeMarkerReference(facts, typeName);
     if (marker !== undefined) {
       recordSourceSemanticsTypeMarker(facts, node, typeName, marker);
     }
-    const primitive = resolvePrimitiveTypeReference(facts, typeName, modules, markerImportIndex);
+    const primitive = resolvePrimitiveTypeReference(
+      facts,
+      typeName,
+      modules,
+      primitiveImportIndex,
+    );
     if (primitive === undefined) {
       return;
     }
@@ -1111,190 +1287,213 @@ function getFunctionPointerParameters(parameterList: GoPtr<Node>): readonly Node
 function resolveSelectedSourceSemanticsCallMarker(
   facts: SourceSemanticsFactAccess,
   callInfo: GoPtr<ResolvedSourceCallInfo>,
-  modules: readonly SourceSemanticsModuleRuntime[],
 ): SourceCallMarkerDeclaration | undefined {
   if (callInfo === undefined) {
     return undefined;
   }
   const callee = callInfo.sourceCallee;
   for (const subject of [
+    callee.expression,
     callee.selectedDeclaration,
-    callee.selectedSymbol,
     callee.declaration,
+    callee.selectedSymbol,
     callee.symbol,
   ]) {
-    const marker = resolveCallMarkerFromSelectedSubject(facts, subject, modules);
-    if (marker !== undefined) {
+    const marker = facts.get(subject, selectedSourceMarkerDeclarationFactKey);
+    if (marker?.kind === "call-marker") {
       return marker;
     }
-  }
-  const access = callInfo.sourceCalleeAccess;
-  if (access === undefined) {
-    return undefined;
-  }
-  const receiverIdentity = access.receiver.symbol === undefined
-    ? undefined
-    : facts.get(access.receiver.symbol, canonicalIdentityFactKey);
-  if (receiverIdentity?.kind === "module" && access.selectedSymbol !== undefined) {
-    return getModuleCallMarker(
-      modules,
-      receiverIdentity.id,
-      access.selectedSymbol.Name,
-    );
   }
   return undefined;
 }
 
-function resolveCallMarkerFromSelectedSubject(
+function resolveMarkerFromCheckedReference(
+  facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
+  node: Node,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker",
+): SourceCallMarkerDeclaration | undefined;
+function resolveMarkerFromCheckedReference(
+  facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
+  node: Node,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "type-marker",
+): SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromCheckedReference(
+  facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
+  node: Node,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromCheckedReference(
+  facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
+  node: Node,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined {
+  const localSymbol = checker.getSymbolAtLocation(node);
+  const direct = resolveMarkerFromSelectedSubject(
+    facts,
+    localSymbol,
+    modules,
+    capability,
+  );
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const receiver = node.Kind === KindPropertyAccessExpression
+    ? AsPropertyAccessExpression(node)?.Expression
+    : node.Kind === KindQualifiedName
+    ? AsQualifiedName(node)?.Left
+    : undefined;
+  if (receiver !== undefined) {
+    const receiverSymbol = checker.getSymbolAtLocation(receiver);
+    const receiverIdentity = receiverSymbol === undefined
+      ? undefined
+      : facts.get(receiverSymbol, canonicalIdentityFactKey);
+    const selectedSymbol = checker.getResolvedSymbolOrNil(node);
+    if (
+      receiverIdentity?.kind === "module" &&
+      selectedSymbol !== undefined
+    ) {
+      const module = modules.find(
+        (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
+      );
+      const selected = getModuleMarker(
+        module,
+        capability,
+        checker.getSymbolName(selectedSymbol),
+      );
+      if (selected !== undefined) {
+        return selected;
+      }
+    }
+  }
+
+  return resolveMarkerFromSelectedSymbol(
+    facts,
+    checker.getResolvedSymbolOrNil(node),
+    modules,
+    capability,
+  );
+}
+
+function resolveMarkerFromSelectedSubject(
   facts: SourceSemanticsFactAccess,
   subject: ExtensionFactSubject | undefined,
   modules: readonly SourceSemanticsModuleRuntime[],
-): SourceCallMarkerDeclaration | undefined {
+  capability: "call-marker",
+): SourceCallMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSubject(
+  facts: SourceSemanticsFactAccess,
+  subject: ExtensionFactSubject | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "type-marker",
+): SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSubject(
+  facts: SourceSemanticsFactAccess,
+  subject: ExtensionFactSubject | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSubject(
+  facts: SourceSemanticsFactAccess,
+  subject: ExtensionFactSubject | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined {
   if (subject === undefined) {
     return undefined;
   }
+  const selectedMarker = facts.get(subject, selectedSourceMarkerDeclarationFactKey);
+  if (selectedMarker?.kind === capability) {
+    return selectedMarker;
+  }
   const providerDeclaration = facts.get(subject, providerVirtualDeclarationFactKey);
   if (providerDeclaration?.exportName !== undefined) {
-    return getModuleCallMarker(
-      modules,
-      providerDeclaration.moduleSpecifier,
-      providerDeclaration.exportName,
+    const module = modules.find(
+      (candidate) =>
+        candidate.moduleSpecifier === providerDeclaration.moduleSpecifier,
     );
+    return getModuleMarker(module, capability, providerDeclaration.exportName);
   }
   const identity = facts.get(subject, canonicalIdentityFactKey);
   if (identity?.kind === "export" && identity.exportName !== undefined) {
     const module = modules.find(
       (candidate) => identity.id === `${candidate.moduleSpecifier}::${identity.exportName}`,
     );
-    return module?.callMarkersByExportName.get(identity.exportName);
-  }
-  if ("Parent" in subject && "Name" in subject) {
-    const symbol = subject as Symbol;
-    const parentIdentity = symbol.Parent === undefined
-      ? undefined
-      : facts.get(symbol.Parent, canonicalIdentityFactKey);
-    if (parentIdentity?.kind === "module") {
-      return getModuleCallMarker(modules, parentIdentity.id, symbol.Name);
-    }
+    return getModuleMarker(module, capability, identity.exportName);
   }
   return undefined;
 }
 
-function getModuleCallMarker(
+function resolveMarkerFromSelectedSymbol(
+  facts: SourceSemanticsFactAccess,
+  symbol: Symbol | undefined,
   modules: readonly SourceSemanticsModuleRuntime[],
-  moduleSpecifier: string,
-  exportName: string,
-): SourceCallMarkerDeclaration | undefined {
-  return modules.find((candidate) => candidate.moduleSpecifier === moduleSpecifier)
-    ?.callMarkersByExportName.get(exportName);
+  capability: "call-marker",
+): SourceCallMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSymbol(
+  facts: SourceSemanticsFactAccess,
+  symbol: Symbol | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "type-marker",
+): SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSymbol(
+  facts: SourceSemanticsFactAccess,
+  symbol: Symbol | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined;
+function resolveMarkerFromSelectedSymbol(
+  facts: SourceSemanticsFactAccess,
+  symbol: Symbol | undefined,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  capability: "call-marker" | "type-marker",
+): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined {
+  const direct = resolveMarkerFromSelectedSubject(
+    facts,
+    symbol,
+    modules,
+    capability,
+  );
+  if (direct !== undefined) {
+    return direct;
+  }
+  const parentIdentity = symbol?.Parent === undefined
+    ? undefined
+    : facts.get(symbol.Parent, canonicalIdentityFactKey);
+  if (parentIdentity?.kind !== "module" || symbol === undefined) {
+    return undefined;
+  }
+  const module = modules.find(
+    (candidate) => candidate.moduleSpecifier === parentIdentity.id,
+  );
+  return getModuleMarker(module, capability, symbol.Name);
 }
 
 function resolveSourceSemanticsTypeMarkerReference(
   facts: SourceSemanticsFactAccess,
   node: GoPtr<Node>,
-  modules: readonly SourceSemanticsModuleRuntime[],
-  markerImportIndex: SourceSemanticsMarkerImportIndex,
 ): SourceTypeMarkerDeclaration | undefined {
-  return resolveSourceSemanticsMarkerFromImportIndex(node, markerImportIndex.typeMarkersByLocalName, markerImportIndex.namespacesByLocalName, "type-marker")
-    ?? resolveSourceSemanticsMarkerReference(facts, node, modules, "type-marker");
-}
-
-function resolveSourceSemanticsMarkerFromImportIndex<TMarker extends { readonly exportName: string }>(
-  node: GoPtr<Node>,
-  markersByLocalName: ReadonlyMap<string, SourceMarkerImportBinding<TMarker>>,
-  namespacesByLocalName: ReadonlyMap<string, SourceNamespaceImportBinding>,
-  capability: SourceSemanticsModuleCapability,
-): TMarker | undefined {
   if (node === undefined) {
     return undefined;
   }
-  if (node.Kind === KindPropertyAccessExpression) {
-    const receiver = AsPropertyAccessExpression(node)?.Expression;
-    const receiverName = getIdentifierText(receiver);
-    if (receiverName === undefined) {
-      return undefined;
-    }
-    const namespaceBinding = namespacesByLocalName.get(receiverName);
-    if (namespaceBinding === undefined || isImportBindingShadowed(receiver, receiverName)) {
-      return undefined;
-    }
-    const propertyName = getStaticSourceSemanticsNameText(Node_Name(node));
-    if (propertyName === undefined) {
-      return undefined;
-    }
-    const marker = getModuleMarker(namespaceBinding.moduleIdentity, capability, propertyName);
-    return marker as TMarker | undefined;
-  }
-  if (node.Kind === KindQualifiedName) {
-    const qualifiedName = AsQualifiedName(node);
-    const leftName = getIdentifierText(qualifiedName?.Left);
-    if (leftName === undefined) {
-      return undefined;
-    }
-    const namespaceBinding = namespacesByLocalName.get(leftName);
-    if (namespaceBinding === undefined || isImportBindingShadowed(qualifiedName?.Left, leftName)) {
-      return undefined;
-    }
-    const exportName = getIdentifierText(qualifiedName?.Right);
-    if (exportName === undefined) {
-      return undefined;
-    }
-    const marker = getModuleMarker(namespaceBinding.moduleIdentity, capability, exportName);
-    return marker as TMarker | undefined;
-  }
-  const localName = getIdentifierText(node);
-  if (localName === undefined) {
-    return undefined;
-  }
-  const binding = markersByLocalName.get(localName);
-  return binding !== undefined && !isImportBindingShadowed(node, localName) ? binding.marker : undefined;
+  const selected = facts.get(node, selectedSourceMarkerDeclarationFactKey)
+    ?? facts.get(Node_Symbol(node), selectedSourceMarkerDeclarationFactKey);
+  return selected?.kind === "type-marker" ? selected : undefined;
 }
 
-function resolveSourceSemanticsMarkerReference<TMarker extends { readonly exportName: string }>(
-  facts: SourceSemanticsFactAccess,
-  node: GoPtr<Node>,
-  modules: readonly SourceSemanticsModuleRuntime[],
-  capability: SourceSemanticsModuleCapability,
-): TMarker | undefined {
-  if (node === undefined) {
-    return undefined;
-  }
-  if (node.Kind === KindPropertyAccessExpression) {
-    const propertyName = Node_Text(Node_Name(node));
-    const receiverSymbol = Node_Symbol(AsPropertyAccessExpression(node)?.Expression);
-    const receiverIdentity = receiverSymbol === undefined ? undefined : facts.get(receiverSymbol, canonicalIdentityFactKey);
-    if (receiverIdentity?.kind !== "module") {
-      return undefined;
-    }
-    const module = modules.find((candidate) => candidate.moduleSpecifier === receiverIdentity.id);
-    return getModuleMarker(module, capability, propertyName) as TMarker | undefined;
-  }
-  if (node.Kind === KindQualifiedName) {
-    const qualifiedName = AsQualifiedName(node);
-    const exportName = Node_Text(qualifiedName?.Right);
-    const leftSymbol = Node_Symbol(qualifiedName?.Left);
-    const leftIdentity = leftSymbol === undefined ? undefined : facts.get(leftSymbol, canonicalIdentityFactKey);
-    if (leftIdentity?.kind !== "module") {
-      return undefined;
-    }
-    const module = modules.find((candidate) => candidate.moduleSpecifier === leftIdentity.id);
-    return getModuleMarker(module, capability, exportName) as TMarker | undefined;
-  }
-  const symbol = Node_Symbol(node);
-  const identity = symbol === undefined ? undefined : facts.get(symbol, canonicalIdentityFactKey);
-  if (identity?.exportName === undefined) {
-    return undefined;
-  }
-  const module = modules.find((candidate) => identity.id === `${candidate.moduleSpecifier}::${identity.exportName}`);
-  return getModuleMarker(module, capability, identity.exportName) as TMarker | undefined;
-}
-
-function createSourceSemanticsMarkerImportIndex(
+function createSourcePrimitiveImportIndex(
   sourceFile: GoPtr<SourceFile>,
   modules: readonly SourceSemanticsModuleRuntime[],
-): SourceSemanticsMarkerImportIndex {
+): SourcePrimitiveImportIndex {
   const primitivesByLocalName = new Map<string, SourcePrimitiveImportBinding>();
-  const typeMarkersByLocalName = new Map<string, SourceMarkerImportBinding<SourceTypeMarkerDeclaration>>();
   const namespacesByLocalName = new Map<string, SourceNamespaceImportBinding>();
   for (const statement of Node_Statements(sourceFile) ?? []) {
     if (statement?.Kind !== KindImportDeclaration) {
@@ -1335,23 +1534,16 @@ function createSourceSemanticsMarkerImportIndex(
           primitiveFact: primitive,
         });
       }
-      const typeMarker = moduleIdentity.typeMarkersByExportName.get(exportName);
-      if (typeMarker !== undefined) {
-        typeMarkersByLocalName.set(localName, {
-          localName,
-          marker: typeMarker,
-        });
-      }
     }
   }
-  return { primitivesByLocalName, typeMarkersByLocalName, namespacesByLocalName };
+  return { primitivesByLocalName, namespacesByLocalName };
 }
 
 function resolvePrimitiveTypeReference(
   facts: SourceSemanticsFactReader,
   typeName: GoPtr<Node>,
   modules: readonly SourceSemanticsModuleRuntime[],
-  importIndex?: SourceSemanticsMarkerImportIndex,
+  importIndex?: SourcePrimitiveImportIndex,
 ): { readonly moduleIdentity: SourceSemanticsModuleRuntime; readonly exportName: string; readonly primitiveFact: SourcePrimitiveDeclaration; readonly identity: ExtensionCanonicalIdentity } | undefined {
   if (typeName === undefined) {
     return undefined;
@@ -1388,7 +1580,7 @@ function resolvePrimitiveTypeReference(
 
 function resolvePrimitiveFromImportIndex(
   typeName: GoPtr<Node>,
-  importIndex: SourceSemanticsMarkerImportIndex | undefined,
+  importIndex: SourcePrimitiveImportIndex | undefined,
 ): { readonly moduleIdentity: SourceSemanticsModuleRuntime; readonly exportName: string; readonly primitiveFact: SourcePrimitiveDeclaration; readonly identity: ExtensionCanonicalIdentity } | undefined {
   if (typeName === undefined || importIndex === undefined) {
     return undefined;
@@ -1406,7 +1598,7 @@ function resolvePrimitiveFromImportIndex(
 
 function resolveQualifiedPrimitiveFromImportIndex(
   typeName: GoPtr<Node>,
-  importIndex: SourceSemanticsMarkerImportIndex | undefined,
+  importIndex: SourcePrimitiveImportIndex | undefined,
 ): { readonly moduleIdentity: SourceSemanticsModuleRuntime; readonly exportName: string; readonly primitiveFact: SourcePrimitiveDeclaration; readonly identity: ExtensionCanonicalIdentity } | undefined {
   if (typeName === undefined || importIndex === undefined) {
     return undefined;
@@ -1465,10 +1657,6 @@ function bindingNameContainsName(name: GoPtr<Node>, localName: string): boolean 
   }
   return (Node_Elements(name) ?? []).some((element) =>
     bindingNameContainsName(Node_Name(element), localName));
-}
-
-function getIdentifierText(node: GoPtr<Node>): string | undefined {
-  return node?.Kind === KindIdentifier ? Node_Text(node) : undefined;
 }
 
 function getStaticSourceSemanticsNameText(node: GoPtr<Node>): string | undefined {
@@ -1596,6 +1784,7 @@ function recordSourceSemanticsSymbolImport(
 
 function recordSourceSemanticsMarkerImport(
   facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
   importSpecifier: Node,
   moduleIdentity: SourceSemanticsModuleIdentity,
   exportName: string,
@@ -1617,8 +1806,15 @@ function recordSourceSemanticsMarkerImport(
     ? { kind: marker.kind, marker: marker.marker }
     : { kind: marker.kind, marker: marker.marker };
   const evidence = createMarkerEvidence(exportName);
+  facts.set(importSpecifier, selectedSourceMarkerDeclarationFactKey, marker, evidence);
   facts.set(importSpecifier, sourceMarkerFactKey, fact, evidence);
+  facts.set(localSymbol, selectedSourceMarkerDeclarationFactKey, marker, evidence);
   facts.set(localSymbol, sourceMarkerFactKey, fact, evidence);
+  const selectedSymbol = checker.getAliasedSymbol(localSymbol);
+  if (selectedSymbol !== undefined && selectedSymbol !== localSymbol) {
+    facts.set(selectedSymbol, selectedSourceMarkerDeclarationFactKey, marker, evidence);
+    facts.set(selectedSymbol, sourceMarkerFactKey, fact, evidence);
+  }
 }
 
 function createModuleIdentity(moduleIdentity: SourceSemanticsModuleIdentity, importKind: ExtensionImportKind, canonicalSymbolId: string): ExtensionCanonicalIdentity {

@@ -9,6 +9,7 @@ import {
   Node_Elements,
   Node_Expression,
   Node_ImportClause,
+  Node_Initializer,
   Node_ModuleSpecifier,
   Node_PropertyName,
   Node_Statements,
@@ -191,6 +192,39 @@ test("source-semantics records exact marker identity on unused named imports", (
   );
 });
 
+test("source-semantics records exact authored marker references without spelling inference", () => {
+  const { extended, program, index } = createProgram(`
+    import { loadPointer as load } from "@example/native/lang.js";
+    import * as lang from "@example/native/lang.js";
+    import { loadPointer as localLoad } from "./local.js";
+
+    export const direct = load;
+    export const namespaced = lang.loadPointer;
+    export const ordinary = localLoad;
+  `, new Map([
+    ["/src/local.ts", "export function loadPointer(value: unknown): unknown { return value; }"],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const direct = Node_Initializer(getVariableDeclaration(index, "direct"));
+  const namespaced = Node_Initializer(getVariableDeclaration(index, "namespaced"));
+  const ordinary = Node_Initializer(getVariableDeclaration(index, "ordinary"));
+  assert.deepEqual(
+    extended.extensionHost.facts.get(direct, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(namespaced, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(ordinary, sourceMarkerFactKey),
+    undefined,
+  );
+});
+
 test("source-semantics primitive spelling is entirely consumer configured", () => {
   const { extended, program, index } = createProgram(`
     import type { INT, I32, SystemInt32 } from "@example/native/types.js";
@@ -321,6 +355,73 @@ test("source-semantics records primitive facts on canonical named re-exports", (
   assert.ok(uintSymbol !== undefined);
   assert.equal(extended.extensionHost.facts.get(uintSymbol, sourcePrimitiveFactKey)?.kind, "uint32");
   assert.equal(extended.extensionHost.facts.get(uintSymbol, canonicalIdentityFactKey)?.exportName, "uint");
+});
+
+test("source-semantics preserves exact marker identity through named re-exports", () => {
+  const { extended, program, index } = createProgram(`
+    import type { ptr } from "@example/native/types.js";
+    import { load } from "./barrel.js";
+
+    declare let pointer: ptr<number>;
+    export const value = load(pointer);
+  `, new Map([
+    [
+      "/src/barrel.ts",
+      "export { loadPointer as load } from '@example/native/lang.js';\n",
+    ],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const barrel = Program_GetSourceFile(program, "/src/barrel.ts");
+  assert.ok(barrel !== undefined);
+  const markerExport = getNamedExportSpecifier(barrel, "load");
+  assert.deepEqual(
+    extended.extensionHost.facts.get(markerExport, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(
+      getNamedImportSpecifier(index, "load"),
+      sourceMarkerFactKey,
+    ),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(getCallExpression(index, "load", 0), pointerOperationFactKey)?.operation,
+    "load",
+  );
+});
+
+test("source-semantics preserves exact type-marker identity through named re-exports", () => {
+  const { extended, program, index } = createProgram(`
+    import type { Ptr } from "./barrel.js";
+    export type NumberPointer = Ptr<number>;
+  `, new Map([
+    [
+      "/src/barrel.ts",
+      "export type { ptr as Ptr } from '@example/native/types.js';\n",
+    ],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  assert.deepEqual(
+    extended.extensionHost.facts.get(
+      getNamedImportSpecifier(index, "Ptr"),
+      sourceMarkerFactKey,
+    ),
+    { kind: "type-marker", marker: "pointer" },
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(
+      getTypeAliasType(index, "NumberPointer"),
+      pointerFactKey,
+    )?.mutability,
+    "readwrite",
+  );
 });
 
 test("source-semantics records out ref inref borrow move call-site facts without name guessing", () => {
@@ -532,6 +633,8 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     );
     const rejected = addressOf(box.frozen);
     const rejectedExpression = addressOf(value + 1);
+    const constant: int = 1;
+    const rejectedConstant = addressOf(constant);
     const local = localAddressOf(value);
   `, new Map([
     ["/src/local.ts", [
@@ -589,6 +692,7 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   );
   const rejectedCall = getCallExpression(index, "addressOf", 2);
   const rejectedExpressionCall = getCallExpression(index, "addressOf", 3);
+  const rejectedConstantCall = getCallExpression(index, "addressOf", 4);
   const localCall = getCallExpression(index, "localAddressOf", 0);
 
   assert.equal(direct?.operation, "address-of");
@@ -654,12 +758,23 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     undefined,
   );
   assert.equal(
+    extended.extensionHost.facts.get(
+      rejectedConstantCall,
+      pointerOperationFactKey,
+    ),
+    undefined,
+  );
+  assert.equal(
     extended.extensionHost.facts.get(localCall, pointerOperationFactKey),
     undefined,
   );
   assert.deepEqual(
     extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
-    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"],
+    [
+      "TSTS_SOURCE_SEMANTICS_0002",
+      "TSTS_SOURCE_SEMANTICS_0002",
+      "TSTS_SOURCE_SEMANTICS_0002",
+    ],
   );
 });
 
