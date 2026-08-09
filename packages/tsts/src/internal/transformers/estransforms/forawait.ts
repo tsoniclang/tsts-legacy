@@ -715,13 +715,10 @@ export function forawaitTransformer_visitLabeledStatement(receiver: GoPtr<forawa
  * }
  */
 export function unwrapInnermostStatementOfLabel(node: GoPtr<LabeledStatement>): GoPtr<Node> {
-  const go = (current: GoPtr<LabeledStatement>): GoPtr<Node> => {
-    if (current!.Statement!.Kind !== KindLabeledStatement) {
-      return current!.Statement as unknown as GoPtr<Node>;
-    }
-    return go(AsLabeledStatement(current!.Statement as unknown as GoPtr<Node>));
-  };
-  return go(node);
+  while (node!.Statement!.Kind === KindLabeledStatement) {
+    node = AsLabeledStatement(node!.Statement as unknown as GoPtr<Node>);
+  }
+  return node!.Statement as unknown as GoPtr<Node>;
 }
 
 /**

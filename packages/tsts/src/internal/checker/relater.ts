@@ -10258,16 +10258,18 @@ export function Relater_reportError(receiver: GoPtr<Relater>, message: GoPtr<Mes
  */
 export function addToDottedName(head: string, tail: string): string {
   const wrappedHead = head.startsWith("new ") ? "(" + head + ")" : head;
-  const computePos = (pos: int): int => {
+  let pos = 0 as int;
+  while (true) {
     if (tail.slice(pos).startsWith("(")) {
-      return computePos(pos + 1);
+      pos = (pos + 1) as int;
+      continue;
     }
     if (tail.slice(pos).startsWith("new ")) {
-      return computePos(pos + 4);
+      pos = (pos + 4) as int;
+      continue;
     }
-    return pos;
-  };
-  const pos = computePos(0);
+    break;
+  }
   const prefix = tail.slice(0, pos);
   const suffix = tail.slice(pos);
   if (suffix.startsWith("[")) {
@@ -10295,16 +10297,15 @@ export function addToDottedName(head: string, tail: string): string {
  * }
  */
 export function Relater_getChainMessage(receiver: GoPtr<Relater>, index: int): GoPtr<Message> {
-  const walk = (e: GoPtr<ErrorChain>, idx: int): GoPtr<Message> => {
-    if (e === undefined) {
-      return undefined;
+  let entry = receiver!.errorChain;
+  while (entry !== undefined) {
+    if (index === 0) {
+      return entry.message;
     }
-    if (idx === 0) {
-      return e.message;
-    }
-    return walk(e.next, idx - 1);
-  };
-  return walk(receiver!.errorChain, index);
+    entry = entry.next;
+    index = (index - 1) as int;
+  }
+  return undefined;
 }
 
 /**

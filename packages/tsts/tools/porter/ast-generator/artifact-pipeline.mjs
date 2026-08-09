@@ -6,6 +6,8 @@ import { AstSchema } from "../ast-schema-model.mjs";
 import { GENERATED_KIND, GENERATOR, astConfig, emitFlags, emitKinds, loadAstSchema } from "./schema.mjs";
 import { emitData, emitNode, emitUnions } from "./node-emitter.mjs";
 import { emitCasts, emitFactory, emitPredicates } from "./factory-emitter.mjs";
+import { emitEncoder } from "./encoder-emitter.mjs";
+import { emitProtocol } from "./protocol-emitter.mjs";
 
 function emitVisitor(schema) {
   const lines = [];
@@ -78,6 +80,8 @@ const EMITTERS = [
   { file: "predicates.ts", emit: emitPredicates, model: true },
   { file: "casts.ts", emit: emitCasts, model: true },
   { file: "visitor.ts", emit: emitVisitor, model: true },
+  { file: "encoder.ts", emit: emitEncoder, model: true },
+  { file: "protocol.ts", emit: emitProtocol, model: false, protocol: true },
   { file: "index.ts", emit: emitIndex, model: false },
 ];
 
@@ -92,6 +96,18 @@ function schemaInputDigests(ac) {
     path: relativePath,
     contentHash: hashText(readFileSync(resolveRepo(relativePath), "utf8")),
   }));
+}
+
+function emitterInputDigests(ac, emitter) {
+  const inputs = schemaInputDigests(ac);
+  if (!emitter.protocol) return inputs;
+  return [
+    ...inputs,
+    {
+      path: ac.protocolInput,
+      contentHash: hashText(readFileSync(resolveRepo(ac.protocolInput), "utf8")),
+    },
+  ];
 }
 
 function generatedHeader(relativePath, body, sourceRevision, schemaInputs) {
@@ -112,12 +128,16 @@ export function buildAstGeneratedFiles(config, sourceRevision) {
   const ac = astConfig(config);
   const schema = loadAstSchema(config);
   const model = new AstSchema(schema.ast);
-  const schemaInputs = schemaInputDigests(ac);
   const files = new Map();
   for (const emitter of EMITTERS) {
     const relativePath = `${ac.generatedDir}/${emitter.file}`;
     const body = emitter.model ? emitter.emit(model) : emitter.emit(schema);
-    const header = generatedHeader(relativePath, body, sourceRevision, schemaInputs);
+    const header = generatedHeader(
+      relativePath,
+      body,
+      sourceRevision,
+      emitterInputDigests(ac, emitter),
+    );
     files.set(relativePath, header + body);
   }
   return files;

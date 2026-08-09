@@ -220,13 +220,12 @@ export function IsIdentifierText(name: string, languageVariant: LanguageVariant)
   if (!IsIdentifierStart(ch)) {
     return false;
   }
-  const loop = (i: int): bool => {
-    if (i >= byteLen(name)) return true;
-    const [ch2, sz] = DecodeRuneInStringAt(name, i);
+  for (let index = size as int; index < byteLen(name);) {
+    const [ch2, sz] = DecodeRuneInStringAt(name, index);
     if (!IsIdentifierPartEx(ch2, languageVariant)) return false;
-    return loop((i + sz) as int);
-  };
-  return loop(size as int);
+    index = (index + sz) as int;
+  }
+  return true;
 }
 
 /**

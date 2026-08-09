@@ -177,14 +177,13 @@ export function singleThreadedWorkGroup_Queue(receiver: GoPtr<singleThreadedWork
  * }
  */
 export function singleThreadedWorkGroup_RunAndWait(receiver: GoPtr<singleThreadedWorkGroup>): void {
-  const drain = (): void => {
+  for (;;) {
     const fn = singleThreadedWorkGroup_pop(receiver);
-    if (fn !== undefined) {
-      fn();
-      drain();
+    if (fn === undefined) {
+      break;
     }
-  };
-  drain();
+    fn();
+  }
   receiver!.done.Store(true as bool);
 }
 

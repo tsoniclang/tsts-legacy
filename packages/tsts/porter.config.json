@@ -11,6 +11,7 @@
   "largeFileSplitStatusOut": ".temp/porter/large-file-splits.json",
   "astSchemaDir": "packages/tsts/schema/tsgo",
   "astGeneratedDir": "internal/ast/generated",
+  "astProtocolInput": "packages/tsts/schema/tsgo/protocol.ts",
   "astSchemaInputs": [
     "packages/tsts/schema/tsgo/ast.json",
     "packages/tsts/schema/tsgo/ast.schema.json",

@@ -67,7 +67,12 @@ import {
   reserveProviderClosureResources,
   type ProviderClosureResourceUsage,
 } from "./provider-closure-resources.js";
-import { providerAncillaryDataLimits, providerDeclarationClosureLimits, providerDeclarationModelLimits } from "./provider-resource-limits.js";
+import {
+  providerAncillaryDataLimits,
+  providerDeclarationClosureLimits,
+  providerDeclarationModelLimits,
+  providerModuleContextLimits,
+} from "./provider-resource-limits.js";
 import {
   getProviderMaterializationRound,
   type ProviderMaterializationRound,
@@ -4934,15 +4939,15 @@ function snapshotProviderModuleContext(context: ProviderModuleContext): Provider
   let physicalNodeAndCollectionEntryCount = 1;
   const countString = (value: string, path: string): void => {
     scalarCodeUnits += value.length;
-    if (!Number.isSafeInteger(scalarCodeUnits) || scalarCodeUnits > providerAncillaryDataLimits.maxTotalScalarCodeUnits) {
-      throw new Error(`${path} exceeds the total provider string limit of ${providerAncillaryDataLimits.maxTotalScalarCodeUnits} UTF-16 code units`);
+    if (!Number.isSafeInteger(scalarCodeUnits) || scalarCodeUnits > providerModuleContextLimits.maxTotalScalarCodeUnits) {
+      throw new Error(`${path} exceeds the total provider module-context string limit of ${providerModuleContextLimits.maxTotalScalarCodeUnits} UTF-16 code units`);
     }
   };
   const countPhysicalResources = (count: number, path: string): void => {
     physicalNodeAndCollectionEntryCount += count;
     if (!Number.isSafeInteger(physicalNodeAndCollectionEntryCount)
-      || physicalNodeAndCollectionEntryCount > providerAncillaryDataLimits.maxTotalEntries) {
-      throw new Error(`${path} exceeds the total provider entry limit of ${providerAncillaryDataLimits.maxTotalEntries}`);
+      || physicalNodeAndCollectionEntryCount > providerModuleContextLimits.maxTotalEntries) {
+      throw new Error(`${path} exceeds the total provider module-context entry limit of ${providerModuleContextLimits.maxTotalEntries}`);
     }
   };
   const hasContainingFile = Object.prototype.hasOwnProperty.call(context, "containingFile");
@@ -5000,8 +5005,8 @@ function snapshotProviderModuleContext(context: ProviderModuleContext): Provider
   }
   let snapshotRequestedExports: readonly ProviderRequestedExport[] | undefined;
   if (requestedExports !== undefined) {
-    if (requestedExports.length > providerAncillaryDataLimits.maxArrayEntries) {
-      throw new Error(`context.importSlice.requestedExports exceeds the provider array limit of ${providerAncillaryDataLimits.maxArrayEntries}`);
+    if (requestedExports.length > providerModuleContextLimits.maxArrayEntries) {
+      throw new Error(`context.importSlice.requestedExports exceeds the provider module-context array limit of ${providerModuleContextLimits.maxArrayEntries}`);
     }
     countPhysicalResources(1 + requestedExports.length, "context.importSlice.requestedExports");
     const entries: ProviderRequestedExport[] = [];

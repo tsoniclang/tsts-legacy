@@ -59,7 +59,10 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
   sourcePrimitive,
+  sourceMarkerFactKey,
   sourcePrimitiveFactKey,
   structFactKey,
 } from "./index.js";
@@ -86,6 +89,7 @@ function createExampleSourceSemanticsExtension() {
         sourcePrimitive("uint", "uint32", "number", false, 32),
         sourcePrimitive("long", "int64", "bigint", true, 64),
         { kind: "type-marker", exportName: "ptr", marker: "pointer" },
+        { kind: "type-marker", exportName: "rawptr", marker: "raw-pointer" },
         { kind: "type-marker", exportName: "fnptr", marker: "function-pointer" },
       ],
     }, {
@@ -108,6 +112,12 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "loadPointer", marker: "load" },
         { kind: "call-marker", exportName: "storePointer", marker: "store" },
         { kind: "call-marker", exportName: "equalPointer", marker: "equal-pointer" },
+        { kind: "call-marker", exportName: "hashPointer", marker: "hash-pointer" },
+        { kind: "call-marker", exportName: "bindPointer", marker: "bind-pointer" },
+        { kind: "call-marker", exportName: "projectPointer", marker: "project-pointer" },
+        { kind: "call-marker", exportName: "bindRawPointer", marker: "bind-raw-pointer" },
+        { kind: "call-marker", exportName: "equalRawPointer", marker: "equal-raw-pointer" },
+        { kind: "call-marker", exportName: "hashRawPointer", marker: "hash-raw-pointer" },
       ],
     }],
   });
@@ -152,6 +162,33 @@ test("source-semantics records configured primitive facts from canonical named i
   const consumer = createSourceFactQueries(extended.extensionHost);
   assert.equal(consumer.getSourcePrimitive(i32Symbol)?.kind, "int32");
   assert.equal(consumer.getSourcePrimitive(longSymbol)?.kind, "int64");
+});
+
+test("source-semantics records exact marker identity on unused named imports", () => {
+  const { extended, program, index } = createProgram(`
+    import type { ptr } from "@example/native/types.js";
+    import { loadPointer } from "@example/native/lang.js";
+
+    export const value = 1;
+  `);
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const pointerImport = getNamedImportSpecifier(index, "ptr");
+  const loadImport = getNamedImportSpecifier(index, "loadPointer");
+  assert.deepEqual(
+    extended.extensionHost.facts.get(pointerImport, sourceMarkerFactKey),
+    { kind: "type-marker", marker: "pointer" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(loadImport, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(Node_Symbol(loadImport), sourceMarkerFactKey),
+    { kind: "call-marker", marker: "load" },
+  );
 });
 
 test("source-semantics primitive spelling is entirely consumer configured", () => {
@@ -460,6 +497,9 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
       loadPointer,
       storePointer,
       equalPointer,
+      hashPointer,
+      bindPointer,
+      projectPointer,
     } from "@example/native/lang.js";
     import * as lang from "@example/native/lang.js";
     import { addressOf as localAddressOf } from "./local.js";
@@ -478,6 +518,18 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     storePointer(allocated, loaded);
     const equal = equalPointer(direct, aliased);
     const nilEqual = equalPointer<int>(undefined, undefined);
+    const hash = hashPointer(direct);
+    const storage = { value: 3 };
+    const bound = bindPointer<int>(
+      storage,
+      () => storage.value,
+      (next) => { storage.value = next; },
+    );
+    const projected = projectPointer<int, int>(
+      direct,
+      (source) => source,
+      (target) => target,
+    );
     const rejected = addressOf(box.frozen);
     const rejectedExpression = addressOf(value + 1);
     const local = localAddressOf(value);
@@ -523,6 +575,18 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     getCallExpression(index, "equalPointer", 1),
     pointerOperationFactKey,
   );
+  const hash = extended.extensionHost.facts.get(
+    getCallExpression(index, "hashPointer", 0),
+    pointerOperationFactKey,
+  );
+  const bound = extended.extensionHost.facts.get(
+    getCallExpression(index, "bindPointer", 0),
+    pointerOperationFactKey,
+  );
+  const projected = extended.extensionHost.facts.get(
+    getCallExpression(index, "projectPointer", 0),
+    pointerOperationFactKey,
+  );
   const rejectedCall = getCallExpression(index, "addressOf", 2);
   const rejectedExpressionCall = getCallExpression(index, "addressOf", 3);
   const localCall = getCallExpression(index, "localAddressOf", 0);
@@ -539,6 +603,37 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   assert.equal(stored?.operation, "store");
   assert.equal(equal?.operation, "equal-pointer");
   assert.equal(nilEqual?.operation, "equal-pointer");
+  assert.equal(hash?.operation, "hash-pointer");
+  assert.equal(bound?.operation, "bind-pointer");
+  assert.equal(
+    bound?.operation === "bind-pointer" ? bound.locationIdentity : undefined,
+    bound?.operation === "bind-pointer" ? bound.identityExpression : undefined,
+  );
+  assert.equal(
+    bound?.operation === "bind-pointer"
+      ? bound.readExpression
+      : undefined,
+    Node_Arguments(bound?.call)?.[1],
+  );
+  assert.equal(
+    bound?.operation === "bind-pointer"
+      ? bound.writeExpression
+      : undefined,
+    Node_Arguments(bound?.call)?.[2],
+  );
+  assert.equal(projected?.operation, "project-pointer");
+  assert.equal(
+    projected?.operation === "project-pointer"
+      ? projected.pointerExpression
+      : undefined,
+    Node_Arguments(projected?.call)?.[0],
+  );
+  assert.equal(
+    projected?.operation === "project-pointer"
+      ? projected.fromSourceExpression
+      : undefined,
+    Node_Arguments(projected?.call)?.[1],
+  );
   assert.equal(
     equal?.operation === "equal-pointer" ? equal.leftExpression : undefined,
     Node_Arguments(equal?.call)?.[0],
@@ -565,6 +660,43 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   assert.deepEqual(
     extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
     ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"],
+  );
+});
+
+test("source-semantics records opaque raw-pointer identity operations by declaration identity", () => {
+  const { extended, program, index } = createProgram(`
+    import type { rawptr } from "@example/native/types.js";
+    import { bindRawPointer, equalRawPointer, hashRawPointer } from "@example/native/lang.js";
+    import * as lang from "@example/native/lang.js";
+    import { bindRawPointer as localBindRawPointer } from "./local.js";
+
+    type Raw = rawptr;
+    const identity = {};
+    const first = bindRawPointer(identity); const second = lang.bindRawPointer(identity);
+    const equal = equalRawPointer(first, second);
+    const hash = hashRawPointer(first);
+    const local = localBindRawPointer(identity);
+  `, new Map([
+    ["/src/local.ts", "export function bindRawPointer(identity: object): object { return identity; }"],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const rawType = getTypeAliasType(index, "Raw");
+  const first = extended.extensionHost.facts.get(getCallExpression(index, "bindRawPointer", 0), rawPointerOperationFactKey);
+  const second = extended.extensionHost.facts.get(getCallExpression(index, "bindRawPointer", 1), rawPointerOperationFactKey);
+  const equal = extended.extensionHost.facts.get(getCallExpression(index, "equalRawPointer", 0), rawPointerOperationFactKey);
+  const hash = extended.extensionHost.facts.get(getCallExpression(index, "hashRawPointer", 0), rawPointerOperationFactKey);
+
+  assert.equal(extended.extensionHost.facts.get(rawType, rawPointerFactKey)?.representation, "opaque-identity");
+  assert.equal(first?.operation, "bind-raw-pointer");
+  assert.equal(second?.operation, "bind-raw-pointer");
+  assert.equal(equal?.operation, "equal-raw-pointer");
+  assert.equal(hash?.operation, "hash-raw-pointer");
+  assert.equal(
+    extended.extensionHost.facts.get(getCallExpression(index, "localBindRawPointer", 0), rawPointerOperationFactKey),
+    undefined,
   );
 });
 
@@ -755,10 +887,11 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export type long = bigint;",
       "export type ulong = bigint;",
       "export type ptr<T> = T;",
+      "export interface rawptr { readonly __rawPointerIdentity: unique symbol; }",
       "export type fnptr<Args, Result> = unknown;",
     ].join("\n")],
     ["/src/node_modules/@example/native/lang.d.ts", [
-      "import type { ptr } from './types.js';",
+      "import type { ptr, rawptr } from './types.js';",
       "export declare function out<T>(value: T): T;",
       "export declare function ref<T>(value: T): T;",
       "export declare function inref<T>(value: T): T;",
@@ -774,6 +907,12 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function loadPointer<T>(pointer: ptr<T>): T;",
       "export declare function storePointer<T>(pointer: ptr<T>, value: T): void;",
       "export declare function equalPointer<T>(left: ptr<T> | undefined, right: ptr<T> | undefined): boolean;",
+      "export declare function hashPointer<T>(pointer: ptr<T> | undefined): number;",
+      "export declare function bindPointer<T>(identity: object, read: () => T, write: (value: T) => void): ptr<T>;",
+      "export declare function projectPointer<F, T>(pointer: ptr<F> | undefined, fromSource: (value: F) => T, toSource: (value: T) => F): ptr<T> | undefined;",
+      "export declare function bindRawPointer(identity: object): rawptr;",
+      "export declare function equalRawPointer(left: rawptr | undefined, right: rawptr | undefined): boolean;",
+      "export declare function hashRawPointer(pointer: rawptr | undefined): number;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {

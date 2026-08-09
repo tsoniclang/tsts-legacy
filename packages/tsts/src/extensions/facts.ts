@@ -63,6 +63,41 @@ export interface ExtensionCanonicalIdentity {
 
 export type SourcePointerMutability = "readonly" | "readwrite" | "unspecified";
 
+export type SourceCallMarkerKind =
+  | "write-only-reference"
+  | "read-write-reference"
+  | "read-only-reference"
+  | "shared-borrow"
+  | "mutable-borrow"
+  | "move"
+  | "struct"
+  | "field"
+  | "attribute"
+  | "default-value"
+  | "address-of"
+  | "allocate"
+  | "load"
+  | "store"
+  | "equal-pointer"
+  | "hash-pointer"
+  | "bind-pointer"
+  | "project-pointer"
+  | "bind-raw-pointer"
+  | "equal-raw-pointer"
+  | "hash-raw-pointer";
+
+export type SourceTypeMarkerKind = "pointer" | "function-pointer" | "raw-pointer";
+
+export type SourceMarkerFact =
+  | {
+    readonly kind: "call-marker";
+    readonly marker: SourceCallMarkerKind;
+  }
+  | {
+    readonly kind: "type-marker";
+    readonly marker: SourceTypeMarkerKind;
+  };
+
 export interface SourcePrimitiveFact {
   readonly kind: SourcePrimitiveKind;
   readonly signed?: boolean;
@@ -84,6 +119,10 @@ export interface FunctionPointerFact {
 export interface PointerFact {
   readonly pointee: Node;
   readonly mutability: SourcePointerMutability;
+}
+
+export interface RawPointerFact {
+  readonly representation: "opaque-identity";
 }
 
 interface PointerOperationFactBase {
@@ -127,6 +166,58 @@ export type PointerOperationFact = PointerOperationFactBase &
       readonly leftType: Type;
       readonly rightExpression: Node;
       readonly rightType: Type;
+    }
+  | {
+      readonly operation: "hash-pointer";
+      readonly pointerExpression: Node;
+      readonly pointerType: Type;
+    }
+  | {
+      readonly operation: "bind-pointer";
+      readonly identityExpression: Node;
+      readonly identityType: Type;
+      readonly readExpression: Node;
+      readonly readType: Type;
+      readonly writeExpression: Node;
+      readonly writeType: Type;
+      readonly locationIdentity: Node;
+    }
+  | {
+      readonly operation: "project-pointer";
+      readonly sourcePointeeType: Type;
+      readonly explicitSourcePointeeTypeNode?: Node;
+      readonly pointerExpression: Node;
+      readonly pointerType: Type;
+      readonly fromSourceExpression: Node;
+      readonly fromSourceType: Type;
+      readonly toSourceExpression: Node;
+      readonly toSourceType: Type;
+    }
+  );
+
+interface RawPointerOperationFactBase {
+  readonly call: Node;
+  readonly resultType: Type;
+}
+
+export type RawPointerOperationFact = RawPointerOperationFactBase &
+  (
+    | {
+      readonly operation: "bind-raw-pointer";
+      readonly identityExpression: Node;
+      readonly identityType: Type;
+    }
+    | {
+      readonly operation: "equal-raw-pointer";
+      readonly leftExpression: Node;
+      readonly leftType: Type;
+      readonly rightExpression: Node;
+      readonly rightType: Type;
+    }
+    | {
+      readonly operation: "hash-raw-pointer";
+      readonly pointerExpression: Node;
+      readonly pointerType: Type;
     }
   );
 
@@ -218,6 +309,15 @@ export const sourcePrimitiveFactKey = markHostSourceReadableFactKey(defineExtens
     && left.runtimeBase === right.runtimeBase,
 }));
 
+export const sourceMarkerFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<SourceMarkerFact>({
+  extensionId: "tsts.source-semantics",
+  name: "sourceMarker",
+  snapshot: snapshotSourceMarkerFact,
+  equals: (left, right) =>
+    left.kind === right.kind
+    && left.marker === right.marker,
+}));
+
 export const argumentPassingFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<ArgumentPassingFact>({
   extensionId: "tsts.source-semantics",
   name: "argumentPassing",
@@ -251,6 +351,20 @@ export const pointerOperationFactKey = markHostSourceReadableFactKey(defineExten
   name: "pointerOperation",
   snapshot: snapshotPointerOperationFact,
   equals: pointerOperationFactEquals,
+}));
+
+export const rawPointerFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<RawPointerFact>({
+  extensionId: "tsts.source-semantics",
+  name: "rawPointer",
+  snapshot: snapshotRawPointerFact,
+  equals: (left, right) => left.representation === right.representation,
+}));
+
+export const rawPointerOperationFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<RawPointerOperationFact>({
+  extensionId: "tsts.source-semantics",
+  name: "rawPointerOperation",
+  snapshot: snapshotRawPointerOperationFact,
+  equals: rawPointerOperationFactEquals,
 }));
 
 export const structFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<StructFact>({
@@ -384,6 +498,19 @@ function snapshotSourcePrimitiveFact(value: SourcePrimitiveFact): SourcePrimitiv
   });
 }
 
+function snapshotSourceMarkerFact(value: SourceMarkerFact): SourceMarkerFact {
+  const record = exactRecord(value, "SourceMarkerFact", ["kind", "marker"]);
+  const kind = requiredString(record, "kind", "SourceMarkerFact");
+  const marker = requiredString(record, "marker", "SourceMarkerFact");
+  if (kind === "call-marker" && sourceCallMarkerKinds.has(marker as SourceCallMarkerKind)) {
+    return Object.freeze({ kind, marker: marker as SourceCallMarkerKind });
+  }
+  if (kind === "type-marker" && sourceTypeMarkerKinds.has(marker as SourceTypeMarkerKind)) {
+    return Object.freeze({ kind, marker: marker as SourceTypeMarkerKind });
+  }
+  throw new Error(`SourceMarkerFact '${kind}:${marker}' is invalid.`);
+}
+
 function snapshotArgumentPassingFact(value: ArgumentPassingFact): ArgumentPassingFact {
   const record = exactRecord(value, "ArgumentPassingFact", ["mode", "storageExpression"]);
   const mode = requiredString(record, "mode", "ArgumentPassingFact");
@@ -416,6 +543,68 @@ function snapshotPointerFact(value: PointerFact): PointerFact {
     pointee: requiredNode(record, "pointee", "PointerFact"),
     mutability,
   });
+}
+
+function snapshotRawPointerFact(value: RawPointerFact): RawPointerFact {
+  const record = exactRecord(value, "RawPointerFact", ["representation"]);
+  const representation = requiredString(record, "representation", "RawPointerFact");
+  if (representation !== "opaque-identity") {
+    throw new Error(`RawPointerFact.representation '${representation}' is invalid.`);
+  }
+  return Object.freeze({ representation });
+}
+
+function snapshotRawPointerOperationFact(value: RawPointerOperationFact): RawPointerOperationFact {
+  const operation = requiredRawPointerOperation(value);
+  const commonFields = ["operation", "call", "resultType"];
+  switch (operation) {
+    case "bind-raw-pointer": {
+      const record = exactRecord(value, "RawPointerOperationFact", [
+        ...commonFields,
+        "identityExpression",
+        "identityType",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "RawPointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "RawPointerOperationFact"),
+        identityExpression: requiredNode(record, "identityExpression", "RawPointerOperationFact"),
+        identityType: requiredCompilerType(record, "identityType", "RawPointerOperationFact"),
+      });
+    }
+    case "equal-raw-pointer": {
+      const record = exactRecord(value, "RawPointerOperationFact", [
+        ...commonFields,
+        "leftExpression",
+        "leftType",
+        "rightExpression",
+        "rightType",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "RawPointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "RawPointerOperationFact"),
+        leftExpression: requiredNode(record, "leftExpression", "RawPointerOperationFact"),
+        leftType: requiredCompilerType(record, "leftType", "RawPointerOperationFact"),
+        rightExpression: requiredNode(record, "rightExpression", "RawPointerOperationFact"),
+        rightType: requiredCompilerType(record, "rightType", "RawPointerOperationFact"),
+      });
+    }
+    case "hash-raw-pointer": {
+      const record = exactRecord(value, "RawPointerOperationFact", [
+        ...commonFields,
+        "pointerExpression",
+        "pointerType",
+      ]);
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "RawPointerOperationFact"),
+        resultType: requiredCompilerType(record, "resultType", "RawPointerOperationFact"),
+        pointerExpression: requiredNode(record, "pointerExpression", "RawPointerOperationFact"),
+        pointerType: requiredCompilerType(record, "pointerType", "RawPointerOperationFact"),
+      });
+    }
+  }
 }
 
 function snapshotPointerOperationFact(value: PointerOperationFact): PointerOperationFact {
@@ -529,6 +718,80 @@ function snapshotPointerOperationFact(value: PointerOperationFact): PointerOpera
         leftType: requiredCompilerType(record, "leftType", "PointerOperationFact"),
         rightExpression: requiredNode(record, "rightExpression", "PointerOperationFact"),
         rightType: requiredCompilerType(record, "rightType", "PointerOperationFact"),
+      });
+    }
+    case "hash-pointer": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "pointerExpression",
+        "pointerType",
+      ]);
+      const explicitPointeeTypeNode = optionalNode(record, "explicitPointeeTypeNode", "PointerOperationFact");
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        pointerExpression: requiredNode(record, "pointerExpression", "PointerOperationFact"),
+        pointerType: requiredCompilerType(record, "pointerType", "PointerOperationFact"),
+      });
+    }
+    case "bind-pointer": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "identityExpression",
+        "identityType",
+        "readExpression",
+        "readType",
+        "writeExpression",
+        "writeType",
+        "locationIdentity",
+      ]);
+      const explicitPointeeTypeNode = optionalNode(record, "explicitPointeeTypeNode", "PointerOperationFact");
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        identityExpression: requiredNode(record, "identityExpression", "PointerOperationFact"),
+        identityType: requiredCompilerType(record, "identityType", "PointerOperationFact"),
+        readExpression: requiredNode(record, "readExpression", "PointerOperationFact"),
+        readType: requiredCompilerType(record, "readType", "PointerOperationFact"),
+        writeExpression: requiredNode(record, "writeExpression", "PointerOperationFact"),
+        writeType: requiredCompilerType(record, "writeType", "PointerOperationFact"),
+        locationIdentity: requiredNode(record, "locationIdentity", "PointerOperationFact"),
+      });
+    }
+    case "project-pointer": {
+      const record = exactRecord(value, "PointerOperationFact", [
+        ...commonFields,
+        "sourcePointeeType",
+        "explicitSourcePointeeTypeNode",
+        "pointerExpression",
+        "pointerType",
+        "fromSourceExpression",
+        "fromSourceType",
+        "toSourceExpression",
+        "toSourceType",
+      ]);
+      const explicitPointeeTypeNode = optionalNode(record, "explicitPointeeTypeNode", "PointerOperationFact");
+      const explicitSourcePointeeTypeNode = optionalNode(record, "explicitSourcePointeeTypeNode", "PointerOperationFact");
+      return Object.freeze({
+        operation,
+        call: requiredNode(record, "call", "PointerOperationFact"),
+        pointeeType: requiredCompilerType(record, "pointeeType", "PointerOperationFact"),
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: requiredCompilerType(record, "resultType", "PointerOperationFact"),
+        sourcePointeeType: requiredCompilerType(record, "sourcePointeeType", "PointerOperationFact"),
+        ...(explicitSourcePointeeTypeNode === undefined ? {} : { explicitSourcePointeeTypeNode }),
+        pointerExpression: requiredNode(record, "pointerExpression", "PointerOperationFact"),
+        pointerType: requiredCompilerType(record, "pointerType", "PointerOperationFact"),
+        fromSourceExpression: requiredNode(record, "fromSourceExpression", "PointerOperationFact"),
+        fromSourceType: requiredCompilerType(record, "fromSourceType", "PointerOperationFact"),
+        toSourceExpression: requiredNode(record, "toSourceExpression", "PointerOperationFact"),
+        toSourceType: requiredCompilerType(record, "toSourceType", "PointerOperationFact"),
       });
     }
   }
@@ -776,6 +1039,58 @@ function pointerOperationFactEquals(
         && left.leftType === right.leftType
         && left.rightExpression === right.rightExpression
         && left.rightType === right.rightType;
+    case "hash-pointer":
+      return right.operation === "hash-pointer"
+        && left.pointerExpression === right.pointerExpression
+        && left.pointerType === right.pointerType;
+    case "bind-pointer":
+      return right.operation === "bind-pointer"
+        && left.identityExpression === right.identityExpression
+        && left.identityType === right.identityType
+        && left.readExpression === right.readExpression
+        && left.readType === right.readType
+        && left.writeExpression === right.writeExpression
+        && left.writeType === right.writeType
+        && left.locationIdentity === right.locationIdentity;
+    case "project-pointer":
+      return right.operation === "project-pointer"
+        && left.sourcePointeeType === right.sourcePointeeType
+        && left.explicitSourcePointeeTypeNode === right.explicitSourcePointeeTypeNode
+        && left.pointerExpression === right.pointerExpression
+        && left.pointerType === right.pointerType
+        && left.fromSourceExpression === right.fromSourceExpression
+        && left.fromSourceType === right.fromSourceType
+        && left.toSourceExpression === right.toSourceExpression
+        && left.toSourceType === right.toSourceType;
+  }
+}
+
+function rawPointerOperationFactEquals(
+  left: RawPointerOperationFact,
+  right: RawPointerOperationFact,
+): boolean {
+  if (
+    left.operation !== right.operation
+    || left.call !== right.call
+    || left.resultType !== right.resultType
+  ) {
+    return false;
+  }
+  switch (left.operation) {
+    case "bind-raw-pointer":
+      return right.operation === "bind-raw-pointer"
+        && left.identityExpression === right.identityExpression
+        && left.identityType === right.identityType;
+    case "equal-raw-pointer":
+      return right.operation === "equal-raw-pointer"
+        && left.leftExpression === right.leftExpression
+        && left.leftType === right.leftType
+        && left.rightExpression === right.rightExpression
+        && left.rightType === right.rightType;
+    case "hash-raw-pointer":
+      return right.operation === "hash-raw-pointer"
+        && left.pointerExpression === right.pointerExpression
+        && left.pointerType === right.pointerType;
   }
 }
 
@@ -957,8 +1272,29 @@ function requiredPointerOperation(value: unknown): PointerOperationFact["operati
     && operation !== "load"
     && operation !== "store"
     && operation !== "equal-pointer"
+    && operation !== "hash-pointer"
+    && operation !== "bind-pointer"
+    && operation !== "project-pointer"
   ) {
     throw new Error(`PointerOperationFact.operation '${String(operation)}' is invalid.`);
+  }
+  return operation;
+}
+
+function requiredRawPointerOperation(value: unknown): RawPointerOperationFact["operation"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("RawPointerOperationFact must be an object.");
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, "operation");
+  const operation = descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : undefined;
+  if (
+    operation !== "bind-raw-pointer"
+    && operation !== "equal-raw-pointer"
+    && operation !== "hash-raw-pointer"
+  ) {
+    throw new Error(`RawPointerOperationFact.operation '${String(operation)}' is invalid.`);
   }
   return operation;
 }
@@ -1103,6 +1439,34 @@ const sourceRuntimeBases = new Set<SourcePrimitiveFact["runtimeBase"]>([
   "bigint",
   "string",
   "object",
+]);
+const sourceCallMarkerKinds = new Set<SourceCallMarkerKind>([
+  "write-only-reference",
+  "read-write-reference",
+  "read-only-reference",
+  "shared-borrow",
+  "mutable-borrow",
+  "move",
+  "struct",
+  "field",
+  "attribute",
+  "default-value",
+  "address-of",
+  "allocate",
+  "load",
+  "store",
+  "equal-pointer",
+  "hash-pointer",
+  "bind-pointer",
+  "project-pointer",
+  "bind-raw-pointer",
+  "equal-raw-pointer",
+  "hash-raw-pointer",
+]);
+const sourceTypeMarkerKinds = new Set<SourceTypeMarkerKind>([
+  "pointer",
+  "function-pointer",
+  "raw-pointer",
 ]);
 const pointerMutabilities = new Set<SourcePointerMutability>(["readonly", "readwrite", "unspecified"]);
 const flowStates = new Set<FlowStateFact["state"]>(["moved", "borrowed-shared", "borrowed-mut"]);

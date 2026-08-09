@@ -98,8 +98,9 @@ export function Printer_writeLine(receiver: GoPtr<Printer>): void {
  * }
  */
 export function Printer_writeLineRepeat(receiver: GoPtr<Printer>, count: int): void {
-  const loop = (i: int): void => { if (i < count) { Printer_writeLine(receiver); loop((i + 1) as int); } };
-  loop(0 as int);
+  for (let index = 0 as int; index < count; index = (index + 1) as int) {
+    Printer_writeLine(receiver);
+  }
 }
 
 /**

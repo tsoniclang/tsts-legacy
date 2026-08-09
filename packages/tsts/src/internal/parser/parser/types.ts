@@ -497,36 +497,40 @@ export function Parser_tryParseConstraintOfInferType(receiver: GoPtr<Parser>): G
  */
 export function Parser_parsePostfixTypeOrHigher(receiver: GoPtr<Parser>): GoPtr<Node> {
   const pos = Parser_nodePos(receiver);
-  const loop = (typeNode: GoPtr<Node>): GoPtr<Node> => {
+  let typeNode = Parser_parseNonArrayType(receiver);
+  while (true) {
     if (Parser_hasPrecedingLineBreak(receiver)) {
       return typeNode;
     }
     switch (receiver!.token) {
       case KindExclamationToken:
         Parser_nextToken(receiver);
-        return loop(Parser_finishNode(receiver, NewJSDocNonNullableType(receiver!.factory, typeNode), pos));
+        typeNode = Parser_finishNode(receiver, NewJSDocNonNullableType(receiver!.factory, typeNode), pos);
+        continue;
       case KindQuestionToken:
         // If next token is start of a type we have a conditional type
         if (Parser_lookAhead(receiver, Parser_nextIsStartOfType)) {
           return typeNode;
         }
         Parser_nextToken(receiver);
-        return loop(Parser_finishNode(receiver, NewJSDocNullableType(receiver!.factory, typeNode), pos));
+        typeNode = Parser_finishNode(receiver, NewJSDocNullableType(receiver!.factory, typeNode), pos);
+        continue;
       case KindOpenBracketToken: {
         Parser_parseExpected(receiver, KindOpenBracketToken);
         if (Parser_isStartOfType(receiver, false /*isStartOfParameter*/)) {
           const indexType = Parser_parseType(receiver);
           Parser_parseExpected(receiver, KindCloseBracketToken);
-          return loop(Parser_finishNode(receiver, NewIndexedAccessTypeNode(receiver!.factory, typeNode, indexType), pos));
+          typeNode = Parser_finishNode(receiver, NewIndexedAccessTypeNode(receiver!.factory, typeNode, indexType), pos);
+          continue;
         }
         Parser_parseExpected(receiver, KindCloseBracketToken);
-        return loop(Parser_finishNode(receiver, NewArrayTypeNode(receiver!.factory, typeNode), pos));
+        typeNode = Parser_finishNode(receiver, NewArrayTypeNode(receiver!.factory, typeNode), pos);
+        continue;
       }
       default:
         return typeNode;
     }
-  };
-  return loop(Parser_parseNonArrayType(receiver));
+  }
 }
 
 /**
@@ -1553,15 +1557,14 @@ export function Parser_parseTemplateType(receiver: GoPtr<Parser>): GoPtr<Node> {
  */
 export function Parser_parseTemplateTypeSpans(receiver: GoPtr<Parser>): GoPtr<NodeList> {
   const pos = Parser_nodePos(receiver);
-  const accumulate = (list: GoSlice<GoPtr<Node>>): GoSlice<GoPtr<Node>> => {
+  const list: GoSlice<GoPtr<Node>> = [];
+  while (true) {
     const span = Parser_parseTemplateTypeSpan(receiver);
-    const next = [...list, span];
+    list.push(span);
     if (AsTemplateLiteralTypeSpan(span)!.Literal!.Kind !== KindTemplateMiddle) {
-      return next;
+      break;
     }
-    return accumulate(next);
-  };
-  const list = accumulate([]);
+  }
   return Parser_newNodeList(receiver, NewTextRange(pos, Parser_nodePos(receiver)), list);
 }
 
@@ -1964,14 +1967,11 @@ export function Parser_scanTypeMemberStart(receiver: GoPtr<Parser>): bool {
     return true;
   }
   // Eat up all modifiers, but hold on to the last one in case it is actually an identifier
-  const eatModifiers = (sawModifier: bool): bool => {
-    if (IsModifierKind(receiver!.token)) {
-      Parser_nextToken(receiver);
-      return eatModifiers(true);
-    }
-    return sawModifier;
-  };
-  const idTokenAfterModifiers = eatModifiers(false);
+  let idTokenAfterModifiers = false;
+  while (IsModifierKind(receiver!.token)) {
+    idTokenAfterModifiers = true;
+    Parser_nextToken(receiver);
+  }
   // Index signatures and computed property names are type members
   if (receiver!.token === KindOpenBracketToken) {
     return true;

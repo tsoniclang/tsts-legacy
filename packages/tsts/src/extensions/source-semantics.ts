@@ -54,7 +54,10 @@ import {
   functionPointerFactKey,
   pointerFactKey,
   pointerOperationFactKey,
+  rawPointerFactKey,
+  rawPointerOperationFactKey,
   providerVirtualDeclarationFactKey,
+  sourceMarkerFactKey,
   sourcePrimitiveFactKey,
   structFactKey,
 } from "./facts.js";
@@ -69,8 +72,13 @@ import type {
   FunctionPointerFact,
   PointerFact,
   PointerOperationFact,
+  RawPointerFact,
+  RawPointerOperationFact,
+  SourceCallMarkerKind,
+  SourceMarkerFact,
   SourcePrimitiveFact,
   SourcePrimitiveKind,
+  SourceTypeMarkerKind,
   StructFact,
 } from "./facts.js";
 import type { ResolvedSourceCallInfo, TypeCheckerQueries } from "../services/type-checker.js";
@@ -120,22 +128,7 @@ export interface SourcePrimitiveDeclaration extends Omit<SourcePrimitiveFact, "k
   readonly primitive: SourcePrimitiveKind;
 }
 
-export type SourceCallMarkerKind =
-  | "write-only-reference"
-  | "read-write-reference"
-  | "read-only-reference"
-  | "shared-borrow"
-  | "mutable-borrow"
-  | "move"
-  | "struct"
-  | "field"
-  | "attribute"
-  | "default-value"
-  | "address-of"
-  | "allocate"
-  | "load"
-  | "store"
-  | "equal-pointer";
+export type { SourceCallMarkerKind, SourceTypeMarkerKind } from "./facts.js";
 
 type ArgumentPassingMarkerKind = Extract<
   SourceCallMarkerKind,
@@ -147,8 +140,6 @@ export interface SourceCallMarkerDeclaration {
   readonly exportName: string;
   readonly marker: SourceCallMarkerKind;
 }
-
-export type SourceTypeMarkerKind = "pointer" | "function-pointer";
 
 export interface SourceTypeMarkerDeclaration {
   readonly kind: "type-marker";
@@ -312,12 +303,14 @@ function recordSourceSemanticsImportClause(
       recordSourcePrimitiveImport(facts, importSpecifier, moduleIdentity, exportName, primitiveFact, typedImport);
       continue;
     }
-    if (moduleIdentity.callMarkersByExportName.has(exportName)) {
-      recordSourceSemanticsSymbolImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value");
+    const callMarker = moduleIdentity.callMarkersByExportName.get(exportName);
+    if (callMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", callMarker);
       continue;
     }
-    if (moduleIdentity.typeMarkersByExportName.has(exportName)) {
-      recordSourceSemanticsSymbolImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value");
+    const typeMarker = moduleIdentity.typeMarkersByExportName.get(exportName);
+    if (typeMarker !== undefined) {
+      recordSourceSemanticsMarkerImport(facts, importSpecifier, moduleIdentity, exportName, typedImport ? "type" : "value", typeMarker);
     }
   }
 }
@@ -465,6 +458,9 @@ function recordSourceSemanticsCallMarker(
     case "load":
     case "store":
     case "equal-pointer":
+    case "hash-pointer":
+    case "bind-pointer":
+    case "project-pointer":
       recordPointerOperation(
         facts,
         diagnostics,
@@ -475,6 +471,11 @@ function recordSourceSemanticsCallMarker(
         marker,
         evidence,
       );
+      return;
+    case "bind-raw-pointer":
+    case "equal-raw-pointer":
+    case "hash-raw-pointer":
+      recordRawPointerOperation(facts, callExpression, callInfo, marker, evidence);
       return;
   }
 }
@@ -501,11 +502,13 @@ function recordPointerOperation(
     return;
   }
   const selectedTypeArguments = callInfo.sourceSelectedMethodTypeArguments ?? [];
-  const pointeeType = selectedTypeArguments.length === 1
-    ? selectedTypeArguments[0]?.selectedType
+  const expectedTypeArgumentCount = marker.marker === "project-pointer" ? 2 : 1;
+  const pointeeIndex = marker.marker === "project-pointer" ? 1 : 0;
+  const pointeeType = selectedTypeArguments.length === expectedTypeArgumentCount
+    ? selectedTypeArguments[pointeeIndex]?.selectedType
     : undefined;
-  const explicitPointeeTypeNode = selectedTypeArguments.length === 1
-    ? selectedTypeArguments[0]?.explicitTypeNode
+  const explicitPointeeTypeNode = selectedTypeArguments.length === expectedTypeArgumentCount
+    ? selectedTypeArguments[pointeeIndex]?.explicitTypeNode
     : undefined;
   if (pointeeType === undefined) {
     diagnostics.append({
@@ -514,7 +517,7 @@ function recordPointerOperation(
       numericCode: 9901103,
       publicCode: "TSTS_SOURCE_SEMANTICS_0003",
       category: "error",
-      message: `${marker.exportName}(...) requires one exact selected pointee type.`,
+      message: `${marker.exportName}(...) requires ${expectedTypeArgumentCount} exact selected pointer type argument${expectedTypeArgumentCount === 1 ? "" : "s"}.`,
       nodeOrSpan: callExpression,
       evidence,
       identity: sourceSemanticsDiagnosticIdentity(
@@ -642,6 +645,80 @@ function recordPointerOperation(
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
     }
+    case "hash-pointer": {
+      const pointer = exactSourceCallArgument(callInfo, 0, 1);
+      if (pointer === undefined) {
+        return;
+      }
+      const fact = {
+        operation: "hash-pointer",
+        call: callExpression,
+        pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: callInfo.sourceResultType,
+        pointerExpression: pointer.expression,
+        pointerType: pointer.type,
+      } satisfies PointerOperationFact;
+      facts.set(callExpression, pointerOperationFactKey, fact, evidence);
+      return;
+    }
+    case "bind-pointer": {
+      const identity = exactSourceCallArgument(callInfo, 0, 3);
+      const read = exactSourceCallArgument(callInfo, 1, 3);
+      const write = exactSourceCallArgument(callInfo, 2, 3);
+      if (identity === undefined || read === undefined || write === undefined) {
+        return;
+      }
+      const fact = {
+        operation: "bind-pointer",
+        call: callExpression,
+        pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: callInfo.sourceResultType,
+        identityExpression: identity.expression,
+        identityType: identity.type,
+        readExpression: read.expression,
+        readType: read.type,
+        writeExpression: write.expression,
+        writeType: write.type,
+        locationIdentity: identity.expression,
+      } satisfies PointerOperationFact;
+      facts.set(callExpression, pointerOperationFactKey, fact, evidence);
+      return;
+    }
+    case "project-pointer": {
+      const pointer = exactSourceCallArgument(callInfo, 0, 3);
+      const fromSource = exactSourceCallArgument(callInfo, 1, 3);
+      const toSource = exactSourceCallArgument(callInfo, 2, 3);
+      const sourceTypeArgument = selectedTypeArguments[0];
+      if (
+        pointer === undefined ||
+        fromSource === undefined ||
+        toSource === undefined ||
+        sourceTypeArgument?.selectedType === undefined
+      ) {
+        return;
+      }
+      const fact = {
+        operation: "project-pointer",
+        call: callExpression,
+        pointeeType,
+        ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
+        resultType: callInfo.sourceResultType,
+        sourcePointeeType: sourceTypeArgument.selectedType,
+        ...(sourceTypeArgument.explicitTypeNode === undefined
+          ? {}
+          : { explicitSourcePointeeTypeNode: sourceTypeArgument.explicitTypeNode }),
+        pointerExpression: pointer.expression,
+        pointerType: pointer.type,
+        fromSourceExpression: fromSource.expression,
+        fromSourceType: fromSource.type,
+        toSourceExpression: toSource.expression,
+        toSourceType: toSource.type,
+      } satisfies PointerOperationFact;
+      facts.set(callExpression, pointerOperationFactKey, fact, evidence);
+      return;
+    }
     default:
       return;
   }
@@ -655,6 +732,67 @@ function exactSourceCallArgument(
   return callInfo.sourceArguments.length === expectedCount
     ? callInfo.sourceArguments[index]
     : undefined;
+}
+
+function recordRawPointerOperation(
+  facts: SourceSemanticsFactAccess,
+  callExpression: Node,
+  callInfo: ResolvedSourceCallInfo,
+  marker: SourceCallMarkerDeclaration,
+  evidence: readonly ExtensionEvidence[],
+): void {
+  if (callInfo.sourceSelectedSignatureKind !== "resolved") {
+    return;
+  }
+  switch (marker.marker) {
+    case "bind-raw-pointer": {
+      const identity = exactSourceCallArgument(callInfo, 0, 1);
+      if (identity === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        identityExpression: identity.expression,
+        identityType: identity.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    case "equal-raw-pointer": {
+      const left = exactSourceCallArgument(callInfo, 0, 2);
+      const right = exactSourceCallArgument(callInfo, 1, 2);
+      if (left === undefined || right === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        leftExpression: left.expression,
+        leftType: left.type,
+        rightExpression: right.expression,
+        rightType: right.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    case "hash-raw-pointer": {
+      const pointer = exactSourceCallArgument(callInfo, 0, 1);
+      if (pointer === undefined) {
+        return;
+      }
+      facts.set(callExpression, rawPointerOperationFactKey, {
+        operation: marker.marker,
+        call: callExpression,
+        resultType: callInfo.sourceResultType,
+        pointerExpression: pointer.expression,
+        pointerType: pointer.type,
+      } satisfies RawPointerOperationFact, evidence);
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 function recordArgumentPassingMarker(
@@ -918,6 +1056,15 @@ function recordSourceSemanticsTypeMarker(
 ): void {
   const typeArguments = Node_TypeArguments(typeReference) ?? [];
   const evidence = createMarkerEvidence(marker.exportName);
+  if (marker.marker === "raw-pointer") {
+    if (typeArguments.length !== 0) {
+      return;
+    }
+    const fact = { representation: "opaque-identity" } satisfies RawPointerFact;
+    facts.set(typeReference, rawPointerFactKey, fact, evidence);
+    facts.set(typeName, rawPointerFactKey, fact, evidence);
+    return;
+  }
   if (marker.marker === "pointer") {
     if (typeArguments.length !== 1) {
       return;
@@ -1445,6 +1592,33 @@ function recordSourceSemanticsSymbolImport(
   const identity = createExportIdentity(moduleIdentity, exportName, importKind, getSymbolFactId(localSymbol));
   facts.set(importSpecifier, canonicalIdentityFactKey, identity, createModuleEvidence(moduleIdentity));
   facts.set(localSymbol, canonicalIdentityFactKey, identity, createModuleEvidence(moduleIdentity));
+}
+
+function recordSourceSemanticsMarkerImport(
+  facts: SourceSemanticsFactAccess,
+  importSpecifier: Node,
+  moduleIdentity: SourceSemanticsModuleIdentity,
+  exportName: string,
+  importKind: ExtensionImportKind,
+  marker: SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration,
+): void {
+  recordSourceSemanticsSymbolImport(
+    facts,
+    importSpecifier,
+    moduleIdentity,
+    exportName,
+    importKind,
+  );
+  const localSymbol = Node_Symbol(importSpecifier);
+  if (localSymbol === undefined) {
+    return;
+  }
+  const fact: SourceMarkerFact = marker.kind === "call-marker"
+    ? { kind: marker.kind, marker: marker.marker }
+    : { kind: marker.kind, marker: marker.marker };
+  const evidence = createMarkerEvidence(exportName);
+  facts.set(importSpecifier, sourceMarkerFactKey, fact, evidence);
+  facts.set(localSymbol, sourceMarkerFactKey, fact, evidence);
 }
 
 function createModuleIdentity(moduleIdentity: SourceSemanticsModuleIdentity, importKind: ExtensionImportKind, canonicalSymbolId: string): ExtensionCanonicalIdentity {

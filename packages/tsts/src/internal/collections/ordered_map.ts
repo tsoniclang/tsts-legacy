@@ -304,12 +304,11 @@ export function OrderedMap_Keys<K extends GoComparable, V>(receiver: GoPtr<Order
     }
 
     // We use a for loop here to ensure we enumerate new items added during iteration.
-    const iterate = (i: number): void => {
-      if (i < m.keys.length && yield_(m.keys[i]!)) {
-        iterate(i + 1);
+    for (let index = 0; index < m.keys.length; index += 1) {
+      if (!yield_(m.keys[index]!)) {
+        break;
       }
-    };
-    iterate(0);
+    }
   };
 }
 
@@ -341,12 +340,11 @@ export function OrderedMap_Values<K extends GoComparable, V>(receiver: GoPtr<Ord
     }
 
     // We use a for loop here to ensure we enumerate new items added during iteration.
-    const iterate = (i: number): void => {
-      if (i < m.keys.length && yield_(m.mp.get(m.keys[i]!) as V)) {
-        iterate(i + 1);
+    for (let index = 0; index < m.keys.length; index += 1) {
+      if (!yield_(m.mp.get(m.keys[index]!) as V)) {
+        break;
       }
-    };
-    iterate(0);
+    }
   };
 }
 
@@ -379,15 +377,12 @@ export function OrderedMap_Entries<K extends GoComparable, V>(receiver: GoPtr<Or
     }
 
     // We use a for loop here to ensure we enumerate new items added during iteration.
-    const iterate = (i: number): void => {
-      if (i < m.keys.length) {
-        const key = m.keys[i]!;
-        if (yield_(key, m.mp.get(key) as V)) {
-          iterate(i + 1);
-        }
+    for (let index = 0; index < m.keys.length; index += 1) {
+      const key = m.keys[index]!;
+      if (!yield_(key, m.mp.get(key) as V)) {
+        break;
       }
-    };
-    iterate(0);
+    }
   };
 }
 
