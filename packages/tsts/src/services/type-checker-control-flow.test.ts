@@ -151,6 +151,7 @@ test("resource queries retain exact sync and async disposer declarations", () =>
 
   const sync = queries.getResolvedResourceManagementInfo(declarations[0]);
   assert.equal(sync?.declarationKind, "using");
+  assert.equal(sync?.acquisition.kind, "initializer");
   assert.equal(sync?.acceptsNullish, true);
   assert.equal(sync?.disposal.kind, "selected");
   assert.equal(sync?.disposal.alternatives.length, 1);
@@ -167,6 +168,28 @@ test("resource queries retain exact sync and async disposer declarations", () =>
   assert.equal(fallback?.disposal.kind, "selected");
   assert.equal(fallback?.disposal.alternatives[0]?.kind, "sync");
   assert.ok(queries.getResolvedResourceManagementInfo(declarations[2]) === fallback);
+});
+
+test("resource queries retain exact for-of acquisition and disposal evidence", () => {
+  const { program, index } = createProgram(`
+    ${disposalGlobals}
+    class Resource {
+      [Symbol.dispose](): void {}
+    }
+    declare const resources: Resource[];
+    for (using resource of resources) {}
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const ast = createAstReader();
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const declaration = findNodesByKind(index, KindVariableDeclaration)
+    .find((node) => ast.variableDeclarationKind(node) === "using");
+  const selected = queries.getResolvedResourceManagementInfo(declaration);
+
+  assert.equal(selected?.acquisition.kind, "iteration");
+  assert.equal(selected?.disposal.kind, "selected");
+  assert.equal(selected?.disposal.alternatives.length, 1);
+  assert.equal(selected?.disposal.alternatives[0]?.kind, "sync");
 });
 
 test("resource queries preserve union alternatives without inventing one disposer", () => {
