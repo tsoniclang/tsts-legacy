@@ -9,6 +9,7 @@ import { NodeFlagsOptionalChain } from "../internal/ast/generated/flags.js";
 import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression } from "../internal/ast/generated/predicates.js";
 import {
   GetSourceFileOfNode,
+  GetContainingFunction,
   IsCallOrNewExpression,
   OEKAssertions,
   OEKParentheses,
@@ -60,6 +61,25 @@ import type {
   Type,
 } from "../internal/checker/types.js";
 import { ContextFlagsNone, SignatureKindCall, SignatureKindConstruct } from "../internal/checker/types.js";
+import {
+  resolveSourceGeneratorInfo,
+  resolveSourceResourceManagementInfo,
+  resolveSourceWellKnownSymbolInfo,
+  resolveSourceYieldInfo,
+} from "./source-control-flow-evidence.js";
+
+export type {
+  ResolvedSourceGeneratorInfo,
+  ResolvedSourceResourceManagementInfo,
+  ResolvedSourceWellKnownSymbolInfo,
+  ResolvedSourceYieldInfo,
+} from "./source-control-flow-evidence.js";
+import type {
+  ResolvedSourceGeneratorInfo,
+  ResolvedSourceResourceManagementInfo,
+  ResolvedSourceWellKnownSymbolInfo,
+  ResolvedSourceYieldInfo,
+} from "./source-control-flow-evidence.js";
 
 export interface CreateTypeCheckerQueriesOptions {
   readonly sourceFile: GoPtr<SourceFile>;
@@ -97,6 +117,10 @@ export interface TypeCheckerQueries {
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
   readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
+  readonly getResolvedGeneratorInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceGeneratorInfo>;
+  readonly getResolvedYieldInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceYieldInfo>;
+  readonly getResolvedWellKnownSymbolInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceWellKnownSymbolInfo>;
+  readonly getResolvedResourceManagementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceResourceManagementInfo>;
   readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
   readonly getCallSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -128,6 +152,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
+  const generatorInfos = new WeakMap<Node, ResolvedSourceGeneratorInfo>();
+  const yieldInfos = new WeakMap<Node, ResolvedSourceYieldInfo>();
+  const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
+  const resourceManagementInfos = new WeakMap<Node, ResolvedSourceResourceManagementInfo>();
   const queries: TypeCheckerQueries = {
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
@@ -177,6 +205,29 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(storageInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           getResolvedSourceStorageInfo(checker, node))),
+    getResolvedGeneratorInfo: (node) =>
+      memoizeResolvedNodeQuery(generatorInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          resolveSourceGeneratorInfo(checker, node))),
+    getResolvedYieldInfo: (node) =>
+      memoizeResolvedNodeQuery(yieldInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) => {
+          const declaration = GetContainingFunction(node);
+          const generator = memoizeResolvedNodeQuery(
+            generatorInfos,
+            declaration,
+            () => resolveSourceGeneratorInfo(checker, declaration),
+          );
+          return resolveSourceYieldInfo(checker, node, generator);
+        })),
+    getResolvedWellKnownSymbolInfo: (node) =>
+      memoizeResolvedNodeQuery(wellKnownSymbolInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          resolveSourceWellKnownSymbolInfo(checker, node))),
+    getResolvedResourceManagementInfo: (node) =>
+      memoizeResolvedNodeQuery(resourceManagementInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          resolveSourceResourceManagementInfo(checker, node))),
     getReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => Checker_GetReturnTypeOfSignature(checker, signature)),
     getCallSignaturesOfType: (type) =>

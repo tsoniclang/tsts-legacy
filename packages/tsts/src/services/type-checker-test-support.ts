@@ -18,7 +18,12 @@ import { FromMap } from "../internal/vfs/vfstest/vfstest.js";
 
 export function createProgram(
   sourceText: string,
-  settings: { readonly noLib?: boolean; readonly fileName?: "index.ts" | "index.js"; readonly checkJs?: boolean } = {},
+  settings: {
+    readonly noLib?: boolean;
+    readonly fileName?: "index.ts" | "index.js";
+    readonly checkJs?: boolean;
+    readonly lib?: readonly string[];
+  } = {},
 ): { readonly program: GoPtr<Program>; readonly index: GoPtr<SourceFile> } {
   const fileName = settings.fileName ?? "index.ts";
   const sourcePath = `/src/${fileName}`;
@@ -30,6 +35,7 @@ export function createProgram(
         module: "esnext",
         moduleResolution: "bundler",
         strict: true,
+        ...(settings.lib === undefined ? {} : { lib: settings.lib }),
         ...(settings.checkJs === true ? { allowJs: true, checkJs: true, noEmit: true } : {}),
       },
       files: [fileName],

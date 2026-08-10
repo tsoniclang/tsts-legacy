@@ -4,6 +4,7 @@ import { NewGoStructMap } from "../../../go/compat.js";
 import type {
   ExtensionCheckedIterationResult,
   ExtensionCheckedIterationSelection,
+  ExtensionCheckedYieldStarResult,
   ExtensionIterationProtocolSelectionCapture,
 } from "./iteration-evidence.js";
 import {
@@ -15,6 +16,7 @@ import {
   createExtensionIterationProtocolSelectionCapture,
   sourceIterationEvidenceLimits,
   extensionIterationTypesMatch,
+  freezeExtensionCheckedYieldStarResult,
   isForAwaitOfIterationMechanism,
   isForOfIterationMechanism,
   setExtensionProtocolMechanismKind,
@@ -781,6 +783,74 @@ export function Checker_checkForOfIterationWithExtensionSelection(
       mechanism,
     },
   };
+}
+
+export function Checker_checkYieldStarWithExtensionSelection(
+  receiver: GoPtr<Checker>,
+  inputType: GoPtr<Type>,
+  sentType: GoPtr<Type>,
+  asynchronous: bool,
+): GoPtr<ExtensionCheckedYieldStarResult> {
+  if (inputType === undefined || sentType === undefined) {
+    return undefined;
+  }
+  if (IsTypeAny(inputType)) {
+    const mechanism = asynchronous
+      ? {
+          kind: "untyped-dynamic-iteration" as const,
+          sourceIterableType: inputType,
+        }
+      : {
+          kind: "untyped-dynamic-iteration" as const,
+          sourceIterableType: inputType,
+        };
+    return freezeExtensionCheckedYieldStarResult({
+      sourceIterableType: inputType,
+      iterationTypes: {
+        yieldType: receiver!.anyType,
+        returnType: receiver!.anyType,
+        nextType: receiver!.anyType,
+      },
+      mechanism,
+    }, asynchronous);
+  }
+  const use = asynchronous ? IterationUseAsyncYieldStar : IterationUseYieldStar;
+  const capture = createExtensionIterationProtocolSelectionCapture();
+  const yieldedType = Checker_getIteratedTypeOrElementTypeInternal(
+    receiver,
+    use,
+    inputType,
+    sentType,
+    undefined,
+    false,
+    capture,
+  );
+  const mechanism = capture.mechanism;
+  if (yieldedType === undefined || mechanism === undefined) {
+    return undefined;
+  }
+  if (asynchronous) {
+    if (!isForAwaitOfIterationMechanism(mechanism)) {
+      return undefined;
+    }
+  } else if (!isForOfIterationMechanism(mechanism)) {
+    return undefined;
+  }
+  const iterationTypes = Checker_getIterationTypesOfIterable(
+    receiver,
+    inputType,
+    use,
+    undefined,
+  );
+  return freezeExtensionCheckedYieldStarResult({
+    sourceIterableType: inputType,
+    iterationTypes: {
+      yieldType: yieldedType,
+      returnType: iterationTypes.returnType,
+      nextType: iterationTypes.nextType,
+    },
+    mechanism,
+  }, asynchronous);
 }
 
 /**

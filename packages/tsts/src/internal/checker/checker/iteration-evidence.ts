@@ -133,6 +133,14 @@ export interface ExtensionCheckedIterationResult {
   readonly selection: ExtensionCheckedIterationSelection | undefined;
 }
 
+export interface ExtensionCheckedYieldStarResult {
+  readonly sourceIterableType: Type;
+  readonly iterationTypes: ExtensionSelectedIterationTypes;
+  readonly mechanism:
+    | ExtensionForOfIterationMechanism
+    | ExtensionForAwaitOfIterationMechanism;
+}
+
 export function freezeExtensionCheckedIterationSelection(
   selection: ExtensionCheckedIterationSelection,
 ): ExtensionCheckedIterationSelection {
@@ -159,6 +167,23 @@ export function freezeExtensionCheckedIterationSelection(
         mechanism: freezeForAwaitOfIterationMechanism(selection.mechanism),
       });
   }
+}
+
+export function freezeExtensionCheckedYieldStarResult(
+  result: ExtensionCheckedYieldStarResult,
+  asynchronous: boolean,
+): ExtensionCheckedYieldStarResult {
+  return Object.freeze({
+    sourceIterableType: result.sourceIterableType,
+    iterationTypes: Object.freeze({ ...result.iterationTypes }),
+    mechanism: asynchronous
+      ? freezeForAwaitOfIterationMechanism(
+          result.mechanism as ExtensionForAwaitOfIterationMechanism,
+        )
+      : freezeForOfIterationMechanism(
+          result.mechanism as ExtensionForOfIterationMechanism,
+        ),
+  });
 }
 
 export interface ExtensionIterationSelectionBudget {
