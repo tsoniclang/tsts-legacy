@@ -134,8 +134,12 @@ export type {
   ResolvedSourceCallInfo,
   ResolvedSourceElementAccessInfo,
   ResolvedSourceIterationInfo,
+  ResolvedSourceGeneratorInfo,
   ResolvedSourcePropertyAccessInfo,
+  ResolvedSourceResourceManagementInfo,
   ResolvedSourceStorageInfo,
+  ResolvedSourceWellKnownSymbolInfo,
+  ResolvedSourceYieldInfo,
   TypeCheckerQueries,
 } from "./services/type-checker.js";
 export { createCompilerHost, createInMemoryFileSystem, getBundledLibraryClosure, getBundledLibraryPath, withBundledLibraries } from "./services/embedding-host.js";
