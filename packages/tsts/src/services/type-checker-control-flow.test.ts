@@ -16,6 +16,19 @@ import {
   findNodesByKind,
 } from "./type-checker-test-support.js";
 
+const disposalGlobals = `
+  interface SymbolConstructor {
+    readonly dispose: unique symbol;
+    readonly asyncDispose: unique symbol;
+  }
+  interface Disposable {
+    [Symbol.dispose](): void;
+  }
+  interface AsyncDisposable {
+    [Symbol.asyncDispose](): PromiseLike<void>;
+  }
+`;
+
 test("generator queries retain exact sync protocol and yield evidence", () => {
   const { program, index } = createProgram(`
     function* values(): Generator<number, string, boolean> {
@@ -59,7 +72,7 @@ test("generator queries retain exact sync and async yield-star mechanisms", () =
     async function* asyncOuter(): AsyncGenerator<number, string, boolean> {
       return yield* asyncValues;
     }
-  `, { noLib: false, lib: ["esnext"] });
+  `, { noLib: false });
   assertCleanSemanticDiagnostics(program, index);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const yields = findNodesByKind(index, KindYieldExpression);
@@ -84,6 +97,7 @@ test("generator queries retain exact sync and async yield-star mechanisms", () =
 
 test("well-known-symbol queries distinguish exact global symbols from shadows", () => {
   const { program, index } = createProgram(`
+    ${disposalGlobals}
     class Resource {
       [Symbol.dispose](): void {}
     }
@@ -92,10 +106,10 @@ test("well-known-symbol queries distinguish exact global symbols from shadows", 
     class Other {
       [localDispose](): void {}
     }
-  `, { noLib: false, lib: ["esnext"] });
+  `, { noLib: false });
   assertCleanSemanticDiagnostics(program, index);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
-  const computedNames = findNodesByKind(index, KindComputedPropertyName);
+  const computedNames = findNodesByKind(index, KindComputedPropertyName).slice(-2);
   assert.equal(computedNames.length, 2);
 
   const global = queries.getResolvedWellKnownSymbolInfo(computedNames[0]);
@@ -107,6 +121,7 @@ test("well-known-symbol queries distinguish exact global symbols from shadows", 
 
 test("resource queries retain exact sync and async disposer declarations", () => {
   const { program, index } = createProgram(`
+    ${disposalGlobals}
     class SyncResource {
       [Symbol.dispose](): void {}
     }
@@ -123,7 +138,7 @@ test("resource queries retain exact sync and async disposer declarations", () =>
     async function asyncFallback(resource: SyncResource): Promise<void> {
       await using active = resource;
     }
-  `, { noLib: false, lib: ["esnext"] });
+  `, { noLib: false });
   assertCleanSemanticDiagnostics(program, index);
   const ast = createAstReader();
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
@@ -156,6 +171,7 @@ test("resource queries retain exact sync and async disposer declarations", () =>
 
 test("resource queries preserve union alternatives without inventing one disposer", () => {
   const { program, index } = createProgram(`
+    ${disposalGlobals}
     class First {
       [Symbol.dispose](): void {}
     }
@@ -164,7 +180,7 @@ test("resource queries preserve union alternatives without inventing one dispose
     }
     declare const resource: First | Second;
     using active = resource;
-  `, { noLib: false, lib: ["esnext"] });
+  `, { noLib: false });
   assertCleanSemanticDiagnostics(program, index);
   const ast = createAstReader();
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
