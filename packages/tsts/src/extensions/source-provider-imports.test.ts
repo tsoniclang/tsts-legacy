@@ -206,8 +206,14 @@ test("provider source primitives render their exact TypeScript runtime bases", (
       name: "roundTrip",
       kind: "function",
       signatures: [{
-        id: "roundTrip(int128,uint128)",
+        id: "roundTrip(int64,uint64,int128,uint128)",
         parameters: [{
+          name: "signed64",
+          type: { kind: "source-primitive", name: "int64" },
+        }, {
+          name: "unsigned64",
+          type: { kind: "source-primitive", name: "uint64" },
+        }, {
           name: "signed",
           type: { kind: "source-primitive", name: "int128" },
         }, {
@@ -220,7 +226,7 @@ test("provider source primitives render their exact TypeScript runtime bases", (
   };
   const checked = providerProgram(model, [
     `import { roundTrip } from "${moduleSpecifier}";`,
-    "export const value: bigint = roundTrip(1n, 2n);",
+    "export const value: bigint = roundTrip(1n, 2n, 3n, 4n);",
   ].join("\n"));
 
   assertNoDiagnostics(checked);
