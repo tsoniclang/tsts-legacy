@@ -636,6 +636,51 @@ test("source-semantics records ptr and fnptr type facts from canonical type mark
   assert.equal(consumer.getFunctionPointer(functionPointerReference)?.parameters.length, 1);
 });
 
+test("source-semantics qualified source facts require exact module receiver identity", () => {
+  const { extended, program, index } = createProgram(`
+    import type { int } from "@example/native/types.js";
+    import type * as types from "@example/native/types.js";
+
+    type CanonicalPointer = types.ptr<int>;
+    type CanonicalInt = types.int;
+    function shadowedPointer<types>(): types.ptr<int> {
+      throw new Error("shadowed namespace import");
+    }
+    function shadowedInt<types>(): types.int {
+      throw new Error("shadowed namespace import");
+    }
+  `);
+
+  const diagnostics = Program_GetSemanticDiagnostics(program, Background(), index);
+  assert.ok(diagnostics.length > 0);
+  finalizeSourceSemantics(extended);
+
+  const canonicalPointer = getTypeAliasType(index, "CanonicalPointer");
+  const shadowedPointer = Node_Type(
+    getTopLevelDeclaration(index, KindFunctionDeclaration, "shadowedPointer"),
+  );
+  const canonicalInt = getTypeAliasType(index, "CanonicalInt");
+  const shadowedInt = Node_Type(
+    getTopLevelDeclaration(index, KindFunctionDeclaration, "shadowedInt"),
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(canonicalPointer, pointerFactKey)?.mutability,
+    "readwrite",
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(shadowedPointer, pointerFactKey),
+    undefined,
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(canonicalInt, sourcePrimitiveFactKey)?.kind,
+    "int32",
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(shadowedInt, sourcePrimitiveFactKey),
+    undefined,
+  );
+});
+
 test("source-semantics records exact typed pointer operations and rejects unwriteable storage", () => {
   const { extended, program, index } = createProgram(`
     import type { int, ptr } from "@example/native/types.js";

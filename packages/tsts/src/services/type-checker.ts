@@ -3,9 +3,17 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { Node_Text } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
-import { NodeFlagsOptionalChain } from "../internal/ast/generated/flags.js";
+import {
+  NodeFlagsOptionalChain,
+  SymbolFlagsAlias,
+  SymbolFlagsNamespace,
+  SymbolFlagsType,
+  SymbolFlagsValue,
+} from "../internal/ast/generated/flags.js";
+import type { SymbolFlags } from "../internal/ast/generated/flags.js";
 import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression } from "../internal/ast/generated/predicates.js";
 import {
   GetSourceFileOfNode,
@@ -20,6 +28,7 @@ import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
   Checker_GetPropertyOfType,
+  Checker_ResolveName,
   Checker_GetReturnTypeOfSignature,
   Checker_GetSignaturesOfType,
   Checker_GetTypeFromTypeNode,
@@ -105,6 +114,7 @@ export interface TypeCheckerQueries {
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
   readonly getSymbolAtLocation: (node: GoPtr<Node>) => GoPtr<Symbol>;
+  readonly getLexicallyResolvedSymbol: (identifier: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getResolvedSymbol: (node: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getResolvedSymbolOrNil: (node: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
@@ -165,6 +175,17 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getContextualType(checker, node, contextFlags)),
     getSymbolAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetSymbolAtLocation(checker, node)),
+    getLexicallyResolvedSymbol: (identifier) =>
+      withCheckerForNode(program, identifier, defaultOptions, (checker) =>
+        IsIdentifier(identifier)
+          ? Checker_ResolveName(
+              checker,
+              Node_Text(identifier),
+              identifier,
+              (SymbolFlagsValue | SymbolFlagsType | SymbolFlagsNamespace | SymbolFlagsAlias) as SymbolFlags,
+              false as bool,
+            )
+          : undefined),
     getResolvedSymbol: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => getDiagnosticFreeResolvedSymbol(checker, node)),
     getResolvedSymbolOrNil: (node) =>

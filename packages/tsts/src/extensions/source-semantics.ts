@@ -1383,6 +1383,38 @@ function resolveMarkerFromCheckedReference(
   modules: readonly SourceSemanticsModuleRuntime[],
   capability: "call-marker" | "type-marker",
 ): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined {
+  const receiver = node.Kind === KindPropertyAccessExpression
+    ? AsPropertyAccessExpression(node)?.Expression
+    : node.Kind === KindQualifiedName
+    ? AsQualifiedName(node)?.Left
+    : undefined;
+  if (receiver !== undefined) {
+    const receiverSymbol = checker.getLexicallyResolvedSymbol(receiver);
+    const receiverIdentity = receiverSymbol === undefined
+      ? undefined
+      : facts.get(receiverSymbol, canonicalIdentityFactKey);
+    if (receiverIdentity?.kind !== "module") {
+      return undefined;
+    }
+    const selectedMember = node.Kind === KindPropertyAccessExpression
+      ? Node_Name(node)
+      : AsQualifiedName(node)?.Right;
+    const selectedSymbol = checker.getResolvedSymbolOrNil(node)
+      ?? checker.getResolvedSymbolOrNil(selectedMember)
+      ?? checker.getSymbolAtLocation(selectedMember);
+    if (selectedSymbol === undefined) {
+      return undefined;
+    }
+    const module = modules.find(
+      (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
+    );
+    return getModuleMarker(
+      module,
+      capability,
+      checker.getSymbolName(selectedSymbol),
+    );
+  }
+
   const localSymbol = checker.getSymbolAtLocation(node);
   const direct = resolveMarkerFromSelectedSubject(
     facts,
@@ -1392,35 +1424,6 @@ function resolveMarkerFromCheckedReference(
   );
   if (direct !== undefined) {
     return direct;
-  }
-
-  const receiver = node.Kind === KindPropertyAccessExpression
-    ? AsPropertyAccessExpression(node)?.Expression
-    : node.Kind === KindQualifiedName
-    ? AsQualifiedName(node)?.Left
-    : undefined;
-  if (receiver !== undefined) {
-    const receiverSymbol = checker.getSymbolAtLocation(receiver);
-    const receiverIdentity = receiverSymbol === undefined
-      ? undefined
-      : facts.get(receiverSymbol, canonicalIdentityFactKey);
-    const selectedSymbol = checker.getResolvedSymbolOrNil(node);
-    if (
-      receiverIdentity?.kind === "module" &&
-      selectedSymbol !== undefined
-    ) {
-      const module = modules.find(
-        (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
-      );
-      const selected = getModuleMarker(
-        module,
-        capability,
-        checker.getSymbolName(selectedSymbol),
-      );
-      if (selected !== undefined) {
-        return selected;
-      }
-    }
   }
 
   return resolveMarkerFromSelectedSymbol(
@@ -1546,40 +1549,38 @@ function resolvePrimitiveFromCheckedReference(
   if (typeName === undefined) {
     return undefined;
   }
-  const localSymbol = checker.getSymbolAtLocation(typeName);
-  const direct = resolvePrimitiveFromSelectedSymbol(facts, localSymbol, modules);
-  if (direct !== undefined) {
-    return direct;
-  }
-
   const receiver = typeName.Kind === KindQualifiedName
     ? AsQualifiedName(typeName)?.Left
     : undefined;
   if (receiver !== undefined) {
-    const receiverSymbol = checker.getSymbolAtLocation(receiver);
+    const receiverSymbol = checker.getLexicallyResolvedSymbol(receiver);
     const receiverIdentity = receiverSymbol === undefined
       ? undefined
       : facts.get(receiverSymbol, canonicalIdentityFactKey);
+    if (receiverIdentity?.kind !== "module") {
+      return undefined;
+    }
     const selectedMember = AsQualifiedName(typeName)?.Right;
     const selectedSymbol = checker.getResolvedSymbolOrNil(typeName)
       ?? checker.getResolvedSymbolOrNil(selectedMember)
       ?? checker.getSymbolAtLocation(selectedMember);
-    if (
-      receiverIdentity?.kind === "module"
-      && selectedSymbol !== undefined
-    ) {
-      const moduleIdentity = modules.find(
-        (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
-      );
-      const primitive = resolveConfiguredPrimitive(
-        moduleIdentity,
-        checker.getSymbolName(selectedSymbol),
-        selectedSymbol,
-      );
-      if (primitive !== undefined) {
-        return primitive;
-      }
+    if (selectedSymbol === undefined) {
+      return undefined;
     }
+    const moduleIdentity = modules.find(
+      (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
+    );
+    return resolveConfiguredPrimitive(
+      moduleIdentity,
+      checker.getSymbolName(selectedSymbol),
+      selectedSymbol,
+    );
+  }
+
+  const localSymbol = checker.getSymbolAtLocation(typeName);
+  const direct = resolvePrimitiveFromSelectedSymbol(facts, localSymbol, modules);
+  if (direct !== undefined) {
+    return direct;
   }
 
   return resolvePrimitiveFromSelectedSymbol(

@@ -1,10 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Background } from "../go/context.js";
-import { Node_Expression } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Text } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
 import { Node_Name } from "../internal/ast/spine.js";
-import { KindArrowFunction, KindCallExpression, KindExpressionStatement } from "../internal/ast/generated/kinds.js";
+import {
+  KindArrowFunction,
+  KindCallExpression,
+  KindExpressionStatement,
+  KindIdentifier,
+  KindTypeAliasDeclaration,
+  KindTypeParameter,
+  KindTypeReference,
+} from "../internal/ast/generated/kinds.js";
 import { TypeFlagsAny, TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
 import { Program_GetSemanticDiagnostics } from "../internal/compiler/program.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
@@ -82,6 +90,35 @@ test("public type-checker queries expose TS-Go checker facts without emitter re-
   assert.equal(queries.getCallSignaturesOfType(idType).length, 1);
   assert.equal(queries.getConstructSignaturesOfType(idType).length, 0);
   assertCleanSemanticDiagnostics(program, index);
+});
+
+test("lexical symbol queries preserve exact scoped declaration identity", () => {
+  const { program, index } = createProgram(`
+    type scope = number;
+    type Canonical = scope;
+    function shadowed<scope>(value: scope): scope { return value; }
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const references = findNodesByKind(index, KindIdentifier).filter(
+    (node) => Node_Text(node) === "scope" && node.Parent?.Kind === KindTypeReference,
+  );
+  assert.equal(references.length, 3);
+  assert.equal(
+    queries.getSymbolDeclarations(
+      queries.getLexicallyResolvedSymbol(references[0]),
+    )[0]?.Kind,
+    KindTypeAliasDeclaration,
+  );
+  for (const reference of references.slice(1)) {
+    assert.equal(
+      queries.getSymbolDeclarations(
+        queries.getLexicallyResolvedSymbol(reference),
+      )[0]?.Kind,
+      KindTypeParameter,
+    );
+  }
 });
 
 test("resolved call info exposes one canonical checker-owned selected decision", () => {
