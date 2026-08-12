@@ -125,6 +125,13 @@ test("element access info preserves mapped declarations and proven tuple ordinal
   assert.ok(mapped?.selectedDeclaration !== undefined);
   assert.equal(mapped?.selectedElementIndex, undefined);
   assert.equal(mapped.sourceReadType.flags & TypeFlagsNumber, TypeFlagsNumber);
+  assert.ok(mapped.receiver.symbol !== undefined);
+  assert.ok(mapped.receiver.declaration !== undefined);
+  assert.ok(
+    mapped.receiver.symbol ===
+      queries.getLexicallyResolvedSymbol(mapped.receiver.expression),
+    "Element receiver evidence must retain the exact lexically selected symbol.",
+  );
 
   const tuple = queries.getResolvedElementAccessInfo(accesses[1]);
   assert.ok(tuple?.accessMode === "read", "Tuple element access must be a checked read.");

@@ -5580,6 +5580,8 @@ interface ResolvedSourceElementAccessInfoBase {
   readonly receiver: {
     readonly expression: Node;
     readonly type: Type;
+    readonly symbol?: Symbol;
+    readonly declaration?: Node;
   };
   readonly argument: {
     readonly expression: Node;
@@ -5626,11 +5628,16 @@ export function Checker_getResolvedSourceElementAccessInfo(
     return undefined;
   }
   const accessMode = checkedAccessMode(node);
+  const receiverSymbol = Checker_getResolvedSymbolOrNil(receiver, receiverExpression);
   return Object.freeze({
     expression: node,
     receiver: Object.freeze({
       expression: receiverExpression,
       type: selected.receiverType,
+      ...(receiverSymbol === undefined ? {} : { symbol: receiverSymbol }),
+      ...(receiverSymbol?.ValueDeclaration === undefined
+        ? {}
+        : { declaration: receiverSymbol.ValueDeclaration }),
     }),
     argument: Object.freeze({
       expression: argumentExpression,
