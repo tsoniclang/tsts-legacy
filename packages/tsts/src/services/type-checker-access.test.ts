@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { Node_Text } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import {
+  KindClassDeclaration,
   KindElementAccessExpression,
   KindForOfStatement,
   KindGetAccessor,
   KindPropertyAccessExpression,
   KindSetAccessor,
+  KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
@@ -108,6 +110,33 @@ test("property access info preserves compound read-write and optional-chain role
   assert.equal(valueInfo?.optionalChain, false);
   assert.equal(advanceInfo?.optionalChain, true);
   assert.equal(advanceInfo?.callCallee, true);
+  assertCleanSemanticDiagnostics(program, index);
+});
+
+test("property access info distinguishes the exact receiver value from its selected type owner", () => {
+  const { program, index } = createProgram(`
+    class Counter {
+      static value = 1;
+    }
+
+    const Alias = Counter;
+    const direct = Counter.value;
+    const aliased = Alias.value;
+  `);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const accesses = findNodesByKind(index, KindPropertyAccessExpression)
+    .filter((node) => Node_Text(Node_Name(node)) === "value");
+  assert.equal(accesses.length, 2);
+  const direct = queries.getResolvedPropertyAccessInfo(accesses[0]);
+  const aliased = queries.getResolvedPropertyAccessInfo(accesses[1]);
+
+  assert.equal(direct?.receiver.valueDeclaration?.Kind, KindClassDeclaration);
+  assert.equal(aliased?.receiver.valueDeclaration?.Kind, KindVariableDeclaration);
+  assert.notEqual(direct?.receiver.valueSymbol, aliased?.receiver.valueSymbol);
+  assert.ok(
+    direct?.selectedDeclaration === aliased?.selectedDeclaration,
+    "Both accesses must retain the same exact selected static field declaration.",
+  );
   assertCleanSemanticDiagnostics(program, index);
 });
 
