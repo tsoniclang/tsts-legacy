@@ -6876,6 +6876,8 @@ interface ResolvedSourcePropertyAccessInfoBase {
   readonly sourceDeclaration?: Node;
   readonly selectedSymbol?: Symbol;
   readonly selectedDeclaration?: Node;
+  readonly selectedReadDeclaration?: Node;
+  readonly selectedWriteDeclaration?: Node;
   readonly writable: boolean;
   readonly optionalChain: boolean;
   readonly callCallee: boolean;
@@ -6958,6 +6960,12 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
     : accessMode === "read-write"
       ? selected.writeType
       : undefined;
+  const selectedReadDeclaration = accessMode === "read" || accessMode === "delete" || accessMode === "read-write"
+    ? selectedPropertyAccessDeclaration(selected, "read")
+    : undefined;
+  const selectedWriteDeclaration = accessMode === "write" || accessMode === "read-write"
+    ? selectedPropertyAccessDeclaration(selected, "write")
+    : undefined;
   return Object.freeze({
     expression: node,
     receiver: Object.freeze({
@@ -6970,6 +6978,8 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
     ...(selected.sourceDeclaration === undefined ? {} : { sourceDeclaration: selected.sourceDeclaration }),
     ...(selected.selectedSymbol === undefined ? {} : { selectedSymbol: selected.selectedSymbol }),
     ...(selected.selectedDeclaration === undefined ? {} : { selectedDeclaration: selected.selectedDeclaration }),
+    ...(selectedReadDeclaration === undefined ? {} : { selectedReadDeclaration }),
+    ...(selectedWriteDeclaration === undefined ? {} : { selectedWriteDeclaration }),
     writable: selected.selectedSymbol !== undefined
       && !Checker_isAssignmentToReadonlyEntity(
         receiver,
@@ -6981,6 +6991,17 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
     optionalChain: IsOptionalChain(node),
     callCallee: Checker_isMethodAccessForCall(receiver, node),
   });
+}
+
+function selectedPropertyAccessDeclaration(
+  selected: SelectedPropertyAccessCheck,
+  selectionMode: "read" | "write",
+): GoPtr<Node> {
+  const accessorKind = selectionMode === "read" ? KindGetAccessor : KindSetAccessor;
+  return selected.selectedSymbol === undefined
+    ? selected.selectedDeclaration
+    : GetDeclarationOfKind(selected.selectedSymbol, accessorKind)
+      ?? selected.selectedDeclaration;
 }
 
 function resolvedSourceAccessTypes(
