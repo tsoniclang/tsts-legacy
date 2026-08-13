@@ -196,6 +196,42 @@ test("missing source-global declarations fail through ordinary source checking",
   );
 });
 
+test("provider source primitives render their exact TypeScript runtime bases", () => {
+  const moduleSpecifier = "@test/source-primitives.js";
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier,
+    providerModuleId: "Test.SourcePrimitives",
+    exports: [{
+      id: "roundTrip",
+      name: "roundTrip",
+      kind: "function",
+      signatures: [{
+        id: "roundTrip(int64,uint64,int128,uint128)",
+        parameters: [{
+          name: "signed64",
+          type: { kind: "source-primitive", name: "int64" },
+        }, {
+          name: "unsigned64",
+          type: { kind: "source-primitive", name: "uint64" },
+        }, {
+          name: "signed",
+          type: { kind: "source-primitive", name: "int128" },
+        }, {
+          name: "unsigned",
+          type: { kind: "source-primitive", name: "uint128" },
+        }],
+        returnType: { kind: "source-primitive", name: "uint128" },
+      }],
+    }],
+  };
+  const checked = providerProgram(model, [
+    `import { roundTrip } from "${moduleSpecifier}";`,
+    "export const value: bigint = roundTrip(1n, 2n, 3n, 4n);",
+  ].join("\n"));
+
+  assertNoDiagnostics(checked);
+});
+
 function providerProgram(model: ProviderDeclarationModel, source: string) {
   return createCompilerSessionFromFiles({
     currentDirectory: "/src",

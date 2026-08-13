@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 import { Node_Text } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import {
+  KindClassDeclaration,
   KindElementAccessExpression,
   KindForOfStatement,
+  KindGetAccessor,
   KindPropertyAccessExpression,
+  KindSetAccessor,
+  KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
@@ -53,6 +57,10 @@ test("property selection uses the selected symbol with distinct read and write t
     readInfo?.selectedSymbol === writeInfo?.selectedSymbol,
     "Read and write access must retain the exact selected property symbol.",
   );
+  assert.equal(readInfo?.selectedReadDeclaration?.Kind, KindGetAccessor);
+  assert.equal(readInfo?.selectedWriteDeclaration, undefined);
+  assert.equal(writeInfo?.selectedReadDeclaration, undefined);
+  assert.equal(writeInfo?.selectedWriteDeclaration?.Kind, KindSetAccessor);
   const repeatedRead = queries.getResolvedPropertyAccessInfo(readAccess);
   assert.ok(
     repeatedRead === readInfo,
@@ -66,6 +74,10 @@ test("property selection uses the selected symbol with distinct read and write t
   assert.ok(
     repeatedRead?.selectedDeclaration === readInfo?.selectedDeclaration,
     "Repeated property queries must retain exact selected-declaration identity.",
+  );
+  assert.ok(
+    repeatedRead?.selectedReadDeclaration === readInfo?.selectedReadDeclaration,
+    "Repeated property queries must retain exact selected read-declaration identity.",
   );
   assert.ok(
     repeatedRead?.sourceReadType === readInfo?.sourceReadType,
@@ -98,6 +110,64 @@ test("property access info preserves compound read-write and optional-chain role
   assert.equal(valueInfo?.optionalChain, false);
   assert.equal(advanceInfo?.optionalChain, true);
   assert.equal(advanceInfo?.callCallee, true);
+  assertCleanSemanticDiagnostics(program, index);
+});
+
+test("property access info distinguishes the exact receiver value from its selected type owner", () => {
+  const { program, index } = createProgram(`
+    class Counter {
+      static value = 1;
+    }
+
+    const Alias = Counter;
+    const direct = Counter.value;
+    const aliased = Alias.value;
+  `);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const accesses = findNodesByKind(index, KindPropertyAccessExpression)
+    .filter((node) => Node_Text(Node_Name(node)) === "value");
+  assert.equal(accesses.length, 2);
+  const direct = queries.getResolvedPropertyAccessInfo(accesses[0]);
+  const aliased = queries.getResolvedPropertyAccessInfo(accesses[1]);
+
+  assert.equal(direct?.receiver.valueDeclaration?.Kind, KindClassDeclaration);
+  assert.equal(aliased?.receiver.valueDeclaration?.Kind, KindVariableDeclaration);
+  assert.notEqual(direct?.receiver.valueSymbol, aliased?.receiver.valueSymbol);
+  assert.ok(
+    direct?.selectedDeclaration === aliased?.selectedDeclaration,
+    "Both accesses must retain the same exact selected static field declaration.",
+  );
+  assertCleanSemanticDiagnostics(program, index);
+});
+
+test("property access info retains both exact accessor declarations for read-write operations", () => {
+  const { program, index } = createProgram(`
+    class Counter {
+      private stored = 0;
+
+      get value(): number {
+        return this.stored;
+      }
+
+      set value(next: number) {
+        this.stored = next;
+      }
+    }
+
+    declare const counter: Counter;
+    counter.value += 1;
+  `);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const access = findPropertyAccessByName(index, "value", () => true);
+  const selected = queries.getResolvedPropertyAccessInfo(access);
+
+  assert.equal(selected?.accessMode, "read-write");
+  assert.equal(selected?.selectedReadDeclaration?.Kind, KindGetAccessor);
+  assert.equal(selected?.selectedWriteDeclaration?.Kind, KindSetAccessor);
+  assert.notEqual(
+    selected?.selectedReadDeclaration,
+    selected?.selectedWriteDeclaration,
+  );
   assertCleanSemanticDiagnostics(program, index);
 });
 

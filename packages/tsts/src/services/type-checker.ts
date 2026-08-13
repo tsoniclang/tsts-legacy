@@ -96,8 +96,17 @@ export interface CreateTypeCheckerQueriesOptions {
 }
 
 export type ResolvedSourceCallInfo = ResolvedCallEvidence;
-export type ResolvedSourcePropertyAccessInfo = CheckerResolvedSourcePropertyAccessInfo;
-export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo;
+export interface ResolvedSourceReceiverValueEvidence {
+  readonly valueSymbol?: Symbol;
+  readonly valueDeclaration?: Node;
+}
+
+export type ResolvedSourcePropertyAccessInfo = CheckerResolvedSourcePropertyAccessInfo & {
+  readonly receiver: CheckerResolvedSourcePropertyAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
+};
+export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
+  readonly receiver: CheckerResolvedSourceElementAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
+};
 export type ResolvedSourceIterationInfo = ExtensionCheckedIterationSelection;
 
 export interface ResolvedSourceStorageInfo {
@@ -213,11 +222,17 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getResolvedPropertyAccessInfo: (node) =>
       memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
-          Checker_getResolvedSourcePropertyAccessInfo(checker, node))),
+          withResolvedSourceReceiverValueEvidence(
+            checker,
+            Checker_getResolvedSourcePropertyAccessInfo(checker, node),
+          ))),
     getResolvedElementAccessInfo: (node) =>
       memoizeResolvedNodeQuery(elementAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
-          Checker_getResolvedSourceElementAccessInfo(checker, node))),
+          withResolvedSourceReceiverValueEvidence(
+            checker,
+            Checker_getResolvedSourceElementAccessInfo(checker, node),
+          ))),
     getResolvedIterationInfo: (node) =>
       memoizeResolvedNodeQuery(iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
@@ -412,6 +427,40 @@ function getDiagnosticFreeResolvedSymbol(checker: GoPtr<Checker>, node: GoPtr<No
   return resolved !== undefined && resolved !== checker?.unknownSymbol
     ? resolved
     : undefined;
+}
+
+function withResolvedSourceReceiverValueEvidence<
+  T extends { readonly receiver: { readonly expression: Node } },
+>(
+  checker: GoPtr<Checker>,
+  selected: GoPtr<T>,
+): GoPtr<T & {
+  readonly receiver: T["receiver"] & ResolvedSourceReceiverValueEvidence;
+}> {
+  if (checker === undefined || selected === undefined) {
+    return undefined;
+  }
+  const sourceSymbol = getDiagnosticFreeResolvedSymbol(
+    checker,
+    selected.receiver.expression,
+  );
+  const valueSymbol = sourceSymbol !== undefined &&
+      (sourceSymbol.Flags & SymbolFlagsAlias) !== 0
+    ? Checker_GetAliasedSymbol(checker, sourceSymbol)
+    : sourceSymbol;
+  if (valueSymbol === undefined || valueSymbol === checker.unknownSymbol) {
+    return selected;
+  }
+  return Object.freeze({
+    ...selected,
+    receiver: Object.freeze({
+      ...selected.receiver,
+      valueSymbol,
+      ...(valueSymbol.ValueDeclaration === undefined
+        ? {}
+        : { valueDeclaration: valueSymbol.ValueDeclaration }),
+    }),
+  });
 }
 
 function withCheckerForNode<T>(
