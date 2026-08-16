@@ -30,6 +30,12 @@ const call = findCall(sourceFile, checked.ast);
 const selected = checked.checker.getResolvedCallInfo(call);
 ```
 
+Contextually checked object-literal members use the same atomic boundary. For
+example, given `const value: Counter = { next() { return 1; } }`, a target asks
+`getResolvedObjectLiteralElementInfo(nextMethod)` and receives the exact
+contextual `Counter.next` symbol, declaration, and instantiated callable type.
+The target does not join the authored method to `Counter.next` by spelling.
+
 `CheckedSourceProgram` owns the one shared AST, checker-query, type-shape, and
 source-fact capabilities. Targets do not construct query facades or select a
 checker/source-file pair. Every query derives checker ownership from its exact

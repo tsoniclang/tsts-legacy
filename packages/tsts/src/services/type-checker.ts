@@ -14,11 +14,21 @@ import {
   SymbolFlagsValue,
 } from "../internal/ast/generated/flags.js";
 import type { SymbolFlags } from "../internal/ast/generated/flags.js";
-import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression } from "../internal/ast/generated/predicates.js";
+import {
+  IsElementAccessExpression,
+  IsGetAccessorDeclaration,
+  IsIdentifier,
+  IsObjectLiteralExpression,
+  IsPropertyAccessExpression,
+  IsPropertyAssignment,
+  IsSetAccessorDeclaration,
+  IsShorthandPropertyAssignment,
+} from "../internal/ast/generated/predicates.js";
 import {
   GetSourceFileOfNode,
   GetContainingFunction,
   IsCallOrNewExpression,
+  IsObjectLiteralMethod,
   OEKAssertions,
   OEKParentheses,
   SkipOuterExpressions,
@@ -46,6 +56,7 @@ import {
   Checker_getResolvedSourcePropertyAccessInfo,
   Checker_GetSymbolAtLocation,
   Checker_getDeclaredTypeOfSymbol,
+  Checker_getSymbolOfDeclaration,
   Checker_getResolvedSymbolOrNil,
   Checker_getTypeOfSymbol,
   Checker_getWriteTypeOfSymbol,
@@ -56,7 +67,12 @@ import type {
   ResolvedSourceElementAccessInfo as CheckerResolvedSourceElementAccessInfo,
   ResolvedSourcePropertyAccessInfo as CheckerResolvedSourcePropertyAccessInfo,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getContextualType, Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
+import {
+  Checker_getApparentTypeOfContextualType,
+  Checker_getContextualType,
+  Checker_getContextualTypeForObjectLiteralElement,
+  Checker_GetTypeAtLocation,
+} from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
 import { AssignmentKindDefinite } from "../internal/checker/utilities.js";
 import { Checker_getResolvedSourceIterationInfo } from "../internal/checker/checker/syntax-checking.js";
@@ -109,6 +125,27 @@ export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccess
 };
 export type ResolvedSourceIterationInfo = ExtensionCheckedIterationSelection;
 
+export type ResolvedSourceObjectLiteralElementKind =
+  | "property"
+  | "shorthand"
+  | "method"
+  | "get"
+  | "set";
+
+export interface ResolvedSourceObjectLiteralElementInfo {
+  readonly objectLiteral: Node;
+  readonly element: Node;
+  readonly elementKind: ResolvedSourceObjectLiteralElementKind;
+  readonly objectLiteralType: Type;
+  readonly contextualType?: Type;
+  readonly sourceElementSymbol?: Symbol;
+  readonly sourceElementType: Type;
+  readonly sourceSelectedSymbol?: Symbol;
+  readonly sourceSelectedDeclaration?: Node;
+  readonly sourceSelectedDeclarations: readonly Node[];
+  readonly sourceSelectedType: Type;
+}
+
 export interface ResolvedSourceStorageInfo {
   readonly expression: Node;
   readonly storageExpression: Node;
@@ -135,6 +172,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedPropertyAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyAccessInfo>;
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
+  readonly getResolvedObjectLiteralElementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceObjectLiteralElementInfo>;
   readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
   readonly getResolvedGeneratorInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceGeneratorInfo>;
   readonly getResolvedYieldInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceYieldInfo>;
@@ -170,6 +208,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
+  const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
   const generatorInfos = new WeakMap<Node, ResolvedSourceGeneratorInfo>();
   const yieldInfos = new WeakMap<Node, ResolvedSourceYieldInfo>();
@@ -237,6 +276,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           Checker_getResolvedSourceIterationInfo(checker, node))),
+    getResolvedObjectLiteralElementInfo: (node) =>
+      memoizeResolvedNodeQuery(objectLiteralElementInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          getResolvedSourceObjectLiteralElementInfo(checker, node))),
     getResolvedStorageInfo: (node) =>
       memoizeResolvedNodeQuery(storageInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
@@ -296,6 +339,93 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getSignatureThisParameter: (signature) => signature?.thisParameter,
   };
   return Object.freeze(queries);
+}
+
+function getResolvedSourceObjectLiteralElementInfo(
+  checker: GoPtr<Checker>,
+  element: GoPtr<Node>,
+): GoPtr<ResolvedSourceObjectLiteralElementInfo> {
+  const elementKind = resolvedSourceObjectLiteralElementKind(element);
+  const objectLiteral = element?.Parent;
+  if (checker === undefined || element === undefined || elementKind === undefined ||
+    objectLiteral === undefined ||
+    !IsObjectLiteralExpression(objectLiteral)) {
+    return undefined;
+  }
+  const objectLiteralType = Checker_GetTypeAtLocation(checker, objectLiteral);
+  const sourceElementType = Checker_GetTypeAtLocation(checker, element);
+  const contextualType = Checker_getApparentTypeOfContextualType(
+    checker,
+    objectLiteral,
+    ContextFlagsNone,
+  );
+  const sourceElementSymbol = Checker_getSymbolOfDeclaration(checker, element);
+  if (objectLiteralType === undefined || sourceElementType === undefined ||
+    sourceElementSymbol === undefined) {
+    return undefined;
+  }
+  const selectedOwnerType = contextualType ?? objectLiteralType;
+  const sourceSelectedSymbol = Checker_GetPropertyOfType(
+    checker,
+    selectedOwnerType,
+    sourceElementSymbol.Name,
+  );
+  const sourceSelectedType = contextualType === undefined
+    ? sourceSelectedSymbol === undefined
+      ? sourceElementType
+      : Checker_getTypeOfSymbol(checker, sourceSelectedSymbol)
+    : Checker_getContextualTypeForObjectLiteralElement(
+        checker,
+        element,
+        ContextFlagsNone,
+      );
+  if (sourceSelectedType === undefined) {
+    return undefined;
+  }
+  const rawSourceSelectedDeclarations = sourceSelectedSymbol?.Declarations ?? [];
+  if (rawSourceSelectedDeclarations.some((declaration) => declaration === undefined)) {
+    return undefined;
+  }
+  const sourceSelectedDeclarations = Object.freeze([
+    ...rawSourceSelectedDeclarations,
+  ] as Node[]);
+  return Object.freeze({
+    objectLiteral,
+    element,
+    elementKind,
+    objectLiteralType,
+    ...(contextualType === undefined ? {} : { contextualType }),
+    sourceElementSymbol,
+    sourceElementType,
+    ...(sourceSelectedSymbol === undefined ? {} : { sourceSelectedSymbol }),
+    ...(() => {
+      const sourceSelectedDeclaration = getPrimarySymbolDeclaration(sourceSelectedSymbol);
+      return sourceSelectedDeclaration === undefined ? {} : { sourceSelectedDeclaration };
+    })(),
+    sourceSelectedDeclarations,
+    sourceSelectedType,
+  });
+}
+
+function resolvedSourceObjectLiteralElementKind(
+  element: GoPtr<Node>,
+): ResolvedSourceObjectLiteralElementKind | undefined {
+  if (IsPropertyAssignment(element)) {
+    return "property";
+  }
+  if (IsShorthandPropertyAssignment(element)) {
+    return "shorthand";
+  }
+  if (IsObjectLiteralMethod(element)) {
+    return "method";
+  }
+  if (IsGetAccessorDeclaration(element)) {
+    return "get";
+  }
+  if (IsSetAccessorDeclaration(element)) {
+    return "set";
+  }
+  return undefined;
 }
 
 function getResolvedSourceStorageInfo(
