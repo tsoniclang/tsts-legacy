@@ -9,6 +9,11 @@ import {
   KindCallExpression,
   KindExpressionStatement,
   KindIdentifier,
+  KindMethodDeclaration,
+  KindMethodSignature,
+  KindPropertyAssignment,
+  KindPropertySignature,
+  KindShorthandPropertyAssignment,
   KindTypeAliasDeclaration,
   KindTypeParameter,
   KindTypeReference,
@@ -90,6 +95,98 @@ test("public type-checker queries expose TS-Go checker facts without emitter re-
   assert.equal(queries.getCallSignaturesOfType(idType).length, 1);
   assert.equal(queries.getConstructSignaturesOfType(idType).length, 0);
   assertCleanSemanticDiagnostics(program, index);
+});
+
+test("resolved object-literal elements retain exact contextual member identity", () => {
+  const { program, index } = createProgram(`
+    interface Counter {
+      value: number;
+      label: string;
+      next(delta: number): number;
+    }
+
+    const value = 2;
+    const counter: Counter = {
+      value,
+      label: "counter",
+      next(delta) { return this.value + delta; },
+    };
+    const inferred = {
+      ping() { return 1; },
+    };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const methodSignature = findFirstNodeByKind(index, KindMethodSignature);
+  const propertySignatures = findNodesByKind(index, KindPropertySignature);
+  const shorthand = findFirstNodeByKind(index, KindShorthandPropertyAssignment);
+  const assignment = findFirstNodeByKind(index, KindPropertyAssignment);
+  const methods = findNodesByKind(index, KindMethodDeclaration);
+  const contextualMethod = methods[0];
+  const inferredMethod = methods[1];
+
+  const methodInfo = queries.getResolvedObjectLiteralElementInfo(contextualMethod);
+  assert.equal(methodInfo?.elementKind, "method");
+  assert.ok(methodInfo?.element === contextualMethod);
+  assert.ok(methodInfo?.sourceSelectedDeclaration === methodSignature);
+  assert.deepEqual(methodInfo?.sourceSelectedDeclarations, [methodSignature]);
+  assert.ok(methodInfo?.sourceElementSymbol !== methodInfo?.sourceSelectedSymbol);
+  assert.equal(queries.typeToString(methodInfo?.contextualType), "Counter");
+  assert.equal(queries.typeToString(methodInfo?.sourceSelectedType), "(delta: number) => number");
+  assert.ok(
+    queries.getResolvedObjectLiteralElementInfo(contextualMethod) === methodInfo,
+    "Repeated object-literal element queries must retain one immutable evidence object.",
+  );
+
+  const shorthandInfo = queries.getResolvedObjectLiteralElementInfo(shorthand);
+  assert.equal(shorthandInfo?.elementKind, "shorthand");
+  assert.ok(shorthandInfo?.sourceSelectedDeclaration === propertySignatures[0]);
+  assert.equal(queries.typeToString(shorthandInfo?.sourceSelectedType), "number");
+
+  const assignmentInfo = queries.getResolvedObjectLiteralElementInfo(assignment);
+  assert.equal(assignmentInfo?.elementKind, "property");
+  assert.ok(assignmentInfo?.sourceSelectedDeclaration === propertySignatures[1]);
+  assert.equal(queries.typeToString(assignmentInfo?.sourceSelectedType), "string");
+
+  const inferredInfo = queries.getResolvedObjectLiteralElementInfo(inferredMethod);
+  assert.equal(inferredInfo?.elementKind, "method");
+  assert.equal(inferredInfo?.contextualType, undefined);
+  assert.ok(inferredInfo?.sourceSelectedDeclaration === inferredMethod);
+  assert.equal(queries.typeToString(inferredInfo?.sourceSelectedType), "() => number");
+  assert.equal(queries.getResolvedObjectLiteralElementInfo(methodSignature), undefined);
+});
+
+test("object-literal member evidence distinguishes same-spelled contextual contracts", () => {
+  const { program, index } = createProgram(`
+    interface NumericContract { run(): number; }
+    interface StringContract { run(): string; }
+    interface CallbackTable { [name: string]: () => number; }
+
+    const selectedName = "run" as const;
+    const numeric: NumericContract = { run() { return 1; } };
+    const string: StringContract = { [selectedName]() { return "one"; } };
+    const indexed: CallbackTable = { run() { return 2; } };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const signatures = findNodesByKind(index, KindMethodSignature);
+  const methods = findNodesByKind(index, KindMethodDeclaration);
+  assert.equal(signatures.length, 2);
+  assert.equal(methods.length, 3);
+
+  const numeric = queries.getResolvedObjectLiteralElementInfo(methods[0]);
+  const string = queries.getResolvedObjectLiteralElementInfo(methods[1]);
+  const indexed = queries.getResolvedObjectLiteralElementInfo(methods[2]);
+  assert.ok(numeric?.sourceSelectedDeclaration === signatures[0]);
+  assert.ok(string?.sourceSelectedDeclaration === signatures[1]);
+  assert.ok(numeric?.sourceSelectedSymbol !== string?.sourceSelectedSymbol);
+  assert.equal(queries.typeToString(numeric?.sourceSelectedType), "() => number");
+  assert.equal(queries.typeToString(string?.sourceSelectedType), "() => string");
+
+  assert.equal(indexed?.sourceSelectedSymbol, undefined);
+  assert.equal(indexed?.sourceSelectedDeclaration, undefined);
+  assert.deepEqual(indexed?.sourceSelectedDeclarations, []);
+  assert.equal(queries.typeToString(indexed?.sourceSelectedType), "() => number");
 });
 
 test("lexical symbol queries preserve exact scoped declaration identity", () => {

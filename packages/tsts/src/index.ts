@@ -135,6 +135,8 @@ export type {
   ResolvedSourceElementAccessInfo,
   ResolvedSourceIterationInfo,
   ResolvedSourceGeneratorInfo,
+  ResolvedSourceObjectLiteralElementInfo,
+  ResolvedSourceObjectLiteralElementKind,
   ResolvedSourcePropertyAccessInfo,
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceStorageInfo,
