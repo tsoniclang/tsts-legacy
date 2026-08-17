@@ -180,6 +180,106 @@ test("type-shape tuple queries are total for primitive and tuple source types", 
   );
 });
 
+test("type-shape tuple evidence retains exact authored parameter declarations", () => {
+  const source = checkedQueries(`
+    type ArgumentTuple<T> = T extends (...args: infer P) => unknown ? P : never;
+    function format(value: number, suffix?: string): string { return suffix ?? ""; }
+    declare const arguments_: ArgumentTuple<typeof format>;
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const arguments_ = identifiers.find((node) =>
+    source.ast.text(node) === "arguments_"
+  );
+  assert.ok(arguments_ !== undefined);
+
+  const tuple = source.typeShape.getTupleElementInfos(
+    source.checker.getTypeAtLocation(arguments_),
+  );
+  assert.deepEqual(
+    tuple.map((element) => ({
+      type: source.checker.typeToString(element.type),
+      elementKind: element.elementKind,
+      declarationKind: source.ast.kindName(element.declaration),
+      declarationName: source.ast.text(source.ast.name(element.declaration)),
+    })),
+    [
+      {
+        type: "number",
+        elementKind: "required",
+        declarationKind: "KindParameter",
+        declarationName: "value",
+      },
+      {
+        type: "string | undefined",
+        elementKind: "optional",
+        declarationKind: "KindParameter",
+        declarationName: "suffix",
+      },
+    ],
+  );
+});
+
+test("type-shape substitution evidence exposes the exact compiler-owned base type", () => {
+  const source = checkedQueries(`
+    type NoInfer<T> = intrinsic;
+    function choose<T>(value: T, fallback: NoInfer<T>): T { return value; }
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const fallback = identifiers.find((node) => source.ast.text(node) === "fallback");
+  assert.ok(fallback !== undefined);
+
+  const substitution = source.checker.getTypeAtLocation(fallback);
+  const baseType = source.typeShape.getSubstitutionBaseType(substitution);
+  assert.ok(baseType !== undefined);
+  assert.equal(source.typeShape.typeToString(baseType), "T");
+  assert.equal(source.typeShape.getSubstitutionBaseType(baseType), undefined);
+});
+
+test("type-shape signature evidence expands inferred tuple-rest parameters exactly", () => {
+  const source = checkedQueries(`
+    type ThisParameterType<T> = T extends (this: infer U, ...args: never) => any ? U : unknown;
+    type OmitThisParameter<T> = unknown extends ThisParameterType<T>
+      ? T
+      : T extends (...args: infer A) => infer R
+        ? (...args: A) => R
+        : T;
+    interface Receiver { value: number }
+    type Bound = (this: Receiver, delta: number) => number;
+    declare const detached: OmitThisParameter<Bound>;
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const detached = identifiers.find((node) => source.ast.text(node) === "detached");
+  assert.ok(detached !== undefined);
+  const signatures = source.typeShape.getCallSignatures(
+    source.checker.getTypeAtLocation(detached),
+  );
+  assert.equal(signatures.length, 1);
+  const parameters = source.typeShape.getSignatureParameterInfos(signatures[0]);
+  assert.deepEqual(parameters.map((parameter) => ({
+    sourceName: source.checker.getSymbolName(parameter.sourceSymbol),
+    type: source.typeShape.typeToString(parameter.type),
+    parameterKind: parameter.parameterKind,
+    declarationName: source.ast.text(source.ast.name(parameter.declaration)),
+  })), [{
+    sourceName: "args",
+    type: "number",
+    parameterKind: "required",
+    declarationName: "delta",
+  }]);
+});
+
 test("type-shape property information preserves effective mapped modifiers", () => {
   const source = checkedQueries(`
     type Source = { readonly id?: number; name: string };
@@ -211,6 +311,12 @@ test("type-shape property information preserves effective mapped modifiers", () 
       source.checker.getTypeAtLocation(openValue),
     ),
     true,
+  );
+  assert.deepEqual(
+    normalizedProperties.map((property) =>
+      property.rootSymbols.map((symbol) => source.checker.getSymbolName(symbol))
+    ),
+    [["id"], ["name"]],
   );
   assert.equal(
     source.typeShape.couldContainTypeVariables(

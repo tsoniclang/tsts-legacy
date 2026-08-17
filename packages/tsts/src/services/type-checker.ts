@@ -77,7 +77,11 @@ import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checke
 import { AssignmentKindDefinite } from "../internal/checker/utilities.js";
 import { Checker_getResolvedSourceIterationInfo } from "../internal/checker/checker/syntax-checking.js";
 import type { ExtensionCheckedIterationSelection } from "../internal/checker/checker/iteration-evidence.js";
-import { Checker_GetConstantValue, Checker_GetExportsOfModule } from "../internal/checker/services.js";
+import {
+  Checker_GetConstantValue,
+  Checker_GetExportsOfModule,
+  Checker_GetRootSymbols,
+} from "../internal/checker/services.js";
 import { Checker_TypeToString } from "../internal/checker/printer.js";
 import type {
   ContextFlags,
@@ -190,6 +194,7 @@ export interface TypeCheckerQueries {
   readonly getExportsOfModule: (moduleSymbol: GoPtr<Symbol>) => readonly GoPtr<Symbol>[];
   readonly getSymbolName: (symbol: GoPtr<Symbol>) => string;
   readonly getSymbolDeclarations: (symbol: GoPtr<Symbol>) => readonly GoPtr<Node>[];
+  readonly getRootSymbols: (symbol: GoPtr<Symbol>) => readonly GoPtr<Symbol>[];
   readonly getSymbolValueDeclaration: (symbol: GoPtr<Symbol>) => GoPtr<Node>;
   readonly getPrimarySymbolDeclaration: (symbol: GoPtr<Symbol>) => GoPtr<Node>;
   readonly getSymbolSourceFile: (symbol: GoPtr<Symbol>) => GoPtr<SourceFile>;
@@ -329,6 +334,13 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForSymbol(program, moduleSymbol, defaultOptions, (checker) => Checker_GetExportsOfModule(checker, moduleSymbol)) ?? [],
     getSymbolName: (symbol) => symbol?.Name ?? "",
     getSymbolDeclarations: (symbol) => symbol?.Declarations ?? [],
+    getRootSymbols: (symbol) =>
+      withCheckerForSymbol(
+        program,
+        symbol,
+        defaultOptions,
+        (checker) => Checker_GetRootSymbols(checker, symbol),
+      ) ?? [],
     getSymbolValueDeclaration: (symbol) => symbol?.ValueDeclaration,
     getPrimarySymbolDeclaration: (symbol) => getPrimarySymbolDeclaration(symbol),
     getSymbolSourceFile: (symbol) => getSymbolSourceFile(symbol),
