@@ -95,6 +95,7 @@ function createExampleSourceSemanticsExtension() {
         { kind: "type-marker", exportName: "ptr", marker: "pointer" },
         { kind: "type-marker", exportName: "rawptr", marker: "raw-pointer" },
         { kind: "type-marker", exportName: "fnptr", marker: "function-pointer" },
+        { kind: "type-marker", exportName: "fixed", marker: "fixed-array" },
       ],
     }, {
       moduleSpecifier: exampleLangModule,
@@ -602,13 +603,14 @@ test("source-semantics marker imports are alias and shadow safe", () => {
   assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(shadowedNamespaceCall), argumentPassingFactKey), undefined);
 });
 
-test("source-semantics records ptr and fnptr type facts from canonical type marker imports", () => {
+test("source-semantics records exact type-marker facts without conflating fixed arrays and function pointers", () => {
   const { extended, program, index } = createProgram(`
-    import type { int, ptr, fnptr } from "@example/native/types.js";
+    import type { fixed, int, ptr, fnptr } from "@example/native/types.js";
     import type { ptr as localPtr } from "./local.js";
 
     type Pointer = ptr<int>;
     type FunctionPointer = fnptr<[int], int>;
+    type Fixed = fixed<int, 4>;
     type LocalPointer = localPtr<int>;
   `, new Map([
     ["/src/local.ts", "export type ptr<T> = T;"],
@@ -619,6 +621,7 @@ test("source-semantics records ptr and fnptr type facts from canonical type mark
 
   const pointerReference = getTypeAliasType(index, "Pointer");
   const functionPointerReference = getTypeAliasType(index, "FunctionPointer");
+  const fixedArrayReference = getTypeAliasType(index, "Fixed");
   const localPointerReference = getTypeAliasType(index, "LocalPointer");
 
   assert.equal(pointerReference?.Kind, KindTypeReference);
@@ -628,6 +631,11 @@ test("source-semantics records ptr and fnptr type facts from canonical type mark
   assert.equal(extended.extensionHost.facts.get(functionPointerReference, functionPointerFactKey)?.parameters.length, 1);
   assert.equal((extended.extensionHost.facts.get(functionPointerReference, functionPointerFactKey)?.parameters[0] as GoPtr<Node>)?.Kind, KindTypeReference);
   assert.equal((extended.extensionHost.facts.get(functionPointerReference, functionPointerFactKey)?.result as GoPtr<Node>)?.Kind, KindTypeReference);
+  assert.deepEqual(
+    extended.extensionHost.facts.get(fixedArrayReference, sourceMarkerFactKey),
+    { kind: "type-marker", marker: "fixed-array" },
+  );
+  assert.equal(extended.extensionHost.facts.get(fixedArrayReference, functionPointerFactKey), undefined);
   assert.equal(extended.extensionHost.facts.get(localPointerReference, pointerFactKey), undefined);
 
   assert.equal(finalizeExtensionSemantics(extended.program), extended.extensionHost);
@@ -1097,6 +1105,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export type ptr<T> = T;",
       "export interface rawptr { readonly __rawPointerIdentity: unique symbol; }",
       "export type fnptr<Args, Result> = unknown;",
+      "export interface fixed<T, N extends number> { [index: number]: T; readonly length: N; }",
     ].join("\n")],
     ["/src/node_modules/@example/native/lang.d.ts", [
       "import type { ptr, rawptr } from './types.js';",

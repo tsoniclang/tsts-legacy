@@ -86,7 +86,11 @@ export type SourceCallMarkerKind =
   | "equal-raw-pointer"
   | "hash-raw-pointer";
 
-export type SourceTypeMarkerKind = "pointer" | "function-pointer" | "raw-pointer";
+export type SourceTypeMarkerKind =
+  | "pointer"
+  | "function-pointer"
+  | "raw-pointer"
+  | "fixed-array";
 
 export type SourceMarkerFact =
   | {
@@ -1467,6 +1471,7 @@ const sourceTypeMarkerKinds = new Set<SourceTypeMarkerKind>([
   "pointer",
   "function-pointer",
   "raw-pointer",
+  "fixed-array",
 ]);
 const pointerMutabilities = new Set<SourcePointerMutability>(["readonly", "readwrite", "unspecified"]);
 const flowStates = new Set<FlowStateFact["state"]>(["moved", "borrowed-shared", "borrowed-mut"]);

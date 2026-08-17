@@ -1305,6 +1305,15 @@ function recordSourceSemanticsTypeMarker(
     facts.set(typeName, pointerFactKey, fact, evidence);
     return;
   }
+  if (marker.marker === "fixed-array") {
+    const fact = {
+      kind: "type-marker",
+      marker: marker.marker,
+    } satisfies SourceMarkerFact;
+    facts.set(typeReference, sourceMarkerFactKey, fact, evidence);
+    facts.set(typeName, sourceMarkerFactKey, fact, evidence);
+    return;
+  }
   if (typeArguments.length !== 2) {
     return;
   }
