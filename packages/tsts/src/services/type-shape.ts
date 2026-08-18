@@ -30,6 +30,7 @@ import {
   Checker_getTypeOfSymbol,
   Checker_isReadonlySymbol,
 } from "../internal/checker/checker/symbols.js";
+import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import {
   signatureHasRestParameter,
 } from "../internal/checker/checker/state.js";
@@ -366,10 +367,16 @@ function getTypeSignatureParameterInfos(
     const tupleElement = tupleExpanded && index >= restIndex
       ? tupleElements[index - restIndex]
       : undefined;
+    const unexpandedRest = restIndex >= 0 && !tupleExpanded &&
+      index === restIndex;
     const sourceSymbol = tupleElement === undefined
-      ? parameter
+      ? unexpandedRest
+        ? restSymbol
+        : parameter
       : restSymbol;
-    const type = Checker_getTypeOfSymbol(checker, parameter);
+    const type = unexpandedRest
+      ? restType
+      : Checker_getTypeOfSymbol(checker, parameter);
     if (sourceSymbol === undefined || type === undefined) {
       throw new Error(
         "The checker returned an effective signature parameter without exact source ownership or type evidence.",
@@ -378,9 +385,11 @@ function getTypeSignatureParameterInfos(
     const declaration = tupleElement?.declaration ??
       sourceSymbol.ValueDeclaration ?? sourceSymbol.Declarations?.[0];
     const parameterKind = tupleElement?.elementKind === "optional" ||
+        (declaration !== undefined &&
+          Checker_isOptionalParameter(checker, declaration)) ||
         (parameter.CheckFlags & CheckFlagsOptionalParameter) !== 0
       ? "optional"
-      : tupleElement?.elementKind === "rest" ||
+      : unexpandedRest || tupleElement?.elementKind === "rest" ||
           tupleElement?.elementKind === "variadic" ||
           (parameter.CheckFlags & CheckFlagsRestParameter) !== 0
         ? "rest"
