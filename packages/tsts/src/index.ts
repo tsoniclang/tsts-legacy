@@ -152,7 +152,10 @@ export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, I
 export type {
   TypeIndexInfo,
   TypePropertyInfo,
+  TypeSignatureParameterInfo,
+  TypeSignatureThisParameterInfo,
   TypeShapeQueries,
+  TypeTupleElementInfo,
 } from "./services/type-shape.js";
 export type { Node, SourceFile } from "./internal/ast/ast.js";
 export type { Symbol } from "./internal/ast/symbol.js";
