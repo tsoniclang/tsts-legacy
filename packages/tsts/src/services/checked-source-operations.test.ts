@@ -280,6 +280,70 @@ test("type-shape signature evidence expands inferred tuple-rest parameters exact
   }]);
 });
 
+test("type-shape signature evidence preserves unexpanded array-rest ownership", () => {
+  const source = checkedQueries(`
+    type Rest = (prefix: string, ...flags: boolean[]) => boolean;
+    declare const rest: Rest;
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const rest = identifiers.find((node) => source.ast.text(node) === "rest");
+  assert.ok(rest !== undefined);
+  const signatures = source.typeShape.getCallSignatures(
+    source.checker.getTypeAtLocation(rest),
+  );
+  assert.equal(signatures.length, 1);
+  const parameters = source.typeShape.getSignatureParameterInfos(signatures[0]);
+  assert.deepEqual(parameters.map((parameter) => ({
+    sourceName: source.checker.getSymbolName(parameter.sourceSymbol),
+    type: source.typeShape.typeToString(parameter.type),
+    parameterKind: parameter.parameterKind,
+    declarationName: source.ast.text(source.ast.name(parameter.declaration)),
+  })), [{
+    sourceName: "prefix",
+    type: "string",
+    parameterKind: "required",
+    declarationName: "prefix",
+  }, {
+    sourceName: "flags",
+    type: "boolean[]",
+    parameterKind: "rest",
+    declarationName: "flags",
+  }]);
+});
+
+test("type-shape signature evidence preserves checker-selected optionality", () => {
+  const source = checkedQueries(`
+    type Optional = (required: number, optional?: string) => void;
+    declare const optionalCallable: Optional;
+    function defaultedCallable(required: number, initialized = "value"): void {}
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const callableNames = ["optionalCallable", "defaultedCallable"] as const;
+  const parameterKinds = callableNames.map((name) => {
+    const callable = identifiers.find((node) => source.ast.text(node) === name);
+    assert.ok(callable !== undefined);
+    const signatures = source.typeShape.getCallSignatures(
+      source.checker.getTypeAtLocation(callable),
+    );
+    assert.equal(signatures.length, 1);
+    return source.typeShape.getSignatureParameterInfos(signatures[0]).map(
+      (parameter) => parameter.parameterKind,
+    );
+  });
+  assert.deepEqual(parameterKinds, [
+    ["required", "optional"],
+    ["required", "optional"],
+  ]);
+});
+
 test("type-shape property information preserves effective mapped modifiers", () => {
   const source = checkedQueries(`
     type Source = { readonly id?: number; name: string };
