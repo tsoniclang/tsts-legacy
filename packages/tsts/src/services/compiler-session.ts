@@ -145,11 +145,11 @@ function createCompilerSessionForProgramOwner(
     ensureChecked: (sourceFile) => {
       const fileName = sourceFile === undefined ? undefined : SourceFile_FileName(sourceFile);
       owner.prepareForSemanticQueries();
-      return Program_GetSemanticDiagnostics(
+      return diagnosticsOrEmpty(Program_GetSemanticDiagnostics(
         owner.program,
         context,
         fileName === undefined ? undefined : requireCurrentSourceFile(owner.program, fileName),
-      );
+      ));
     },
     getDiagnostics: (kind = "all", sourceFile) => {
       const fileName = sourceFile === undefined ? undefined : SourceFile_FileName(sourceFile);
@@ -360,31 +360,37 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
 function getDiagnostics(program: GoPtr<Program>, context: Context, kind: CompilerDiagnosticKind, sourceFile: GoPtr<SourceFile>): GoSlice<GoPtr<Diagnostic>> {
   switch (kind) {
     case "config":
-      return Program_GetConfigFileParsingDiagnostics(program);
+      return diagnosticsOrEmpty(Program_GetConfigFileParsingDiagnostics(program));
     case "program":
-      return Program_GetProgramDiagnostics(program);
+      return diagnosticsOrEmpty(Program_GetProgramDiagnostics(program));
     case "global":
-      return Program_GetGlobalDiagnostics(program, context);
+      return diagnosticsOrEmpty(Program_GetGlobalDiagnostics(program, context));
     case "syntactic":
-      return Program_GetSyntacticDiagnostics(program, context, sourceFile);
+      return diagnosticsOrEmpty(Program_GetSyntacticDiagnostics(program, context, sourceFile));
     case "bind":
-      return Program_GetBindDiagnostics(program, context, sourceFile);
+      return diagnosticsOrEmpty(Program_GetBindDiagnostics(program, context, sourceFile));
     case "semantic":
-      return Program_GetSemanticDiagnostics(program, context, sourceFile);
+      return diagnosticsOrEmpty(Program_GetSemanticDiagnostics(program, context, sourceFile));
     case "suggestion":
-      return Program_GetSuggestionDiagnostics(program, context, sourceFile);
+      return diagnosticsOrEmpty(Program_GetSuggestionDiagnostics(program, context, sourceFile));
     case "declaration":
-      return Program_GetDeclarationDiagnostics(program, context, sourceFile);
+      return diagnosticsOrEmpty(Program_GetDeclarationDiagnostics(program, context, sourceFile));
     case "all":
       return [
-        ...Program_GetConfigFileParsingDiagnostics(program),
-        ...Program_GetProgramDiagnostics(program),
-        ...Program_GetGlobalDiagnostics(program, context),
-        ...Program_GetSyntacticDiagnostics(program, context, sourceFile),
-        ...Program_GetBindDiagnostics(program, context, sourceFile),
-        ...Program_GetSemanticDiagnostics(program, context, sourceFile),
+        ...diagnosticsOrEmpty(Program_GetConfigFileParsingDiagnostics(program)),
+        ...diagnosticsOrEmpty(Program_GetProgramDiagnostics(program)),
+        ...diagnosticsOrEmpty(Program_GetGlobalDiagnostics(program, context)),
+        ...diagnosticsOrEmpty(Program_GetSyntacticDiagnostics(program, context, sourceFile)),
+        ...diagnosticsOrEmpty(Program_GetBindDiagnostics(program, context, sourceFile)),
+        ...diagnosticsOrEmpty(Program_GetSemanticDiagnostics(program, context, sourceFile)),
       ];
   }
+}
+
+function diagnosticsOrEmpty(
+  diagnostics: GoSlice<GoPtr<Diagnostic>> | undefined,
+): GoSlice<GoPtr<Diagnostic>> {
+  return diagnostics ?? [];
 }
 
 function inferRootFiles(currentDirectory: string, files: ReadonlyMap<string, string>): readonly string[] {

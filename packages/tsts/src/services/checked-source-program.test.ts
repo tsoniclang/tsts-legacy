@@ -115,6 +115,37 @@ test("checked source program exposes one exact AST and direct checker decision s
   assert.equal(source.checker.typeToString(iteration?.sourceElementType), "number");
 });
 
+test("compiler sessions normalize nil Go diagnostic slices at the public boundary", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: [
+      "/src/core.d.ts",
+      "/src/api.ts",
+      "/src/direct.ts",
+      "/src/namespace.ts",
+    ],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/api.ts":
+        "export const transform = (value: number): number => value + 1;",
+      "/src/direct.ts": [
+        'import { transform as apply } from "./api.js";',
+        "export const direct = apply(1);",
+      ].join("\n"),
+      "/src/namespace.ts": [
+        'import * as api from "./api.js";',
+        "export const namespaced = api.transform(2);",
+      ].join("\n"),
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  });
+
+  assert.deepEqual(session.getDiagnostics("global"), []);
+  assert.deepEqual(session.getDiagnostics("all"), []);
+  assert.deepEqual(session.ensureChecked(), []);
+  assert.deepEqual(session.checkSource().diagnostics, []);
+});
+
 test("checked source facts are immutable consumer capabilities over exact source subjects", () => {
   const extensionId = "test.checked-source-facts";
   const factKey = defineExtensionFactKey<string>({
