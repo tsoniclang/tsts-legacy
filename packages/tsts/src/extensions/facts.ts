@@ -84,13 +84,15 @@ export type SourceCallMarkerKind =
   | "project-pointer"
   | "bind-raw-pointer"
   | "equal-raw-pointer"
-  | "hash-raw-pointer";
+  | "hash-raw-pointer"
+  | "js-string";
 
 export type SourceTypeMarkerKind =
   | "pointer"
   | "function-pointer"
   | "raw-pointer"
-  | "fixed-array";
+  | "fixed-array"
+  | "js-string";
 
 export type SourceMarkerFact =
   | {
@@ -1466,12 +1468,14 @@ const sourceCallMarkerKinds = new Set<SourceCallMarkerKind>([
   "bind-raw-pointer",
   "equal-raw-pointer",
   "hash-raw-pointer",
+  "js-string",
 ]);
 const sourceTypeMarkerKinds = new Set<SourceTypeMarkerKind>([
   "pointer",
   "function-pointer",
   "raw-pointer",
   "fixed-array",
+  "js-string",
 ]);
 const pointerMutabilities = new Set<SourcePointerMutability>(["readonly", "readwrite", "unspecified"]);
 const flowStates = new Set<FlowStateFact["state"]>(["moved", "borrowed-shared", "borrowed-mut"]);

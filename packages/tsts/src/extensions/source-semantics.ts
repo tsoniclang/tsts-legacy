@@ -660,6 +660,20 @@ function recordSourceSemanticsCallMarker(
       }
       recordDefaultValueMarker(facts, callExpression, evidence);
       return;
+    case "js-string": {
+      if (
+        !hasMarkerArgumentCount(callExpression, 1) ||
+        !hasMarkerTypeArgumentCount(callExpression, 0)
+      ) {
+        return;
+      }
+      const fact = {
+        kind: "call-marker",
+        marker: marker.marker,
+      } satisfies SourceMarkerFact;
+      facts.set(callExpression, sourceMarkerFactKey, fact, evidence);
+      return;
+    }
     case "address-of":
     case "allocate":
     case "load":
@@ -1306,6 +1320,18 @@ function recordSourceSemanticsTypeMarker(
     return;
   }
   if (marker.marker === "fixed-array") {
+    const fact = {
+      kind: "type-marker",
+      marker: marker.marker,
+    } satisfies SourceMarkerFact;
+    facts.set(typeReference, sourceMarkerFactKey, fact, evidence);
+    facts.set(typeName, sourceMarkerFactKey, fact, evidence);
+    return;
+  }
+  if (marker.marker === "js-string") {
+    if (typeArguments.length !== 0) {
+      return;
+    }
     const fact = {
       kind: "type-marker",
       marker: marker.marker,
