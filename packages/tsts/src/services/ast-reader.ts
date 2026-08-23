@@ -65,6 +65,11 @@ export type AstModifierKind =
 
 export type AstVariableDeclarationKind = "var" | "let" | "const" | "using" | "await using";
 
+export interface AstRegularExpressionLiteralSyntax {
+  readonly pattern: string;
+  readonly flags: string;
+}
+
 export type AstAuthoredRange =
   | {
       readonly kind: "authored";
@@ -105,6 +110,8 @@ export interface AstReader {
   readonly variableDeclarationKind: (node: GoPtr<Node>) => AstVariableDeclarationKind | undefined;
   /** Uses TS-Go's canonical grammar predicate for `as const` and `<const>` assertions. */
   readonly isConstAssertion: (node: GoPtr<Node>) => boolean;
+  /** Returns the exact authored pattern and flags stored by a TS-Go regular-expression literal. */
+  readonly regularExpressionLiteral: (node: GoPtr<Node>) => AstRegularExpressionLiteralSyntax | undefined;
   readonly heritageElements: (node: GoPtr<Node>, kind: "extends" | "implements") => readonly GoPtr<Node>[];
   readonly extendsHeritageElements: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
   readonly implementsHeritageElements: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
@@ -158,6 +165,7 @@ export function createAstReader(): AstReader {
     hasModifierKind: (node, kind) => node !== undefined && HasModifier(node, modifierFlagForKind(kind)) === true,
     variableDeclarationKind,
     isConstAssertion: (node) => node !== undefined && IsConstAssertion(node) === true,
+    regularExpressionLiteral,
     heritageElements: (node, kind) => GetHeritageElements(node, kind === "extends" ? KindExtendsKeyword : KindImplementsKeyword) ?? [],
     extendsHeritageElements: (node) => GetHeritageElements(node, KindExtendsKeyword) ?? [],
     implementsHeritageElements: (node) => GetHeritageElements(node, KindImplementsKeyword) ?? [],
@@ -195,6 +203,23 @@ export function createAstReader(): AstReader {
     as: casts,
   };
   return Object.freeze(reader);
+}
+
+function regularExpressionLiteral(
+  node: GoPtr<Node>,
+): AstRegularExpressionLiteralSyntax | undefined {
+  if (node === undefined || !predicates.IsRegularExpressionLiteral(node)) {
+    return undefined;
+  }
+  const text = Node_Text(node);
+  const closingSlash = text.lastIndexOf("/");
+  if (!text.startsWith("/") || closingSlash <= 0) {
+    return undefined;
+  }
+  return Object.freeze({
+    pattern: text.slice(1, closingSlash),
+    flags: text.slice(closingSlash + 1),
+  });
 }
 
 function authoredRange(node: GoPtr<Node>): AstAuthoredRange {
