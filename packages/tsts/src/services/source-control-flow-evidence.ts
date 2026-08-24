@@ -103,8 +103,19 @@ export interface ResolvedSourceYieldInfo {
 }
 
 export type ResolvedWellKnownSymbolKind =
+  | "has-instance"
+  | "is-concat-spreadable"
   | "iterator"
   | "async-iterator"
+  | "match"
+  | "match-all"
+  | "replace"
+  | "search"
+  | "species"
+  | "split"
+  | "to-primitive"
+  | "to-string-tag"
+  | "unscopables"
   | "dispose"
   | "async-dispose";
 
@@ -440,8 +451,19 @@ const wellKnownSymbolProperties: readonly (readonly [
   ResolvedWellKnownSymbolKind,
   string,
 ])[] = Object.freeze([
+  ["has-instance", "hasInstance"],
+  ["is-concat-spreadable", "isConcatSpreadable"],
   ["iterator", "iterator"],
   ["async-iterator", "asyncIterator"],
+  ["match", "match"],
+  ["match-all", "matchAll"],
+  ["replace", "replace"],
+  ["search", "search"],
+  ["species", "species"],
+  ["split", "split"],
+  ["to-primitive", "toPrimitive"],
+  ["to-string-tag", "toStringTag"],
+  ["unscopables", "unscopables"],
   ["dispose", "dispose"],
   ["async-dispose", "asyncDispose"],
 ]);

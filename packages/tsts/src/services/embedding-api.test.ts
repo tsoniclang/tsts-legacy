@@ -179,6 +179,45 @@ test("public AST reader distinguishes declaration-list kinds from const enum mod
   assert.equal(checked.ast.variableDeclarationKind(enumDeclaration), undefined);
 });
 
+test("public AST reader exposes exact regular-expression literal syntax", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: {
+      "/src/core.d.ts": core,
+      "/src/index.ts": [
+        "const simple = /simple/g;",
+        String.raw`const escaped = /a\/b[\/]/dgu;`,
+        "const unicode = /💚/u;",
+      ].join("\n"),
+    },
+    compilerOptions: {
+      noLib: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+    },
+  });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const sourceFile = checked.getSourceFile("/src/index.ts");
+  const literals = collectNodes(
+    sourceFile,
+    checked.ast,
+    (node) => checked.ast.is.IsRegularExpressionLiteral(node),
+  );
+  assert.deepEqual(literals.map(checked.ast.regularExpressionLiteral), [
+    { pattern: "simple", flags: "g" },
+    { pattern: "a\\/b[\\/]", flags: "dgu" },
+    { pattern: "💚", flags: "u" },
+  ]);
+  assert.equal(
+    Object.isFrozen(checked.ast.regularExpressionLiteral(literals[0])),
+    true,
+  );
+  assert.equal(checked.ast.regularExpressionLiteral(sourceFile), undefined);
+});
+
 test("public AST reader exposes exact optional-parameter question tokens", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",

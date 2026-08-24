@@ -96,6 +96,7 @@ function createExampleSourceSemanticsExtension() {
         { kind: "type-marker", exportName: "rawptr", marker: "raw-pointer" },
         { kind: "type-marker", exportName: "fnptr", marker: "function-pointer" },
         { kind: "type-marker", exportName: "fixed", marker: "fixed-array" },
+        { kind: "type-marker", exportName: "JsString", marker: "js-string" },
       ],
     }, {
       moduleSpecifier: exampleLangModule,
@@ -123,6 +124,7 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "bindRawPointer", marker: "bind-raw-pointer" },
         { kind: "call-marker", exportName: "equalRawPointer", marker: "equal-raw-pointer" },
         { kind: "call-marker", exportName: "hashRawPointer", marker: "hash-raw-pointer" },
+        { kind: "call-marker", exportName: "jsstr", marker: "js-string" },
       ],
     }],
   });
@@ -644,6 +646,75 @@ test("source-semantics records exact type-marker facts without conflating fixed 
   assert.equal(consumer.getFunctionPointer(functionPointerReference)?.parameters.length, 1);
 });
 
+test("source-semantics records explicit JavaScript string type and conversion markers", () => {
+  const { extended, program, index } = createProgram(`
+    import type { JsString } from "@example/native/types.js";
+    import { jsstr } from "@example/native/lang.js";
+
+    type Exact = JsString;
+    const converted = jsstr("value");
+  `);
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  const exactReference = getTypeAliasType(index, "Exact");
+  const conversionCall = getCallExpression(index, "jsstr", 0);
+  assert.deepEqual(
+    extended.extensionHost.facts.get(exactReference, sourceMarkerFactKey),
+    { kind: "type-marker", marker: "js-string" },
+  );
+  assert.deepEqual(
+    extended.extensionHost.facts.get(conversionCall, sourceMarkerFactKey),
+    { kind: "call-marker", marker: "js-string" },
+  );
+});
+
+test("JavaScript string markers follow exact imports and reject same-spelled local calls", () => {
+  const { extended, program, index } = createProgram(`
+    import type { JsString as ExactString } from "@example/native/types.js";
+    import type * as nativeTypes from "@example/native/types.js";
+    import { jsstr as convert } from "@example/native/lang.js";
+    import * as nativeLang from "@example/native/lang.js";
+    import { jsstr as localJsstr } from "./local.js";
+
+    type Aliased = ExactString;
+    type Namespaced = nativeTypes.JsString;
+    const aliased = convert("a");
+    const namespaced = nativeLang.jsstr("b");
+    const local = localJsstr("c");
+    function shadow(convert: (value: string) => string): string {
+      return convert("d");
+    }
+  `, new Map([
+    ["/src/local.ts", "export function jsstr(value: string): string { return value; }"],
+  ]));
+
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+
+  for (const name of ["Aliased", "Namespaced"]) {
+    assert.deepEqual(
+      extended.extensionHost.facts.get(getTypeAliasType(index, name), sourceMarkerFactKey),
+      { kind: "type-marker", marker: "js-string" },
+    );
+  }
+  for (const name of ["aliased", "namespaced"]) {
+    assert.deepEqual(
+      extended.extensionHost.facts.get(Node_Initializer(getVariableDeclaration(index, name)), sourceMarkerFactKey),
+      { kind: "call-marker", marker: "js-string" },
+    );
+  }
+  assert.equal(
+    extended.extensionHost.facts.get(Node_Initializer(getVariableDeclaration(index, "local")), sourceMarkerFactKey),
+    undefined,
+  );
+  assert.equal(
+    extended.extensionHost.facts.get(getCallExpression(index, "convert", 1), sourceMarkerFactKey),
+    undefined,
+  );
+});
+
 test("source-semantics qualified source facts require exact module receiver identity", () => {
   const { extended, program, index } = createProgram(`
     import type { int } from "@example/native/types.js";
@@ -1106,6 +1177,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export interface rawptr { readonly __rawPointerIdentity: unique symbol; }",
       "export type fnptr<Args, Result> = unknown;",
       "export interface fixed<T, N extends number> { [index: number]: T; readonly length: N; }",
+      "export interface JsString { readonly __jsStringIdentity: unique symbol; }",
     ].join("\n")],
     ["/src/node_modules/@example/native/lang.d.ts", [
       "import type { ptr, rawptr } from './types.js';",
@@ -1130,6 +1202,7 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function bindRawPointer(identity: object): rawptr;",
       "export declare function equalRawPointer(left: rawptr | undefined, right: rawptr | undefined): boolean;",
       "export declare function hashRawPointer(pointer: rawptr | undefined): number;",
+      "export declare function jsstr(value: string): import('./types.js').JsString;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
       compilerOptions: {

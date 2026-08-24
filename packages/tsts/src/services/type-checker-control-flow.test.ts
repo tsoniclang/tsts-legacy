@@ -98,8 +98,17 @@ test("generator queries retain exact sync and async yield-star mechanisms", () =
 test("well-known-symbol queries distinguish exact global symbols from shadows", () => {
   const { program, index } = createProgram(`
     ${disposalGlobals}
+    interface SymbolConstructor {
+      readonly match: unique symbol;
+      readonly replace: unique symbol;
+    }
     class Resource {
       [Symbol.dispose](): void {}
+    }
+
+    class Matcher {
+      [Symbol.match](_value: string): null { return null; }
+      [Symbol.replace](_value: string, _replacement: string): string { return ""; }
     }
 
     declare const localDispose: unique symbol;
@@ -109,13 +118,21 @@ test("well-known-symbol queries distinguish exact global symbols from shadows", 
   `, { noLib: false });
   assertCleanSemanticDiagnostics(program, index);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
-  const computedNames = findNodesByKind(index, KindComputedPropertyName).slice(-2);
-  assert.equal(computedNames.length, 2);
+  const computedNames = findNodesByKind(index, KindComputedPropertyName).slice(-4);
+  assert.equal(computedNames.length, 4);
 
   const global = queries.getResolvedWellKnownSymbolInfo(computedNames[0]);
   assert.equal(global?.kind, "dispose");
   assert.ok(global?.wellKnownDeclaration !== undefined);
-  assert.equal(queries.getResolvedWellKnownSymbolInfo(computedNames[1]), undefined);
+  assert.equal(
+    queries.getResolvedWellKnownSymbolInfo(computedNames[1])?.kind,
+    "match",
+  );
+  assert.equal(
+    queries.getResolvedWellKnownSymbolInfo(computedNames[2])?.kind,
+    "replace",
+  );
+  assert.equal(queries.getResolvedWellKnownSymbolInfo(computedNames[3]), undefined);
   assert.ok(queries.getResolvedWellKnownSymbolInfo(computedNames[0]) === global);
 });
 
