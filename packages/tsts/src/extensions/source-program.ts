@@ -1,12 +1,16 @@
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
-import type { SourceFile } from "../internal/ast/ast.js";
+import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import {
+  Program_GetDefaultResolutionModeForFile,
+  Program_GetSourceFileForResolvedModule,
   Program_GetSourceFile,
   Program_GetSourceFiles,
+  Program_ResolveModuleName,
   type Program,
 } from "../internal/compiler/program.js";
+import { ResolvedModule_IsResolved } from "../internal/module/types.js";
 import { createAstReader, type AstReader } from "../services/ast-reader.js";
 import { createTypeCheckerQueries, type TypeCheckerQueries } from "../services/type-checker.js";
 import { createTypeShapeQueries, type TypeShapeQueries } from "../services/type-shape.js";
@@ -25,6 +29,7 @@ export interface SourceProgramQueries {
   readonly getSourceFiles: () => readonly GoPtr<SourceFile>[];
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
+  readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
 }
 
 export interface CheckedSourceProgram extends SourceProgramQueries {
@@ -50,6 +55,7 @@ export function createSourceProgramQueries(
   }
   const ast = options.ast ?? createAstReader();
   const sourceFileQueries = new WeakMap<SourceFile, SourceFileQueries>();
+  const moduleSourceFiles = new WeakMap<Node, SourceFile | null>();
   const included = (sourceFile: SourceFile): boolean => options.includeSourceFile?.(sourceFile) !== false;
   const getSourceFiles = (): readonly GoPtr<SourceFile>[] =>
     (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
@@ -85,10 +91,44 @@ export function createSourceProgramQueries(
     sourceFileQueries.set(sourceFile, created);
     return created;
   };
+  const resolveModuleSourceFile = (moduleSpecifier: GoPtr<Node>): GoPtr<SourceFile> => {
+    if (moduleSpecifier === undefined) {
+      return undefined;
+    }
+    const kind = ast.kindName(moduleSpecifier);
+    const containingSourceFile = ast.getSourceFile(moduleSpecifier);
+    if ((kind !== "KindStringLiteral" && kind !== "KindNoSubstitutionTemplateLiteral") ||
+      containingSourceFile === undefined || !included(containingSourceFile)) {
+      return undefined;
+    }
+    const cached = moduleSourceFiles.get(moduleSpecifier);
+    if (cached !== undefined) {
+      return cached ?? undefined;
+    }
+    const resolutionMode = Program_GetDefaultResolutionModeForFile(
+      program,
+      containingSourceFile,
+    );
+    const resolved = Program_ResolveModuleName(
+      program,
+      ast.text(moduleSpecifier),
+      ast.getFileName(containingSourceFile),
+      resolutionMode,
+    );
+    const sourceFile = ResolvedModule_IsResolved(resolved)
+      ? Program_GetSourceFileForResolvedModule(program, resolved!.ResolvedFileName)
+      : undefined;
+    const selected = sourceFile !== undefined && included(sourceFile)
+      ? sourceFile
+      : undefined;
+    moduleSourceFiles.set(moduleSpecifier, selected ?? null);
+    return selected;
+  };
   return Object.freeze({
     ast,
     getSourceFiles,
     getSourceFile,
     getSourceFileQueries,
+    resolveModuleSourceFile,
   });
 }
