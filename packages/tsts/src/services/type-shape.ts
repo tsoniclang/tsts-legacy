@@ -51,6 +51,7 @@ import {
   TypeFlagsAny,
   TypeFlagsBigIntLike,
   TypeFlagsBooleanLike,
+  TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
   TypeFlagsNull,
@@ -125,6 +126,7 @@ export interface TypeShapeQueries {
   readonly isNumberLike: (type: GoPtr<Type>) => boolean;
   readonly isBooleanLike: (type: GoPtr<Type>) => boolean;
   readonly isBigIntLike: (type: GoPtr<Type>) => boolean;
+  readonly isSymbolLike: (type: GoPtr<Type>) => boolean;
   readonly isUnion: (type: GoPtr<Type>) => boolean;
   readonly isIntersection: (type: GoPtr<Type>) => boolean;
   readonly isTypeReference: (type: GoPtr<Type>) => boolean;
@@ -174,6 +176,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     isNumberLike: (type) => hasFlags(type, TypeFlagsNumberLike),
     isBooleanLike: (type) => hasFlags(type, TypeFlagsBooleanLike),
     isBigIntLike: (type) => hasFlags(type, TypeFlagsBigIntLike),
+    isSymbolLike: (type) => hasFlags(type, TypeFlagsESSymbolLike),
     isUnion: (type) => hasFlags(type, TypeFlagsUnion),
     isIntersection: (type) => hasFlags(type, TypeFlagsIntersection),
     isTypeReference: (type) => type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0,
