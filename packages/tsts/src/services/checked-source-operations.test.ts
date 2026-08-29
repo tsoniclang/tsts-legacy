@@ -180,6 +180,28 @@ test("type-shape tuple queries are total for primitive and tuple source types", 
   );
 });
 
+test("type-shape symbol query distinguishes exact symbol-like source types", () => {
+  const source = checkedQueries(`
+    declare const ordinary: symbol;
+    declare const unique: unique symbol;
+    declare const text: string;
+  `);
+  const identifiers = findNodes(
+    source.sourceFile,
+    source.ast.children,
+    source.ast.is.IsIdentifier,
+  );
+  const typeOf = (name: string) => {
+    const identifier = identifiers.find((node) => source.ast.text(node) === name);
+    assert.ok(identifier !== undefined);
+    return source.checker.getTypeAtLocation(identifier);
+  };
+
+  assert.equal(source.typeShape.isSymbolLike(typeOf("ordinary")), true);
+  assert.equal(source.typeShape.isSymbolLike(typeOf("unique")), true);
+  assert.equal(source.typeShape.isSymbolLike(typeOf("text")), false);
+});
+
 test("type-shape tuple evidence retains exact authored parameter declarations", () => {
   const source = checkedQueries(`
     type ArgumentTuple<T> = T extends (...args: infer P) => unknown ? P : never;

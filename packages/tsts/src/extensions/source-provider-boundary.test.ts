@@ -143,6 +143,15 @@ test("malformed resolution outcomes fail closed before declaration or publicatio
       entry.expectedCode,
       entry.name,
     );
+    if (entry.name === "wrong-module") {
+      assert.deepEqual(host.diagnostics.all().at(-1)?.evidence, [{
+        message: "Declaration model rejection",
+        details: {
+          reason: "module-specifier-mismatch",
+          path: "moduleSpecifier",
+        },
+      }]);
+    }
     assert.deepEqual(host.providers.getVirtualDeclarationDocuments(), [], entry.name);
   }
 });

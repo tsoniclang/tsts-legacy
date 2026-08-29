@@ -115,6 +115,43 @@ test("checked source program exposes one exact AST and direct checker decision s
   assert.equal(source.checker.typeToString(iteration?.sourceElementType), "number");
 });
 
+test("checked source program resolves authored module literals on demand", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts", "/src/worker.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": [
+        "declare function startWorker(path: string): void;",
+        "startWorker('./worker.js');",
+        "startWorker('./missing.js');",
+      ].join("\n"),
+      "/src/worker.ts": "export const workerValue = 1;",
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  });
+
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const index = checked.getSourceFile("/src/index.ts");
+  const worker = checked.getSourceFile("/src/worker.ts");
+  assert.ok(index !== undefined);
+  assert.ok(worker !== undefined);
+  const literals = findNodes(index, checked.ast.children, checked.ast.is.IsStringLiteral);
+  const workerSpecifier = literals.find((literal) => checked.ast.text(literal) === "./worker.js");
+  const missingSpecifier = literals.find((literal) => checked.ast.text(literal) === "./missing.js");
+  assert.ok(workerSpecifier !== undefined);
+  assert.ok(missingSpecifier !== undefined);
+
+  const resolved = checked.resolveModuleSourceFile(workerSpecifier);
+  assert.ok(resolved === worker);
+  assert.ok(
+    checked.resolveModuleSourceFile(workerSpecifier) === resolved,
+    "Repeated authored module resolution must retain exact source-file identity.",
+  );
+  assert.equal(checked.resolveModuleSourceFile(missingSpecifier), undefined);
+});
+
 test("compiler sessions normalize nil Go diagnostic slices at the public boundary", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",
