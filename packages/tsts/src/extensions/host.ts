@@ -7738,17 +7738,19 @@ function hasValidProviderTypeParameterDeclarations(typeParameters: readonly Prov
     }
     names.add(parameter.name);
   }
-  const scope = new Set(parentScope);
+  const constraintScope = new Set(parentScope);
+  for (const name of names) {
+    constraintScope.add(name);
+  }
+  const defaultScope = new Set(parentScope);
   for (const parameter of typeParameters) {
-    const constraintScope = new Set(scope);
-    constraintScope.add(parameter.name);
     if ((parameter.constraints ?? []).some((constraint) => !hasValidProviderTypeExpressionScope(constraint, constraintScope))) {
       return false;
     }
-    if (parameter.defaultType !== undefined && !hasValidProviderTypeExpressionScope(parameter.defaultType, scope)) {
+    if (parameter.defaultType !== undefined && !hasValidProviderTypeExpressionScope(parameter.defaultType, defaultScope)) {
       return false;
     }
-    scope.add(parameter.name);
+    defaultScope.add(parameter.name);
   }
   return true;
 }

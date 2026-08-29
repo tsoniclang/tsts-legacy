@@ -112,6 +112,23 @@ test("the complete legal provider declaration matrix binds through ordinary sour
         }],
       }],
     }, {
+      id: "ForwardConstraint",
+      name: "ForwardConstraint",
+      kind: "class",
+      typeParameters: [{
+        name: "T",
+        constraints: [{ kind: "type-parameter", name: "U" }],
+      }, {
+        name: "U",
+      }],
+      members: [{
+        id: "ForwardConstraint::value",
+        name: "value",
+        kind: "property",
+        readonly: true,
+        type: { kind: "type-parameter", name: "T" },
+      }],
+    }, {
       id: "make",
       name: "make",
       kind: "function",
@@ -167,7 +184,7 @@ test("the complete legal provider declaration matrix binds through ordinary sour
     files: {
       "/src/core.d.ts": testCoreDeclarations,
       "/src/index.ts": [
-        `import { Derived, Helpers, Mode, make, version } from "${moduleSpecifier}";`,
+        `import { Derived, ForwardConstraint, Helpers, Mode, make, version } from "${moduleSpecifier}";`,
         `import type { Pair } from "${moduleSpecifier}";`,
         "declare const convert: (value: number) => string;",
         "const direct = new Derived<number>(1);",
@@ -175,6 +192,8 @@ test("the complete legal provider declaration matrix binds through ordinary sour
         "export const indexed: number = direct[0];",
         "export const mapped: string = direct.map(convert);",
         "export const created: Derived<string> = Derived.create('value');",
+        "declare const forward: ForwardConstraint<number, number>;",
+        "export const forwardValue: number = forward.value;",
         "export const made: Derived<number> = make(1);",
         "export const parsed: number = Helpers.parse('1');",
         "export const mode: Mode = Mode.Read;",
