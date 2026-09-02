@@ -70,6 +70,94 @@ test("provider modules preserve default, renamed, and namespace import identitie
   );
 });
 
+test("provider default imports retain member identity beside same-named module exports", () => {
+  const moduleSpecifier = "@test/default-member-collision.js";
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier,
+    providerModuleId: "Test.DefaultMemberCollision",
+    exports: [{
+      id: "state",
+      name: "state",
+      kind: "value",
+      type: { kind: "number" },
+    }, {
+      id: "DefaultModule",
+      name: "DefaultModule",
+      exportKind: "default",
+      kind: "class",
+      members: [{
+        id: "DefaultModule::state",
+        name: "state",
+        kind: "property",
+        static: true,
+        readonly: false,
+        type: { kind: "number" },
+      }],
+    }],
+  };
+
+  for (const rootFiles of [
+    ["/src/core.d.ts", "/src/named.ts", "/src/default.ts"],
+    ["/src/core.d.ts", "/src/default.ts", "/src/named.ts"],
+  ]) {
+    const checked = createCompilerSessionFromFiles({
+      currentDirectory: "/src",
+      rootFiles,
+      files: {
+        "/src/package.json": JSON.stringify({ type: "module" }),
+        "/src/core.d.ts": testCoreDeclarations,
+        "/src/named.ts": [
+          `import { state } from "${moduleSpecifier}";`,
+          "export const namedState = state;",
+        ].join("\n"),
+        "/src/default.ts": [
+          `import DefaultModule from "${moduleSpecifier}";`,
+          "DefaultModule.state = 2;",
+          "export const defaultState = DefaultModule.state;",
+        ].join("\n"),
+      },
+      compilerOptions: {
+        ...testNoLibCompilerOptions,
+        target: "es2024",
+        module: "nodenext",
+        moduleResolution: "nodenext",
+        preserveSymlinks: true,
+      },
+      extensionHostOptions: {
+        extensions: [sourceProviderExtension(new Map([[moduleSpecifier, model]]), {
+          packageName: moduleSpecifier,
+          packageVersion: "1.0.0",
+        })],
+      },
+    }).checkSource();
+
+    assertNoDiagnostics(checked);
+    const sourceFile = checked.getSourceFile("/src/default.ts");
+    const source = checked.getSourceFileQueries(sourceFile);
+    const accesses = findNodes(sourceFile, source.ast.children, source.ast.is.IsPropertyAccessExpression);
+    assert.equal(accesses.length, 2);
+    assert.deepEqual(
+      accesses.map((access) => {
+        const selected = source.checker.getResolvedPropertyAccessInfo(access);
+        return checked.sourceFacts?.getFact(
+          selected?.selectedWriteDeclaration ?? selected?.selectedReadDeclaration ?? selected?.selectedDeclaration,
+          providerVirtualDeclarationFactKey,
+        );
+      }).map((fact) => ({
+        exportId: fact?.exportId,
+        memberId: fact?.memberId,
+      })),
+      [{
+        exportId: "DefaultModule",
+        memberId: "DefaultModule::state",
+      }, {
+        exportId: "DefaultModule",
+        memberId: "DefaultModule::state",
+      }],
+    );
+  }
+});
+
 test("source-global provider references bind the active checked globals without local capture", () => {
   const moduleSpecifier = "@test/source-globals.js";
   const model: ProviderDeclarationModel = {
