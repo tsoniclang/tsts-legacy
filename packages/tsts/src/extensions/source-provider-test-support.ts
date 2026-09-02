@@ -36,6 +36,8 @@ export function sourceProviderExtension(
     readonly extensionId?: string;
     readonly providerId?: string;
     readonly declarationMaterialization?: SourceDeclarationProvider["declarationMaterialization"];
+    readonly packageName?: string;
+    readonly packageVersion?: string;
     readonly onContext?: (specifier: string, context: ProviderModuleContext) => void;
     readonly getDeclarationModel?: (
       resolution: ProviderModuleResolution,
@@ -70,6 +72,8 @@ export function sourceProviderExtension(
         moduleSpecifier: specifier,
         virtualFileName: `/provider/${model.providerModuleId.replaceAll(".", "/")}.d.ts`,
         providerModuleId: model.providerModuleId,
+        ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+        ...(options.packageVersion === undefined ? {} : { packageVersion: options.packageVersion }),
       };
     },
     getDeclarationModel(resolution, request) {

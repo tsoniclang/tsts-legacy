@@ -312,8 +312,6 @@ export function parseTask_load(receiver: GoPtr<parseTask>, loader: GoPtr<fileLoa
     loader!.libFileCount.Add(1);
     // Default lib files are all scripts; skip looking up their package.json
     receiver!.metadata = { ImpliedNodeFormat: ResolutionModeCommonJS, PackageJsonType: "", PackageJsonDirectory: "" };
-  } else if (providerVirtualArtifact !== undefined) {
-    receiver!.metadata = { ImpliedNodeFormat: ResolutionModeCommonJS, PackageJsonType: "", PackageJsonDirectory: "" };
   } else {
     receiver!.metadata = fileLoader_loadSourceFileMetaData(loader, receiver!.normalizedFilePath);
   }
