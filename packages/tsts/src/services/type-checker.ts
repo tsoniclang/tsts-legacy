@@ -91,6 +91,7 @@ import type {
 } from "../internal/checker/types.js";
 import { ContextFlagsNone, SignatureKindCall, SignatureKindConstruct } from "../internal/checker/types.js";
 import {
+  resolveSourceCallableCompletionInfo,
   resolveSourceGeneratorInfo,
   resolveSourceResourceManagementInfo,
   resolveSourceWellKnownSymbolInfo,
@@ -98,12 +99,14 @@ import {
 } from "./source-control-flow-evidence.js";
 
 export type {
+  ResolvedSourceCallableCompletionInfo,
   ResolvedSourceGeneratorInfo,
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceWellKnownSymbolInfo,
   ResolvedSourceYieldInfo,
 } from "./source-control-flow-evidence.js";
 import type {
+  ResolvedSourceCallableCompletionInfo,
   ResolvedSourceGeneratorInfo,
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceWellKnownSymbolInfo,
@@ -178,6 +181,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
   readonly getResolvedObjectLiteralElementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceObjectLiteralElementInfo>;
   readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
+  readonly getResolvedCallableCompletionInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceCallableCompletionInfo>;
   readonly getResolvedGeneratorInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceGeneratorInfo>;
   readonly getResolvedYieldInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceYieldInfo>;
   readonly getResolvedWellKnownSymbolInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceWellKnownSymbolInfo>;
@@ -215,6 +219,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
+  const callableCompletionInfos = new WeakMap<Node, ResolvedSourceCallableCompletionInfo>();
   const generatorInfos = new WeakMap<Node, ResolvedSourceGeneratorInfo>();
   const yieldInfos = new WeakMap<Node, ResolvedSourceYieldInfo>();
   const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
@@ -289,6 +294,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(storageInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           getResolvedSourceStorageInfo(checker, node))),
+    getResolvedCallableCompletionInfo: (node) =>
+      memoizeResolvedNodeQuery(callableCompletionInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          resolveSourceCallableCompletionInfo(checker, node))),
     getResolvedGeneratorInfo: (node) =>
       memoizeResolvedNodeQuery(generatorInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>

@@ -3609,7 +3609,7 @@ export class ProviderRegistry {
   }
 
   getVirtualDeclarationDocument(uriOrFileName: string): ProviderVirtualDeclarationDocument | undefined {
-    return this.#publicVirtualDocumentsByUri.get(uriOrFileName);
+    return this.#virtualDocumentsByUri.get(uriOrFileName);
   }
 
   getVirtualDeclarationDocuments(): readonly ProviderVirtualDeclarationDocument[] {

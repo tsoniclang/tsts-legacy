@@ -1,6 +1,7 @@
 import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import {
+  Node_Body,
   Node_Expression,
   Node_Initializer,
 } from "../internal/ast/ast.js";
@@ -15,6 +16,7 @@ import {
   NodeFlagsUsing,
 } from "../internal/ast/generated/flags.js";
 import {
+  IsBlock,
   IsComputedPropertyName,
   IsForOfStatement,
   IsVariableDeclaration,
@@ -26,6 +28,7 @@ import type { Node } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import {
   GetContainingFunction,
+  IsFunctionLikeDeclaration,
 } from "../internal/ast/utilities.js";
 import {
   Checker_GetReturnTypeOfSignature,
@@ -40,6 +43,7 @@ import {
   Checker_checkYieldExpression,
   Checker_getCombinedNodeFlagsCached,
   Checker_getResolvedSourceIterationInfo,
+  Checker_functionHasImplicitReturn,
 } from "../internal/checker/checker/syntax-checking.js";
 import {
   Checker_checkYieldStarWithExtensionSelection,
@@ -66,6 +70,25 @@ import {
 } from "../internal/checker/types.js";
 import type { Type } from "../internal/checker/types.js";
 import { getPropertyNameFromType } from "../internal/checker/utilities.js";
+
+export interface ResolvedSourceCallableCompletionInfo {
+  readonly declaration: Node;
+  readonly canFallThrough: boolean;
+}
+
+export function resolveSourceCallableCompletionInfo(
+  checker: GoPtr<Checker>,
+  declaration: GoPtr<Node>,
+): GoPtr<ResolvedSourceCallableCompletionInfo> {
+  if (checker === undefined || declaration === undefined ||
+    !IsFunctionLikeDeclaration(declaration) || Node_Body(declaration) === undefined) {
+    return undefined;
+  }
+  return Object.freeze({
+    declaration,
+    canFallThrough: IsBlock(Node_Body(declaration)) && Checker_functionHasImplicitReturn(checker, declaration),
+  });
+}
 
 export interface ResolvedSourceGeneratorInfo {
   readonly declaration: Node;

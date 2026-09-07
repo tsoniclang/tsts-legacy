@@ -91,6 +91,7 @@ test("direct source queries are canonical and side-effect free across query orde
         "const asserted = called as number;",
         "const sum = property + element;",
         "for (const item of [sum]) { void item; }",
+        "function maybe(flag: boolean) { if (flag) return sum; }",
       ].join("\n"),
     },
     compilerOptions: testNoLibCompilerOptions,
@@ -118,6 +119,8 @@ test("direct source queries are canonical and side-effect free across query orde
   assert.ok(assertion !== undefined);
   assert.ok(binary !== undefined);
   assert.ok(iteration !== undefined);
+  const callable = findNodes(sourceFile, source.ast.children, source.ast.is.IsFunctionDeclaration)[0];
+  assert.ok(callable !== undefined);
 
   const host = getExtensionHost(session.program!);
   assert.ok(host !== undefined);
@@ -134,6 +137,7 @@ test("direct source queries are canonical and side-effect free across query orde
     () => source.checker.getTypeAtLocation(assertion),
     () => source.checker.getTypeAtLocation(binary),
     () => source.checker.getResolvedIterationInfo(iteration),
+    () => source.checker.getResolvedCallableCompletionInfo(callable),
   ] as const;
 
   const first = queries.map((query) => query());

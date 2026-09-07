@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
-import { SourceFile_FileName } from "../internal/ast/ast.js";
+import { SourceFile_FileName, Node_Type } from "../internal/ast/ast.js";
+import { providerVirtualDeclarationFactKey } from "./facts.js";
 import {
   ExtensionHost,
   getExtensionHost,
@@ -374,6 +375,22 @@ test("canonical provider owner files remain hidden from public source traversal"
     checked.sourceFiles.map(SourceFile_FileName).sort(),
     ["/src/core.d.ts", "/src/index.ts", publicDocuments[0]!.fileName].sort(),
   );
+  const sourceFile = checked.getSourceFile("/src/index.ts");
+  assert.ok(sourceFile);
+  const checker = checked.getSourceFileQueries(sourceFile).checker;
+  const statement = checked.ast.as.AsVariableStatement(checked.ast.statements(sourceFile)[1]);
+  const variables = checked.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
+  const type = checker.getTypeFromTypeNode(Node_Type(variables?.[0]));
+  const symbol = checker.getTypeSymbol(type);
+  const identity = checked.sourceFacts.getFact(symbol, providerVirtualDeclarationFactKey);
+  assert.ok(identity);
+  const document = checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName);
+  assert.equal(document?.artifactKind, "canonical-export-owner");
+  assert.equal(document?.declarationModel.exports[0]?.id, "PublicClass");
+  assert.ok(Object.isFrozen(document));
+  assert.equal(checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName), document);
+  assert.equal(checked.sourceFacts.getVirtualDeclarationDocument("missing-owner"), undefined);
+  assert.equal(getExtensionHost(session.program!)?.providers.getVirtualDeclarationDocuments().length, 1);
 });
 
 function hostFor(sourceProvider: SourceDeclarationProvider): ExtensionHost {

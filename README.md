@@ -46,6 +46,14 @@ Direct queries return TS-Go semantic subjects and target-neutral selected
 source evidence. They do not publish target operations, target types, runtime
 carriers, or target diagnostics.
 
+`getResolvedCallableCompletionInfo(declaration)` returns the exact callable and
+whether its block can fall through, using the checker's existing end-flow
+reachability. For `function maybe(flag: boolean) { if (flag) return 1; }`,
+`canFallThrough` is true. It is false for `() => 1` and for a function whose
+body always returns, throws, or does not terminate. Bodyless declarations and
+non-callable syntax have no completion result. Results are immutable and
+memoized within the checked program; this query does not replay source analysis.
+
 ## Source Extensions
 
 A compiler extension has two optional phases:
