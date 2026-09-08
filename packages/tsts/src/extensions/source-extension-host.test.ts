@@ -239,7 +239,7 @@ test("source extensions receive frozen least-authority capability views", () => 
       assert.equal(Object.isFrozen(context.factResolver), true);
       assert.equal(Object.isFrozen(context.diagnostics), true);
       assert.deepEqual(Object.keys(context.facts).sort(), ["get", "getEntry", "has", "set"]);
-      assert.deepEqual(Object.keys(context.factResolver), ["resolve"]);
+      assert.deepEqual(Object.keys(context.factResolver), ["getVirtualDeclarationDocument", "resolve"]);
       assert.deepEqual(Object.keys(context.diagnostics), ["append"]);
       assert.equal(context.factResolver.resolve(subject, factKey), 42);
       capturedWrite = () => context.facts.set(subject, factKey, 42);

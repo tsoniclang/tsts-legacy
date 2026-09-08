@@ -11,6 +11,8 @@ import {
   type ProviderModuleContext,
   type ProviderModuleResolution,
   type SourceDeclarationProvider,
+  type SourceAnalysisFactResolver,
+  type ProviderVirtualDeclarationDocument,
 } from "./index.js";
 import {
   sourceProviderCompilerExtension,
@@ -347,6 +349,8 @@ test("canonical provider owner files remain hidden from public source traversal"
     name: "PublicClass",
     kind: "class",
   }]);
+  let analyzedDocument: ProviderVirtualDeclarationDocument | undefined;
+  let retainedResolver: SourceAnalysisFactResolver | undefined;
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",
     rootFiles: ["/src/core.d.ts", "/src/index.ts"],
@@ -361,7 +365,24 @@ test("canonical provider owner files remain hidden from public source traversal"
     extensionHostOptions: {
       extensions: [sourceProviderCompilerExtension(
         modelProvider(new Map([[specifier, model]])),
-      )],
+      ), {
+        identity: { id: "test.provider-document-analysis", version: "1" },
+        analyzeSource(context) {
+          retainedResolver = context.factResolver;
+          const sourceFile = context.source.getSourceFile("/src/index.ts");
+          const queries = context.source.getSourceFileQueries(sourceFile);
+          const statement = queries.ast.as.AsVariableStatement(queries.ast.statements(sourceFile)[1]);
+          const variables = queries.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
+          const type = queries.checker.getTypeFromTypeNode(Node_Type(variables?.[0]));
+          const identity = context.facts.get(queries.checker.getTypeSymbol(type), providerVirtualDeclarationFactKey);
+          assert.ok(identity);
+          analyzedDocument = context.factResolver.getVirtualDeclarationDocument(identity.artifactFileName);
+          assert.ok(analyzedDocument);
+          assert.equal(context.factResolver.getVirtualDeclarationDocument(analyzedDocument.uri), analyzedDocument);
+          assert.ok(Object.isFrozen(analyzedDocument.declarationModel));
+          assert.equal(context.factResolver.getVirtualDeclarationDocument("missing-owner"), undefined);
+        },
+      }],
     },
   });
   const checked = session.checkSource();
@@ -386,6 +407,8 @@ test("canonical provider owner files remain hidden from public source traversal"
   assert.ok(identity);
   const document = checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName);
   assert.equal(document?.artifactKind, "canonical-export-owner");
+  assert.equal(analyzedDocument, document);
+  assert.throws(() => retainedResolver!.getVirtualDeclarationDocument(identity.artifactFileName), /cannot be used outside their host-owned callback/);
   assert.equal(document?.declarationModel.exports[0]?.id, "PublicClass");
   assert.ok(Object.isFrozen(document));
   assert.equal(checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName), document);
