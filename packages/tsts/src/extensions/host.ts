@@ -324,6 +324,7 @@ export interface SourceAnalysisFactAccess extends ExtensionFactReader {
 }
 
 export interface SourceAnalysisFactResolver {
+  readonly getVirtualDeclarationDocument: (uriOrFileName: string) => ProviderVirtualDeclarationDocument | undefined;
   readonly resolve: <T>(
     subject: ExtensionFactSubject,
     key: ExtensionFactKey<T>,
@@ -4073,7 +4074,8 @@ export class ExtensionHost {
                 analyzeSource(Object.freeze({
                   source: compiler,
                   facts: createSourceAnalysisFactAccess(capabilities.facts, scope),
-                  factResolver: createSourceAnalysisFactResolver(capabilities.factResolver, scope),
+                  factResolver: createSourceAnalysisFactResolver(capabilities.factResolver, scope,
+                    name => this.providers.getVirtualDeclarationDocument(name)),
                   diagnostics: createExtensionDiagnosticWriter(capabilities.diagnostics, scope),
                 }));
               } finally {
@@ -4295,8 +4297,13 @@ function createSourceAnalysisFactAccess(
 function createSourceAnalysisFactResolver(
   factResolver: ExtensionFactResolver,
   scope: ExtensionCapabilityScope,
+  getVirtualDeclarationDocument: SourceAnalysisFactResolver["getVirtualDeclarationDocument"],
 ): SourceAnalysisFactResolver {
   const resolver: SourceAnalysisFactResolver = {
+    getVirtualDeclarationDocument(name) {
+      assertExtensionCapabilityActive(scope);
+      return getVirtualDeclarationDocument(name);
+    },
     resolve<T>(
       subject: ExtensionFactSubject,
       key: ExtensionFactKey<T>,
