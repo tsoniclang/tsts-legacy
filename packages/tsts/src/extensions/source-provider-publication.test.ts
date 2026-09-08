@@ -369,14 +369,17 @@ test("canonical provider owner files remain hidden from public source traversal"
         identity: { id: "test.provider-document-analysis", version: "1" },
         analyzeSource(context) {
           retainedResolver = context.factResolver;
-          for (const sourceFile of context.source.getSourceFiles()) {
-            const identity = context.facts.get(sourceFile, providerVirtualDeclarationFactKey);
-            if (identity === undefined) continue;
-            analyzedDocument = context.factResolver.getVirtualDeclarationDocument(identity.artifactFileName);
-            assert.ok(analyzedDocument);
-            assert.equal(context.factResolver.getVirtualDeclarationDocument(analyzedDocument.uri), analyzedDocument);
-            assert.ok(Object.isFrozen(analyzedDocument.declarationModel));
-          }
+          const sourceFile = context.source.getSourceFile("/src/index.ts");
+          const queries = context.source.getSourceFileQueries(sourceFile);
+          const statement = queries.ast.as.AsVariableStatement(queries.ast.statements(sourceFile)[1]);
+          const variables = queries.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
+          const type = queries.checker.getTypeFromTypeNode(Node_Type(variables?.[0]));
+          const identity = context.facts.get(queries.checker.getTypeSymbol(type), providerVirtualDeclarationFactKey);
+          assert.ok(identity);
+          analyzedDocument = context.factResolver.getVirtualDeclarationDocument(identity.artifactFileName);
+          assert.ok(analyzedDocument);
+          assert.equal(context.factResolver.getVirtualDeclarationDocument(analyzedDocument.uri), analyzedDocument);
+          assert.ok(Object.isFrozen(analyzedDocument.declarationModel));
           assert.equal(context.factResolver.getVirtualDeclarationDocument("missing-owner"), undefined);
         },
       }],
