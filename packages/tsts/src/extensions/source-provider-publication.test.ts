@@ -408,7 +408,7 @@ test("canonical provider owner files remain hidden from public source traversal"
   const document = checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName);
   assert.equal(document?.artifactKind, "canonical-export-owner");
   assert.equal(analyzedDocument, document);
-  assert.throws(() => retainedResolver!.getVirtualDeclarationDocument(identity.artifactFileName), /active|revoked|expired/i);
+  assert.throws(() => retainedResolver!.getVirtualDeclarationDocument(identity.artifactFileName), /cannot be used outside their host-owned callback/);
   assert.equal(document?.declarationModel.exports[0]?.id, "PublicClass");
   assert.ok(Object.isFrozen(document));
   assert.equal(checked.sourceFacts.getVirtualDeclarationDocument(identity.artifactFileName), document);
