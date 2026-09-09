@@ -32,8 +32,11 @@ import {
 } from "../internal/checker/checker/symbols.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import {
+  getBigIntLiteralValue,
+  getNumberLiteralValue,
   signatureHasRestParameter,
 } from "../internal/checker/checker/state.js";
+import { PseudoBigInt_String } from "../internal/jsnum/pseudobigint.js";
 import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import {
   Checker_GetConstantValue,
@@ -50,12 +53,14 @@ import {
   SignatureKindConstruct,
   TypeFlagsAny,
   TypeFlagsBigIntLike,
+  TypeFlagsBigIntLiteral,
   TypeFlagsBooleanLike,
   TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
   TypeFlagsNull,
   TypeFlagsNumberLike,
+  TypeFlagsNumberLiteral,
   TypeFlagsStringLike,
   TypeFlagsSubstitution,
   TypeFlagsUnion,
@@ -117,6 +122,7 @@ export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
+  readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
@@ -167,6 +173,11 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
     getConstantValue: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetConstantValue(checker, node)),
+    getNumericLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
+      if (hasFlags(type, TypeFlagsNumberLiteral)) return getNumberLiteralValue(type);
+      if (hasFlags(type, TypeFlagsBigIntLiteral)) return BigInt(PseudoBigInt_String(getBigIntLiteralValue(type)));
+      return undefined;
+    }),
     isAny: (type) => hasFlags(type, TypeFlagsAny),
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
