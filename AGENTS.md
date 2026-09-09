@@ -1,7 +1,8 @@
 # Agent Notes (TSTS Legacy)
 
-The canonical workspace policy in `../AGENTS.md` applies. This file contains
-only legacy-TSTS TS-Go fidelity, compiler-state, and verification rules.
+Read and follow `../tsonic/docs/architecture/workspace-agent-policy.md` before
+any work. This file contains only legacy-TSTS TS-Go fidelity, compiler-state,
+and verification rules.
 
 ## TS-Go Contract
 
