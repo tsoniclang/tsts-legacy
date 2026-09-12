@@ -136,3 +136,66 @@ a fresh program from the enlarged provider snapshot, and publishes only the
 stable checked revision. Providers do not infer demand from member names or
 source text, and targets do not replay checking. Providers declaring
 `declarationMaterialization: "complete"` retain the one-model contract.
+
+## Target AST Encoding
+
+Targets encode their lowered TS-Go AST through `@tsonic/tsts/target-ast`.
+The existing encoder accepts an optional complete resource-limit record:
+
+```ts
+import {
+  defaultTargetAstEncodingLimits,
+  encodeTargetSourceFileForPrinting,
+  type TargetAstEncodingLimits,
+} from "@tsonic/tsts/target-ast";
+
+const limits: TargetAstEncodingLimits = {
+  ...defaultTargetAstEncodingLimits,
+  maximumNodeRows: 4_194_304,
+  maximumEncodedBytes: 128 * 1024 * 1024,
+};
+const payload = encodeTargetSourceFileForPrinting(loweredSourceFile, limits);
+```
+
+Here `loweredSourceFile` is the target-owned transformed `SourceFile`. The
+numbers illustrate a finite selection, not a measured production requirement.
+Omitting the second argument, or passing `undefined`, uses the unchanged
+frozen defaults. A supplied record must contain all eight fields; spread the
+defaults to select the remaining limits deliberately. There is one encoder,
+and limits do not change its output bytes.
+
+| Limit | Default | Supported ceiling |
+| --- | --- | --- |
+| `maximumNodeRows` | 2,097,152 | 153,391,689 rows; each row occupies 28 bytes |
+| `maximumDepth` | 1,024 | 1,024; bounds the current recursive traversal |
+| `maximumStringCount` | 1,048,576 | 8,388,608 strings; each uses two offset-table entries |
+| `maximumStringBytes` | 256 MiB | 4 GiB minus one byte |
+| `maximumSingleStringBytes` | 64 MiB | The selected `maximumStringBytes` |
+| `maximumExtendedWords` | 4,194,304 | 4,194,304 words, or 16 MiB, within the wire offset range |
+| `maximumStructuredBytes` | 16 MiB | 4 GiB minus one byte |
+| `maximumEncodedBytes` | 512 MiB | 4 GiB minus one byte, including the 44-byte header |
+
+Limits must be positive safe integers supplied as own enumerable data fields.
+Missing/unknown fields, accessors, nonfinite values and inconsistent string
+limits are rejected. Selection is copied into an immutable per-call snapshot;
+neither caller mutation nor an earlier failed call changes another call's
+budget. A failure throws `TargetAstEncodingError` and returns no payload.
+
+Rows include the sentinel row, source-file root, node-list rows and required
+protocol completion nodes. Strings are counted per encoded occurrence, in
+UTF-8 bytes, including source text, file names and paths. Each string also
+charges eight offset-table bytes. Extended words and structured metadata
+charge their own sizes. These charges count toward the encoded-byte limit
+before growing the corresponding retained tables. Cycle, actual wire-value
+and final encoded-length checks remain independent.
+
+The ceilings need not all be reachable at once: the encoded-byte limit can
+reject before any individual table reaches its ceiling. Increasing node
+capacity does not widen the fixed string-index or extended-offset wire fields.
+This is a wire-capacity budget, not a heap/RSS bound; the input AST and
+serialization buffers still require an external process memory guard.
+
+Consumers own their printer-frame and batch limits. Measure the complete
+returned payload and enforce those limits before publication. A first rejected
+reservation is not the complete AST size, and an adequate node limit alone
+does not establish that the complete frame fits.

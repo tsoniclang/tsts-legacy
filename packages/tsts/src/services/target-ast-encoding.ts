@@ -51,6 +51,7 @@ import {
   TargetAstResourceBudget,
   TargetAstResourceLimitError,
 } from "./target-ast-resource-budget.js";
+import type { TargetAstEncodingLimits } from "./target-ast-resource-budget.js";
 
 const noStructuredData = 0xffff_ffff;
 
@@ -66,9 +67,12 @@ export class TargetAstEncodingError extends Error {
   }
 }
 
-export function encodeTargetSourceFileForPrinting(sourceFile: SourceFile): Uint8Array {
+export function encodeTargetSourceFileForPrinting(
+  sourceFile: SourceFile,
+  limits: TargetAstEncodingLimits = defaultTargetAstEncodingLimits,
+): Uint8Array {
   try {
-    return new TargetAstEncoder().encode(sourceFile);
+    return new TargetAstEncoder(limits).encode(sourceFile);
   } catch (error) {
     if (error instanceof TargetAstResourceLimitError) {
       throw new TargetAstEncodingError(error.message);
@@ -90,8 +94,8 @@ class TargetAstEncoder {
   #parentIndex = 0;
   #previousIndex = 0;
 
-  constructor() {
-    this.#budget = new TargetAstResourceBudget(defaultTargetAstEncodingLimits);
+  constructor(limits: TargetAstEncodingLimits) {
+    this.#budget = new TargetAstResourceBudget(limits);
     this.#budget.reserveNodeRows(1);
     this.#strings = new StringTable(this.#budget);
     const factory = NewNodeFactory({});
