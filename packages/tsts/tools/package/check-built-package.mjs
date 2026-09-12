@@ -147,6 +147,13 @@ function verifyInstalledPackage(root, tarballPath) {
   const proofPath = join(root, "default-library-proof.mjs");
   writeFileSync(proofPath, `
 import { createCompilerSessionFromFiles, formatDiagnostics } from "@tsonic/tsts";
+import assert from "node:assert/strict";
+import {
+  AsSourceFile,
+  defaultTargetAstEncodingLimits,
+  encodeTargetSourceFileForPrinting,
+  TargetAstEncodingError,
+} from "@tsonic/tsts/target-ast";
 
 const session = createCompilerSessionFromFiles({
   currentDirectory: "/project",
@@ -170,6 +177,16 @@ if (!checked.sourceFiles.some((sourceFile) => checked.ast.getFileName(sourceFile
   throw new Error("The isolated packed compiler did not load its bundled default library.");
 }
 console.log("isolated packed default-library proof passed");
+const sourceNode = checked.sourceFiles.find((sourceFile) => checked.ast.getFileName(sourceFile) === "/project/index.ts");
+const sourceFile = AsSourceFile(sourceNode);
+assert.ok(sourceFile);
+const encoded = encodeTargetSourceFileForPrinting(sourceFile);
+const limits = { ...defaultTargetAstEncodingLimits, maximumEncodedBytes: encoded.length };
+assert.deepEqual(encodeTargetSourceFileForPrinting(sourceFile, limits), encoded);
+assert.throws(() => encodeTargetSourceFileForPrinting(sourceFile, {
+  ...limits, maximumEncodedBytes: encoded.length - 1,
+}), TargetAstEncodingError);
+console.log("isolated packed target AST budget proof passed");
 `);
   const proof = spawnSync(process.execPath, [proofPath], { cwd: root, encoding: "utf8" });
   if (proof.status !== 0 || proof.signal !== null) {
