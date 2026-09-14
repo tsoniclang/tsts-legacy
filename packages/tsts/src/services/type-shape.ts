@@ -63,6 +63,7 @@ import {
   TypeFlagsNull,
   TypeFlagsNumberLike,
   TypeFlagsNumberLiteral,
+  TypeFlagsObject,
   TypeFlagsStringLike,
   TypeFlagsSubstitution,
   TypeFlagsUnion,
@@ -230,7 +231,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     getTypeReferenceTarget: (type) => Type_Target(type),
     getTypeArguments: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetTypeArguments(checker, type)) ?? [],
     getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
-      if (type === undefined || checker === undefined) return undefined;
+      if (type === undefined || checker === undefined || !hasFlags(type, TypeFlagsObject)) return undefined;
       const target = Type_Target(type) ?? type;
       if ((target.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
       const definition = Type_AsInterfaceType(target);

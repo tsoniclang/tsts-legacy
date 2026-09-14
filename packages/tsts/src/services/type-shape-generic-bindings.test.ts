@@ -61,3 +61,45 @@ const tuple: [number, string] = [1, "one"];
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(tupleType), undefined);
   assert.equal(source.typeShape.getTupleElementTypes(tupleType).length, 2);
 });
+
+test("type-reference argument queries reject non-reference kinds without object-only access", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `
+const numeric = 7;
+const text = "value";
+const wide = 9007199254740993n;
+const truth = true;
+const absent = undefined;
+const empty = null;
+const callable = (value: number): number => value;
+declare const opaque: unknown;
+declare const impossible: never;
+declare const union: number | string;
+declare const intersection: { left: number } & { right: string };
+function identity<T>(parameter: T): T { return parameter; }
+`,
+    },
+    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
+  });
+  const checked = session.checkSource();
+  assert.deepEqual(checked.diagnostics.map(diagnostic => diagnostic?.code), []);
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file !== undefined);
+  const source = checked.getSourceFileQueries(file);
+  const variables = findNodes(file, source.ast.children, source.ast.is.IsVariableDeclaration);
+  assert.equal(variables.length, 11);
+  for (const variable of variables) {
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    assert.ok(type !== undefined);
+    assert.equal(source.typeShape.getTypeReferenceArgumentInfos(type), undefined);
+  }
+  const parameters = findNodes(file, source.ast.children, source.ast.is.IsParameterDeclaration);
+  const parameter = parameters.find(node => source.ast.text(source.ast.name(node)) === "parameter");
+  assert.ok(parameter !== undefined);
+  const parameterType = source.checker.getTypeAtLocation(source.ast.name(parameter));
+  assert.ok(parameterType !== undefined);
+  assert.equal(source.typeShape.getTypeReferenceArgumentInfos(parameterType), undefined);
+});
