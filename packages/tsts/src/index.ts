@@ -165,6 +165,7 @@ export type {
   TypeShapeQueries,
   TypeTupleElementInfo,
 } from "./services/type-shape.js";
+export type { TypeAliasApplicationInfo } from "./services/type-applications.js";
 export type { Node, SourceFile } from "./internal/ast/ast.js";
 export type { Symbol } from "./internal/ast/symbol.js";
 export type { ContextFlags, Signature, Type } from "./internal/checker/types.js";
