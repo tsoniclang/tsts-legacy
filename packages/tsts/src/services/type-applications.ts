@@ -25,10 +25,12 @@ export interface TypeAliasConditionalStep {
     readonly declarations: readonly Node[];
     readonly parameter: Type;
     readonly argument: Type;
+    readonly applicationParameter?: Type;
   }[];
 }
 
 export interface TypeAliasApplicationInfo {
+  readonly kind: "direct" | "conditional";
   readonly declaration: Node;
   readonly typeNode: Node;
   readonly bindings: readonly {
@@ -80,9 +82,10 @@ export function resolveTypeAliasApplication(
   }
   const result = Checker_instantiateType(checker, template, mapper);
   if (result === undefined || result === checker.errorType) return undefined;
-  const conditionalSteps = captureConditionalApplication(checker, template, mapper, result);
+  const conditionalSteps = captureConditionalApplication(checker, template, mapper, result, sourceParameters);
   if (conditionalSteps === undefined) return undefined;
   return Object.freeze({
+    kind: (template.flags & TypeFlagsConditional) === 0 ? "direct" : "conditional",
     declaration,
     typeNode,
     bindings: Object.freeze(parameters.map((parameter, index) => Object.freeze({
@@ -98,6 +101,7 @@ function captureConditionalApplication(
   template: Type,
   mapper: GoPtr<TypeMapper>,
   result: Type,
+  sourceParameters: readonly Type[],
 ): readonly TypeAliasConditionalStep[] | undefined {
   if ((template.flags & TypeFlagsConditional) === 0) return Object.freeze([]);
   const conditional = Type_AsConditionalType(template);
@@ -118,7 +122,10 @@ function captureConditionalApplication(
       }
       const argument = Checker_instantiateType(checker, parameter, step.mapper);
       if (argument === undefined || argument === checker.errorType || argument.checker !== checker) return undefined;
+      const origin = Checker_instantiateType(checker, parameter, conditional.mapper);
+      const applicationParameter = sourceParameters.find(candidate => candidate === origin);
       bindings.push(Object.freeze({ parameter, argument,
+        ...(applicationParameter === undefined ? {} : { applicationParameter }),
         declarations: Object.freeze([...declarations] as Node[]) }));
     }
     const selectedType = step.selectedNode === undefined ? undefined : Checker_instantiateType(checker,

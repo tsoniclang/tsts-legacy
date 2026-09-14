@@ -21,6 +21,7 @@ export type Pair<T, S> = [T, S];
 export type Constant = number;
 export type Preserve<T> = T extends object ? number : T;
 export type Replace<T> = T extends object ? T : number;
+export type Relayed<Value> = Preserve<Value>;
 export type Tail<T> = T extends Stored<infer S> ? S : T extends string ? boolean : T;
 `,
       "/src/index.ts": `
@@ -162,6 +163,10 @@ test("conditional application provenance distinguishes equal checker results wit
     assert.equal(Object.isFrozen(step.bindings), true);
     assert.equal(Object.isFrozen(step.bindings[0]?.declarations), true);
   }
+  const relayed = source.typeShape.instantiateTypeAlias(alias(definitions, "Relayed"), [scalar]);
+  assert.ok(relayed);
+  assert.equal(relayed.kind, "conditional");
+  assert.equal(relayed.conditionalSteps[0]?.bindings[0]?.applicationParameter, relayed.bindings[0]?.parameter);
 });
 
 test("conditional application provenance retains inferred bindings, distribution and tail selections", () => {
