@@ -1,26 +1,43 @@
 import type { GoPtr } from "../go/compat.js";
 import { Node_Name, Node_Type, Node_TypeParameters } from "../internal/ast/ast.js";
 import type { Node } from "../internal/ast/ast.js";
-import { IsTypeAliasDeclaration } from "../internal/ast/generated/predicates.js";
+import { IsTypeAliasDeclaration, IsTypeParameterDeclaration } from "../internal/ast/generated/predicates.js";
 import { AsTypeParameterDeclaration } from "../internal/ast/generated/casts.js";
 import { GetSourceFileOfNode } from "../internal/ast/utilities.js";
 import { Checker_GetDeclaredTypeOfSymbol, Checker_GetTypeFromTypeNode } from "../internal/checker/exports.js";
 import { Checker_GetSymbolAtLocation } from "../internal/checker/checker/symbols.js";
 import { Checker_instantiateType } from "../internal/checker/checker/types.js";
-import { newTypeMapper } from "../internal/checker/mapper.js";
-import { Checker_isTypeAssignableTo } from "../internal/checker/relater.js";
+import { Checker_combineTypeMappers, newTypeMapper } from "../internal/checker/mapper.js";
+import type { TypeMapper } from "../internal/checker/mapper.js";
+import { Checker_isTypeAssignableTo, Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
+import { createExtensionConditionalCapture } from "../internal/checker/checker/conditional-evidence.js";
+import { Checker_getConditionalTypeInstantiationWithCapture } from "../internal/checker/checker/inference.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import type { Type } from "../internal/checker/types.js";
-import { TypeFlagsTypeParameter } from "../internal/checker/types.js";
+import { Type_AsConditionalType, TypeFlagsConditional, TypeFlagsTypeParameter } from "../internal/checker/types.js";
+
+export interface TypeAliasConditionalStep {
+  readonly conditional: Node;
+  readonly branch: "true" | "false" | "deferred";
+  readonly selectedNode?: Node;
+  readonly selectedType?: Type;
+  readonly bindings: readonly {
+    readonly declarations: readonly Node[];
+    readonly parameter: Type;
+    readonly argument: Type;
+  }[];
+}
 
 export interface TypeAliasApplicationInfo {
   readonly declaration: Node;
+  readonly typeNode: Node;
   readonly bindings: readonly {
     readonly declaration: Node;
     readonly parameter: Type;
     readonly argument: Type;
   }[];
   readonly result: Type;
+  readonly conditionalSteps: readonly TypeAliasConditionalStep[];
 }
 
 export function resolveTypeAliasApplication(
@@ -39,7 +56,7 @@ export function resolveTypeAliasApplication(
   }
   const sourceFile = GetSourceFileOfNode(declaration);
   if (checker === undefined || sourceFile === undefined || !checker.fileIndexMap.has(sourceFile) ||
-    arguments_.some(argument => argument.checker !== checker)) return undefined;
+    arguments_.some(argument => argument.checker !== checker || argument === checker.errorType)) return undefined;
   const typeNode = Node_Type(declaration);
   if (typeNode === undefined) return undefined;
   const sourceParameters: Type[] = [];
@@ -63,11 +80,56 @@ export function resolveTypeAliasApplication(
   }
   const result = Checker_instantiateType(checker, template, mapper);
   if (result === undefined || result === checker.errorType) return undefined;
+  const conditionalSteps = captureConditionalApplication(checker, template, mapper, result);
+  if (conditionalSteps === undefined) return undefined;
   return Object.freeze({
     declaration,
+    typeNode,
     bindings: Object.freeze(parameters.map((parameter, index) => Object.freeze({
       declaration: parameter!, parameter: sourceParameters[index]!, argument: arguments_[index]!,
     }))),
     result,
+    conditionalSteps,
   });
+}
+
+function captureConditionalApplication(
+  checker: Checker,
+  template: Type,
+  mapper: GoPtr<TypeMapper>,
+  result: Type,
+): readonly TypeAliasConditionalStep[] | undefined {
+  if ((template.flags & TypeFlagsConditional) === 0) return Object.freeze([]);
+  const conditional = Type_AsConditionalType(template);
+  if (conditional?.root === undefined) return undefined;
+  const capture = createExtensionConditionalCapture();
+  const selected = Checker_getConditionalTypeInstantiationWithCapture(checker, template,
+    Checker_combineTypeMappers(checker, conditional.mapper, mapper), false, undefined, capture);
+  if (!capture.complete || selected === undefined || selected === checker.errorType ||
+    !Checker_isTypeIdenticalTo(checker, result, selected)) return undefined;
+  const steps: TypeAliasConditionalStep[] = [];
+  for (const step of capture.steps) {
+    const bindings: TypeAliasConditionalStep["bindings"][number][] = [];
+    for (const parameter of step.parameters) {
+      const declarations = parameter.symbol?.Declarations;
+      if (declarations === undefined || declarations.length === 0 ||
+        declarations.some(declaration => declaration === undefined || !IsTypeParameterDeclaration(declaration))) {
+        return undefined;
+      }
+      const argument = Checker_instantiateType(checker, parameter, step.mapper);
+      if (argument === undefined || argument === checker.errorType || argument.checker !== checker) return undefined;
+      bindings.push(Object.freeze({ parameter, argument,
+        declarations: Object.freeze([...declarations] as Node[]) }));
+    }
+    const selectedType = step.selectedNode === undefined ? undefined : Checker_instantiateType(checker,
+      Checker_GetTypeFromTypeNode(checker, step.selectedNode), step.mapper);
+    if (step.selectedNode !== undefined && (selectedType === undefined || selectedType === checker.errorType)) {
+      return undefined;
+    }
+    steps.push(Object.freeze({ conditional: step.conditional, branch: step.branch,
+      ...(step.selectedNode === undefined ? {} : { selectedNode: step.selectedNode }),
+      ...(selectedType === undefined ? {} : { selectedType }),
+      bindings: Object.freeze(bindings) }));
+  }
+  return Object.freeze(steps);
 }

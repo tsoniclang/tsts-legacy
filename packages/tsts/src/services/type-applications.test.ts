@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import { createExtensionConditionalCapture } from "../internal/checker/checker/conditional-evidence.js";
+import { Type_AsConditionalType } from "../internal/checker/types.js";
 
 function applicationSource() {
   const checked = createCompilerSessionFromFiles({
@@ -17,6 +19,9 @@ export type Constrained<T extends { value: number }> = T["value"];
 export type Second<T, S extends T> = S;
 export type Pair<T, S> = [T, S];
 export type Constant = number;
+export type Preserve<T> = T extends object ? number : T;
+export type Replace<T> = T extends object ? T : number;
+export type Tail<T> = T extends Stored<infer S> ? S : T extends string ? boolean : T;
 `,
       "/src/index.ts": `
 import type { Stored } from "./storage.js";
@@ -28,6 +33,8 @@ export type Unrelated = { other: string };
 export type Narrow = 7;
 export type Optional = Wrapped | undefined;
 export type Open<T> = T;
+export type Empty = never;
+export type Broad = any;
 `,
     },
     compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
@@ -54,6 +61,35 @@ function aliasType(source: SourceFileQueries, name: string): Type {
   assert.ok(type, name);
   return type;
 }
+
+test("conditional evidence accounting rejects oversized captures without changing normal checking", () => {
+  const { source, definitions } = applicationSource();
+  const template = aliasType(definitions, "Storage");
+  const root = Type_AsConditionalType(template)?.root;
+  assert.ok(root);
+  const capture = createExtensionConditionalCapture();
+  for (let index = 0; index < 1_024; index += 1) {
+    capture.record(root, "deferred", undefined, undefined);
+  }
+  assert.equal(capture.complete, true);
+  assert.equal(capture.steps.length, 1_024);
+  assert.equal(Object.isFrozen(capture.steps), true);
+  capture.record(root, "deferred", undefined, undefined);
+  assert.equal(capture.complete, false);
+  capture.record(root, "deferred", undefined, undefined);
+  assert.equal(capture.steps.length, 1_024);
+  const parameter = root.outerTypeParameters[0];
+  assert.ok(parameter);
+  const oversized = createExtensionConditionalCapture();
+  oversized.record({ ...root, outerTypeParameters: Array(8_193).fill(parameter) },
+    "deferred", undefined, undefined);
+  assert.equal(oversized.complete, false);
+  assert.equal(oversized.steps.length, 0);
+  const ordinary = source.typeShape.instantiateTypeAlias(alias(definitions, "Storage"),
+    [aliasType(source, "Scalar")]);
+  assert.ok(ordinary);
+  assert.equal(source.typeShape.isNumberLike(ordinary.result), true);
+});
 
 test("alias applications preserve conditional inference, identity and cross-file ownership", () => {
   const { source, definitions } = applicationSource();
@@ -101,6 +137,62 @@ test("alias applications preserve conditional inference, identity and cross-file
   const constant = source.typeShape.instantiateTypeAlias(alias(definitions, "Constant"), []);
   assert.ok(constant);
   assert.equal(source.typeShape.isNumberLike(constant.result), true);
+});
+
+test("conditional application provenance distinguishes equal checker results with different source types", () => {
+  const { source, definitions } = applicationSource();
+  const scalar = aliasType(source, "Scalar");
+  for (const name of ["Preserve", "Replace"] as const) {
+    const declaration = alias(definitions, name);
+    const first = source.typeShape.instantiateTypeAlias(declaration, [scalar]);
+    const cached = source.typeShape.instantiateTypeAlias(declaration, [scalar]);
+    assert.ok(first && cached);
+    assert.equal(first.result, scalar);
+    assert.equal(cached.result, first.result);
+    assert.equal(first.conditionalSteps.length, 1);
+    const step = first.conditionalSteps[0]!;
+    assert.equal(step.branch, "false");
+    assert.ok(step.selectedNode);
+    assert.equal(source.ast.is.IsTypeReferenceNode(step.selectedNode), name === "Preserve");
+    assert.equal(step.selectedType, scalar);
+    assert.equal(step.bindings[0]?.argument, scalar);
+    assert.equal(cached.conditionalSteps[0]?.selectedNode, step.selectedNode);
+    assert.equal(Object.isFrozen(first.conditionalSteps), true);
+    assert.equal(Object.isFrozen(step), true);
+    assert.equal(Object.isFrozen(step.bindings), true);
+    assert.equal(Object.isFrozen(step.bindings[0]?.declarations), true);
+  }
+});
+
+test("conditional application provenance retains inferred bindings, distribution and tail selections", () => {
+  const { source, definitions } = applicationSource();
+  const declaration = alias(definitions, "Storage");
+  const wrapped = source.typeShape.instantiateTypeAlias(declaration, [aliasType(source, "Wrapped")]);
+  assert.ok(wrapped);
+  const selected = wrapped.conditionalSteps[0]!;
+  assert.equal(selected.branch, "true");
+  const inferred = selected.bindings.find(binding => binding.declarations.some(node =>
+    source.ast.text(source.ast.name(node)) === "S"));
+  assert.ok(inferred);
+  assert.equal(source.typeShape.isTypeIdenticalTo(inferred.argument, wrapped.result), true);
+  const optional = source.typeShape.instantiateTypeAlias(declaration, [aliasType(source, "Optional")]);
+  assert.ok(optional);
+  assert.deepEqual(optional.conditionalSteps.map(step => step.branch).sort(), ["false", "true"]);
+  const open = source.typeShape.instantiateTypeAlias(declaration, [aliasType(source, "Open")]);
+  assert.ok(open);
+  assert.deepEqual(open.conditionalSteps.map(step => step.branch), ["deferred"]);
+  assert.equal(open.conditionalSteps[0]?.selectedNode, undefined);
+  const empty = source.typeShape.instantiateTypeAlias(declaration, [aliasType(source, "Empty")]);
+  assert.ok(empty);
+  assert.equal(source.typeShape.isNever(empty.result), true);
+  assert.deepEqual(empty.conditionalSteps, []);
+  const broad = source.typeShape.instantiateTypeAlias(declaration, [aliasType(source, "Broad")]);
+  assert.ok(broad);
+  assert.deepEqual(broad.conditionalSteps.map(step => step.branch), ["true", "false"]);
+  const tail = source.typeShape.instantiateTypeAlias(alias(definitions, "Tail"), [aliasType(source, "Text")]);
+  assert.ok(tail);
+  assert.equal(source.typeShape.isBooleanLike(tail.result), true);
+  assert.deepEqual(tail.conditionalSteps.map(step => step.branch), ["false", "true"]);
 });
 
 test("alias applications preserve constraints and reject malformed or mixed-owner selections", () => {
