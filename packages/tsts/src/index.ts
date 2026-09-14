@@ -159,6 +159,7 @@ export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, I
 export type {
   TypeIndexInfo,
   TypePropertyInfo,
+  TypeReferenceArgumentInfo,
   TypeSignatureParameterInfo,
   TypeSignatureThisParameterInfo,
   TypeShapeQueries,

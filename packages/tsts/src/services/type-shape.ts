@@ -49,6 +49,7 @@ import {
   ElementFlagsRest,
   ElementFlagsVariadic,
   ObjectFlagsReference,
+  ObjectFlagsClassOrInterface,
   SignatureKindCall,
   SignatureKindConstruct,
   TypeFlagsAny,
@@ -71,6 +72,8 @@ import {
   Type_Target,
   Type_TargetTupleType,
   Type_AsSubstitutionType,
+  Type_AsInterfaceType,
+  InterfaceType_TypeParameters,
   Type_Types,
   Signature_ThisParameter,
 } from "../internal/checker/types.js";
@@ -83,6 +86,12 @@ export interface TypeIndexInfo {
   readonly declaration: GoPtr<Node>;
   readonly symbol: GoPtr<Symbol>;
   readonly components: readonly GoPtr<Node>[];
+}
+
+export interface TypeReferenceArgumentInfo {
+  readonly parameter: Type;
+  readonly argument: Type;
+  readonly scope: "outer" | "local";
 }
 
 export interface TypePropertyInfo {
@@ -146,6 +155,7 @@ export interface TypeShapeQueries {
   readonly getUnionOrIntersectionTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
+  readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
   readonly getSubstitutionBaseType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTupleElementTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTupleElementInfos: (type: GoPtr<Type>) => readonly TypeTupleElementInfo[];
@@ -213,6 +223,27 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     getUnionOrIntersectionTypes: (type) => Type_Types(type) ?? [],
     getTypeReferenceTarget: (type) => Type_Target(type),
     getTypeArguments: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetTypeArguments(checker, type)) ?? [],
+    getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
+      if (type === undefined || checker === undefined) return undefined;
+      const target = Type_Target(type) ?? type;
+      if ((target.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
+      const definition = Type_AsInterfaceType(target);
+      if (definition === undefined) return undefined;
+      const parameters = InterfaceType_TypeParameters(definition);
+      const arguments_ = Checker_GetTypeArguments(checker, type);
+      if (!Number.isSafeInteger(definition.outerTypeParameterCount) ||
+        definition.outerTypeParameterCount < 0 || definition.outerTypeParameterCount > parameters.length ||
+        arguments_.length < parameters.length ||
+        arguments_.length > parameters.length + (definition.thisType === undefined ? 0 : 1)) return undefined;
+      const result: TypeReferenceArgumentInfo[] = [];
+      for (const [index, parameter] of parameters.entries()) {
+        const argument = arguments_[index];
+        if (parameter === undefined || argument === undefined) return undefined;
+        result.push(Object.freeze({ parameter, argument,
+          scope: index < definition.outerTypeParameterCount ? "outer" : "local" }));
+      }
+      return Object.freeze(result);
+    }),
     getSubstitutionBaseType: (type) => hasFlags(type, TypeFlagsSubstitution)
       ? Type_AsSubstitutionType(type)?.baseType
       : undefined,
