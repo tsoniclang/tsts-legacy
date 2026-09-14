@@ -19,6 +19,11 @@ function make<T>(input: T) {
 }
 const text = make("text");
 const numeric = make(8);
+class Plain { value: number = 1; }
+const plain = new Plain();
+interface Value { value: number; }
+const record: Value = { value: 1 };
+const tuple: [number, string] = [1, "one"];
 `,
     },
     compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
@@ -44,4 +49,15 @@ const numeric = make(8);
     assert.equal(bindings.every(Object.isFrozen), true);
   }
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(undefined), undefined);
+  for (const name of ["plain", "record"]) {
+    const variable = variables.find(node => source.ast.text(source.ast.name(node)) === name);
+    assert.ok(variable !== undefined);
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    assert.deepEqual(source.typeShape.getTypeReferenceArgumentInfos(type), []);
+  }
+  const tuple = variables.find(node => source.ast.text(source.ast.name(node)) === "tuple");
+  assert.ok(tuple !== undefined);
+  const tupleType = source.checker.getTypeAtLocation(source.ast.name(tuple));
+  assert.equal(source.typeShape.getTypeReferenceArgumentInfos(tupleType), undefined);
+  assert.equal(source.typeShape.getTupleElementTypes(tupleType).length, 2);
 });

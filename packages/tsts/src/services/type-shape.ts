@@ -230,6 +230,11 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       const definition = Type_AsInterfaceType(target);
       if (definition === undefined) return undefined;
       const parameters = InterfaceType_TypeParameters(definition);
+      if ((type.objectFlags & ObjectFlagsReference) === 0) {
+        return parameters.length === 0 && definition.outerTypeParameterCount === 0
+          ? Object.freeze([])
+          : undefined;
+      }
       const arguments_ = Checker_GetTypeArguments(checker, type);
       if (!Number.isSafeInteger(definition.outerTypeParameterCount) ||
         definition.outerTypeParameterCount < 0 || definition.outerTypeParameterCount > parameters.length ||
