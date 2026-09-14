@@ -1,5 +1,6 @@
 import type { GoPtr } from "../go/compat.js";
-import { Node_Name, Node_Type, Node_TypeParameters } from "../internal/ast/ast.js";
+import { Node_Type, Node_TypeParameters } from "../internal/ast/ast.js";
+import { Node_Name } from "../internal/ast/spine.js";
 import type { Node } from "../internal/ast/ast.js";
 import { IsTypeAliasDeclaration, IsTypeParameterDeclaration } from "../internal/ast/generated/predicates.js";
 import { AsTypeParameterDeclaration } from "../internal/ast/generated/casts.js";
@@ -64,7 +65,7 @@ export function resolveTypeAliasApplication(
   const sourceParameters: Type[] = [];
   for (const parameter of parameters) {
     const symbol = Checker_GetSymbolAtLocation(checker, Node_Name(parameter));
-    const type = symbol === undefined ? undefined : Checker_GetDeclaredTypeOfSymbol(checker, symbol);
+    const type: GoPtr<Type> = symbol === undefined ? undefined : Checker_GetDeclaredTypeOfSymbol(checker, symbol);
     if (type === undefined || type.checker !== checker || (type.flags & TypeFlagsTypeParameter) === 0 ||
       sourceParameters.includes(type)) return undefined;
     sourceParameters.push(type);
