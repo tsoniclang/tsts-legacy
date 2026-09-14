@@ -74,6 +74,11 @@ test("alias applications preserve conditional inference, identity and cross-file
   assert.equal(Object.isFrozen(record), true);
   assert.equal(Object.isFrozen(record.bindings), true);
   assert.equal(record.bindings.every(Object.isFrozen), true);
+  const supplied = [wrapped];
+  const retained = source.typeShape.instantiateTypeAlias(storage, supplied);
+  assert.ok(retained);
+  supplied[0] = scalar;
+  assert.equal(retained.bindings[0]?.argument, wrapped);
   const repeated = source.typeShape.instantiateTypeAlias(storage, [wrapped]);
   assert.ok(repeated);
   assert.equal(source.typeShape.isTypeIdenticalTo(record.result, repeated.result), true);
@@ -110,6 +115,13 @@ test("alias applications preserve constraints and reject malformed or mixed-owne
   assert.equal(source.typeShape.instantiateTypeAlias(source.sourceFile, []), undefined);
   assert.equal(source.typeShape.instantiateTypeAlias(undefined, []), undefined);
   assert.equal(source.typeShape.instantiateTypeAlias(constrained, new Array<Type>(1)), undefined);
+  const wrongArity = new Proxy([valid.result, valid.result], {
+    get(target, key, receiver) {
+      assert.notEqual(key, "0", "invalid arity must be rejected before reading arguments");
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.equal(source.typeShape.instantiateTypeAlias(constrained, wrongArity), undefined);
   const second = alias(definitions, "Second");
   const selected = source.typeShape.instantiateTypeAlias(second, [aliasType(source, "Scalar"), aliasType(source, "Narrow")]);
   assert.ok(selected);

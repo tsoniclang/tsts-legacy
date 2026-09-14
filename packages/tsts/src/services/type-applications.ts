@@ -28,11 +28,15 @@ export function resolveTypeAliasApplication(
   declaration: GoPtr<Node>,
   arguments_: readonly Type[],
 ): TypeAliasApplicationInfo | undefined {
-  if (declaration === undefined || !IsTypeAliasDeclaration(declaration) ||
-    !Array.isArray(arguments_) ||
-    Array.from(arguments_).some(argument => argument === undefined || argument === null)) return undefined;
+  if (declaration === undefined || !IsTypeAliasDeclaration(declaration) || !Array.isArray(arguments_)) return undefined;
   const parameters = Node_TypeParameters(declaration) ?? [];
-  if (parameters.length !== arguments_.length || parameters.some(parameter => parameter === undefined)) return undefined;
+  if (parameters.length !== arguments_.length) return undefined;
+  for (const parameter of parameters) {
+    if (parameter === undefined) return undefined;
+  }
+  for (const argument of arguments_) {
+    if (argument === undefined || argument === null) return undefined;
+  }
   const sourceFile = GetSourceFileOfNode(declaration);
   if (checker === undefined || sourceFile === undefined || !checker.fileIndexMap.has(sourceFile) ||
     arguments_.some(argument => argument.checker !== checker)) return undefined;
