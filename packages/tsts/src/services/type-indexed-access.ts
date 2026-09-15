@@ -2,7 +2,7 @@ import type { GoPtr } from "../go/compat.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import type { Type } from "../internal/checker/types.js";
 import {
-  AccessFlagsNone, AccessFlagsWriting, TypeFlagsIndexedAccess, TypeFlagsUnion,
+  AccessFlagsNone, AccessFlagsWriting, TypeFlagsIndexedAccess, TypeFlagsNever, TypeFlagsUnion,
   Type_AsIndexedAccessType, Type_Types,
 } from "../internal/checker/types.js";
 import {
@@ -58,6 +58,10 @@ export function selectTypeIndexedAccess(
   if (readType === undefined || writeType === undefined || readType === checker.errorType || writeType === checker.errorType) return undefined;
   if ((readType.flags & TypeFlagsIndexedAccess) !== 0 || (writeType.flags & TypeFlagsIndexedAccess) !== 0) {
     return Object.freeze({ kind: "deferred", objectType, indexType, readType, writeType });
+  }
+  if ((indexType.flags & TypeFlagsNever) !== 0 && (readType.flags & TypeFlagsNever) !== 0 &&
+    (writeType.flags & TypeFlagsNever) !== 0) {
+    return Object.freeze({ kind: "resolved", objectType, indexType, readType, writeType, members: Object.freeze([]) });
   }
   const keys = (indexType.flags & TypeFlagsUnion) === 0 ? [indexType] : Type_Types(indexType);
   const apparent = Checker_getReducedApparentType(checker, objectType);

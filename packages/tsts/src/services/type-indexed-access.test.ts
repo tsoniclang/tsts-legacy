@@ -30,6 +30,7 @@ export type MissingKey = "missing";
 export type ZeroKey = 0;
 export type OneKey = 1;
 export type StringKey = string;
+export type NeverKey = never;
 export type NumberValue = number;
 export type StringValue = string;
 export type NumberOrString = number | string;
@@ -73,7 +74,8 @@ test("indexed type selections retain inherited member identities and optional re
   assert.equal(member.kind, "property");
   if (member.kind !== "property") return;
   assert.equal(member.property.name, "value");
-  const inherited = findNodes(models.sourceFile, models.ast.children, models.ast.is.IsPropertySignature)
+  const inherited = findNodes(models.sourceFile, models.ast.children,
+    node => models.ast.kindName(node) === "KindPropertySignature")
     .find(node => models.ast.text(models.ast.name(node)) === "value");
   assert.ok(inherited);
   assert.ok(member.property.rootSymbols.some(symbol => source.checker.getSymbolDeclarations(symbol).includes(inherited)));
@@ -131,6 +133,15 @@ test("deferred indexed types expose exact components without fabricating concret
   assert.ok(result?.kind === "deferred");
   assert.equal(result.readType, open);
   assert.equal(source.typeShape.getIndexedAccessComponents(alias(source, "NumberValue")), undefined);
+});
+
+test("an empty key domain preserves the checker's never result without inventing a member", () => {
+  const {source} = fixture();
+  const result = selected(source, "RecordValue", "NeverKey");
+  assert.equal(source.typeShape.isNever(result.readType), true);
+  assert.equal(source.typeShape.isNever(result.writeType), true);
+  assert.deepEqual(result.members, []);
+  assert.ok(Object.isFrozen(result.members));
 });
 
 test("indexed selections reject foreign types and publish immutable complete rows", () => {
