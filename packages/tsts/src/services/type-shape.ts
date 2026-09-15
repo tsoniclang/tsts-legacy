@@ -1,4 +1,5 @@
 import type { GoPtr } from "../go/compat.js";
+import { typeIndexComponents } from "./type-index-components.js";
 import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
@@ -304,7 +305,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
         readonly: info?.isReadonly === true,
         declaration: info?.declaration,
         symbol: info?.indexSymbol,
-        components: info?.components ?? [],
+        components: typeIndexComponents(checker, type, info),
       } satisfies TypeIndexInfo))) ?? [],
     getApparentType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetApparentType(checker, type)),
     getWidenedType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetWidenedType(checker, type)),
