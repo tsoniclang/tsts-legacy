@@ -23,9 +23,10 @@ export type Preserve<T> = T extends object ? number : T;
 export type Replace<T> = T extends object ? T : number;
 export type Relayed<Value> = Preserve<Value>;
 export type Tail<T> = T extends Stored<infer S> ? S : T extends string ? boolean : T;
+export type Default<T = string> = T[];
 `,
       "/src/index.ts": `
-import type { Stored } from "./storage.js";
+import type { Stored, Storage, Default } from "./storage.js";
 export type Text = string;
 export type Scalar = number;
 export type Wrapped = Stored<{ value: number }>;
@@ -36,6 +37,8 @@ export type Optional = Wrapped | undefined;
 export type Open<T> = T;
 export type Empty = never;
 export type Broad = any;
+export function read<T>(value: Storage<T>): Storage<T> { return value; }
+export function defaulted(value: Default): Default { return value; }
 `,
     },
     compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
@@ -62,6 +65,61 @@ function aliasType(source: SourceFileQueries, name: string): Type {
   assert.ok(type, name);
   return type;
 }
+
+function functionParameterType(source: SourceFileQueries, name: string): Type {
+  const declaration = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsFunctionDeclaration)
+    .find(candidate => source.ast.text(source.ast.name(candidate)) === name);
+  assert.ok(declaration);
+  const parameter = source.ast.parameters(declaration)[0];
+  assert.ok(parameter);
+  const typeNode = source.ast.typeNode(parameter);
+  assert.ok(typeNode);
+  const type = source.typeShape.getTypeFromTypeNode(typeNode);
+  assert.ok(type);
+  return type;
+}
+
+test("retained alias applications expose inferred conditional arguments without type-reference syntax", () => {
+  const { source, definitions } = applicationSource();
+  const type = functionParameterType(source, "read");
+  assert.deepEqual(source.typeShape.getTypeArguments(type), []);
+  const selected = source.typeShape.getTypeAliasApplication(type);
+  assert.ok(selected);
+  assert.equal(selected.kind, "conditional");
+  assert.equal(selected.declaration, alias(definitions, "Storage"));
+  assert.equal(selected.result, type);
+  assert.equal(selected.bindings.length, 1);
+  assert.equal(selected.conditionalSteps[0]?.branch, "deferred");
+  assert.equal(source.checker.getSymbolName(source.checker.getTypeSymbol(selected.bindings[0]?.argument)), "T");
+  assert.equal(Object.isFrozen(selected), true);
+  assert.equal(Object.isFrozen(selected.bindings), true);
+  assert.equal(selected.bindings.every(Object.isFrozen), true);
+  assert.equal(selected.conditionalSteps.every(Object.isFrozen), true);
+  for (const queries of [source, definitions]) {
+    const repeated = queries.typeShape.getTypeAliasApplication(type);
+    assert.ok(repeated);
+    assert.equal(repeated.result, type);
+    assert.equal(repeated.bindings[0]?.argument, selected.bindings[0]?.argument);
+  }
+  const defaulted = source.typeShape.getTypeAliasApplication(functionParameterType(source, "defaulted"));
+  assert.ok(defaulted);
+  assert.equal(defaulted.declaration, alias(definitions, "Default"));
+  assert.equal(source.typeShape.isStringLike(defaulted.bindings[0]?.argument), true);
+});
+
+test("alias result queries reject foreign programs and do not invent erased provenance", () => {
+  const { source, definitions } = applicationSource();
+  const foreign = applicationSource();
+  const local = functionParameterType(source, "read");
+  assert.equal(foreign.source.typeShape.getTypeAliasApplication(local), undefined);
+  assert.equal(source.typeShape.getTypeAliasApplication(functionParameterType(foreign.source, "read")), undefined);
+  assert.equal(source.typeShape.getTypeAliasApplication(undefined), undefined);
+  const scalar = aliasType(source, "Scalar");
+  const application = source.typeShape.instantiateTypeAlias(alias(definitions, "Preserve"), [scalar]);
+  assert.ok(application);
+  assert.equal(application.result, scalar);
+  assert.equal(source.typeShape.getTypeAliasApplication(scalar), undefined);
+});
 
 test("conditional evidence accounting rejects oversized captures without changing normal checking", () => {
   const { source, definitions } = applicationSource();

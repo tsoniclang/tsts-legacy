@@ -1,5 +1,5 @@
 import type { GoPtr } from "../go/compat.js";
-import { resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
+import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import { SymbolName } from "../internal/ast/symbol.js";
@@ -133,6 +133,7 @@ export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
+  readonly getTypeAliasApplication: (type: GoPtr<Type>) => TypeAliasApplicationInfo | undefined;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
@@ -188,6 +189,10 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
+    ),
+    getTypeAliasApplication: (type) => withCheckerForSourceFile(
+      program, defaultOptions.sourceFile, defaultOptions,
+      checker => readTypeAliasApplication(checker, type),
     ),
     getConstantValue: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetConstantValue(checker, node)),
     getNumericLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {

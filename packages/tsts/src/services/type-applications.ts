@@ -44,6 +44,26 @@ export interface TypeAliasApplicationInfo {
   readonly conditionalSteps: readonly TypeAliasConditionalStep[];
 }
 
+export function readTypeAliasApplication(
+  queryChecker: GoPtr<Checker>,
+  type: GoPtr<Type>,
+): TypeAliasApplicationInfo | undefined {
+  if (queryChecker === undefined || type?.checker === undefined || type.alias === undefined) return undefined;
+  const checker = type.checker;
+  if (checker !== queryChecker) {
+    const owner = getExtensionHost(queryChecker.program);
+    if (owner === undefined || getExtensionHost(checker.program) !== owner) return undefined;
+  }
+  const declarations = type.alias.symbol?.Declarations;
+  const declaration = declarations?.[0];
+  if (declarations?.length !== 1 || declaration === undefined || !IsTypeAliasDeclaration(declaration)) return undefined;
+  const arguments_ = type.alias.typeArguments ?? [];
+  if (arguments_.some(argument => argument === undefined)) return undefined;
+  const application = resolveTypeAliasApplication(checker, declaration, arguments_ as readonly Type[]);
+  if (application === undefined || !Checker_isTypeIdenticalTo(checker, application.result, type)) return undefined;
+  return Object.freeze({ ...application, result: type });
+}
+
 export function resolveTypeAliasApplication(
   queryChecker: GoPtr<Checker>,
   declaration: GoPtr<Node>,
