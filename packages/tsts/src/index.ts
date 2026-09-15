@@ -166,6 +166,7 @@ export type {
   TypeTupleElementInfo,
 } from "./services/type-shape.js";
 export type { TypeAliasApplicationInfo, TypeAliasConditionalStep } from "./services/type-applications.js";
+export type { TypeIndexedAccessComponents, TypeIndexedAccessMember, TypeIndexedAccessSelection } from "./services/type-indexed-access.js";
 export type { Node, SourceFile } from "./internal/ast/ast.js";
 export type { Symbol } from "./internal/ast/symbol.js";
 export type { ContextFlags, Signature, Type } from "./internal/checker/types.js";
