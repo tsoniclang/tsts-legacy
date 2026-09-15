@@ -16,6 +16,7 @@ import { Checker_getConditionalTypeInstantiationWithCapture } from "../internal/
 import type { Checker } from "../internal/checker/checker/state.js";
 import type { Type } from "../internal/checker/types.js";
 import { Type_AsConditionalType, TypeFlagsConditional, TypeFlagsTypeParameter } from "../internal/checker/types.js";
+import { getExtensionHost } from "../extensions/host.js";
 
 export interface TypeAliasConditionalStep {
   readonly conditional: Node;
@@ -44,7 +45,7 @@ export interface TypeAliasApplicationInfo {
 }
 
 export function resolveTypeAliasApplication(
-  checker: GoPtr<Checker>,
+  queryChecker: GoPtr<Checker>,
   declaration: GoPtr<Node>,
   arguments_: readonly Type[],
 ): TypeAliasApplicationInfo | undefined {
@@ -58,7 +59,14 @@ export function resolveTypeAliasApplication(
     if (argument === undefined || argument === null) return undefined;
   }
   const sourceFile = GetSourceFileOfNode(declaration);
-  if (checker === undefined || sourceFile === undefined || !checker.fileIndexMap.has(sourceFile) ||
+  if (queryChecker === undefined || sourceFile === undefined || !queryChecker.fileIndexMap.has(sourceFile)) return undefined;
+  const argumentChecker = arguments_[0]?.checker;
+  if (argumentChecker !== undefined && argumentChecker !== queryChecker) {
+    const owner = getExtensionHost(queryChecker.program);
+    if (owner === undefined || getExtensionHost(argumentChecker.program) !== owner) return undefined;
+  }
+  const checker = argumentChecker ?? queryChecker;
+  if (!checker.fileIndexMap.has(sourceFile) ||
     arguments_.some(argument => argument.checker !== checker || argument === checker.errorType)) return undefined;
   const typeNode = Node_Type(declaration);
   if (typeNode === undefined) return undefined;

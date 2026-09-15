@@ -230,3 +230,24 @@ test("alias applications preserve constraints and reject malformed or mixed-owne
   assert.equal(source.typeShape.instantiateTypeAlias(alias(definitions, "Pair"),
     [aliasType(source, "Scalar"), aliasType(foreign.source, "Text")]), undefined);
 });
+
+test("alias queries preserve retained argument ownership across files in one checked program", () => {
+  const { source, definitions } = applicationSource();
+  const declaration = alias(definitions, "Storage");
+  const scalar = aliasType(source, "Scalar");
+  const local = aliasType(definitions, "Constant");
+  assert.notEqual(scalar.checker, local.checker);
+  for (const queries of [source, definitions]) {
+    for (const argument of [scalar, local]) {
+      const application = queries.typeShape.instantiateTypeAlias(declaration, [argument]);
+      assert.ok(application);
+      assert.equal(application.bindings[0]?.argument, argument);
+      assert.equal(application.result.checker, argument.checker);
+      assert.equal(queries.typeShape.isNumberLike(application.result), true);
+    }
+  }
+  const foreign = applicationSource();
+  assert.equal(definitions.typeShape.instantiateTypeAlias(declaration, [aliasType(foreign.source, "Scalar")]), undefined);
+  assert.equal(source.typeShape.instantiateTypeAlias(alias(foreign.definitions, "Storage"), [scalar]), undefined);
+  assert.equal(source.typeShape.instantiateTypeAlias(alias(definitions, "Pair"), [scalar, local]), undefined);
+});
