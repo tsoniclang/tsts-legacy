@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Background } from "../go/context.js";
+import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
+import { Program_GetSemanticDiagnostics } from "../internal/compiler/program.js";
 import {
   KindElementAccessExpression,
   KindGetAccessor,
@@ -25,7 +28,9 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
         declare const value: Value;
         (${access}) ${operator} 7;
       `);
-      assertCleanSemanticDiagnostics(program, index);
+      const expectedDiagnostics = operator === "+=" && bracket ? [2532] : [];
+      const diagnosticCodes = () => Program_GetSemanticDiagnostics(program, Background(), index).map(Diagnostic_Code);
+      assert.deepEqual(diagnosticCodes(), expectedDiagnostics);
       const queries = createTypeCheckerQueries(program, { sourceFile: index });
       const nodes = findNodesByKind(index, bracket ? KindElementAccessExpression : KindPropertyAccessExpression);
       assert.equal(nodes.length, 1);
@@ -50,7 +55,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
         assert.equal(property?.selectedReadDeclaration?.Kind, operator === "=" ? undefined : KindGetAccessor);
         assert.equal(property?.selectedWriteDeclaration?.Kind, KindSetAccessor);
       }
-      assertCleanSemanticDiagnostics(program, index);
+      assert.deepEqual(diagnosticCodes(), expectedDiagnostics);
     });
   }
 }

@@ -24,6 +24,7 @@ export type Replace<T> = T extends object ? T : number;
 export type Relayed<Value> = Preserve<Value>;
 export type Tail<T> = T extends Stored<infer S> ? S : T extends string ? boolean : T;
 export type Default<T = string> = T[];
+export type DependentDefault<T = string, Next = T[]> = { first: T; next: Next };
 `,
       "/src/index.ts": `
 import type { Stored, Storage, Default } from "./storage.js";
@@ -119,6 +120,32 @@ test("alias result queries reject foreign programs and do not invent erased prov
   assert.ok(application);
   assert.equal(application.result, scalar);
   assert.equal(source.typeShape.getTypeAliasApplication(scalar), undefined);
+});
+
+test("default alias arguments retain dependent substitutions and exact supplied arity", () => {
+  const { source, definitions } = applicationSource();
+  const declaration = alias(definitions, "DependentDefault");
+  const omitted = source.typeShape.instantiateTypeAlias(declaration, []);
+  assert.ok(omitted);
+  assert.equal(omitted.bindings.length, 2);
+  assert.equal(source.typeShape.isStringLike(omitted.bindings[0]?.argument), true);
+  const omittedElements = source.typeShape.getTypeArguments(omitted.bindings[1]?.argument);
+  assert.equal(omittedElements.length, 1);
+  assert.equal(source.typeShape.isStringLike(omittedElements[0]), true);
+  const scalar = aliasType(source, "Scalar");
+  const partial = source.typeShape.instantiateTypeAlias(declaration, [scalar]);
+  assert.ok(partial);
+  assert.ok(partial.bindings[0]?.argument === scalar);
+  const partialElements = source.typeShape.getTypeArguments(partial.bindings[1]?.argument);
+  assert.equal(partialElements.length, 1);
+  assert.ok(partialElements[0] === scalar);
+  const text = aliasType(source, "Text");
+  const explicit = source.typeShape.instantiateTypeAlias(declaration, [scalar, text]);
+  assert.ok(explicit);
+  assert.ok(explicit.bindings[1]?.argument === text);
+  assert.ok(source.typeShape.instantiateTypeAlias(declaration, [scalar, text, text]) === undefined);
+  assert.ok(source.typeShape.instantiateTypeAlias(declaration, new Array<Type>(1)) === undefined);
+  assert.ok(Object.isFrozen(partial.bindings) && partial.bindings.every(Object.isFrozen));
 });
 
 test("conditional evidence accounting rejects oversized captures without changing normal checking", () => {

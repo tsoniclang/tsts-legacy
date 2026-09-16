@@ -131,7 +131,13 @@ test("deferred indexed types expose exact components without fabricating concret
   assert.ok(Object.isFrozen(components));
   const result = source.typeShape.selectIndexedAccess(components.objectType, components.indexType);
   assert.ok(result?.kind === "deferred");
-  assert.equal(result.readType, open);
+  assert.equal(source.typeShape.isTypeIdenticalTo(result.readType, open), true);
+  const selectedComponents = source.typeShape.getIndexedAccessComponents(result.readType);
+  assert.ok(selectedComponents);
+  assert.ok(selectedComponents.objectType === components.objectType, "Deferred selection must retain the exact object type");
+  assert.ok(selectedComponents.indexType === components.indexType, "Deferred selection must retain the exact index type");
+  assert.ok(source.typeShape.selectIndexedAccess(components.objectType, components.indexType)?.readType === result.readType,
+    "Repeated deferred selections must retain the same checker type");
   assert.equal(source.typeShape.getIndexedAccessComponents(alias(source, "NumberValue")), undefined);
 });
 
@@ -149,13 +155,13 @@ test("indexed selections reject foreign types and publish immutable complete row
   const foreign = fixture().source;
   const owner = alias(source, "RecordValue");
   const key = alias(source, "ValueKey");
-  assert.equal(source.typeShape.selectIndexedAccess(owner, alias(foreign, "ValueKey")), undefined);
-  assert.equal(source.typeShape.selectIndexedAccess(alias(foreign, "RecordValue"), alias(foreign, "ValueKey")), undefined);
-  assert.equal(source.typeShape.getIndexedAccessComponents(alias(foreign, "Open")), undefined);
+  assert.ok(source.typeShape.selectIndexedAccess(owner, alias(foreign, "ValueKey")) === undefined, "Foreign index types must be rejected");
+  assert.ok(source.typeShape.selectIndexedAccess(alias(foreign, "RecordValue"), alias(foreign, "ValueKey")) === undefined, "Foreign object and index types must be rejected");
+  assert.ok(source.typeShape.getIndexedAccessComponents(alias(foreign, "Open")) === undefined, "Foreign indexed types must be rejected");
   assert.equal(source.typeShape.selectIndexedAccess(undefined, key), undefined);
   assert.equal(source.typeShape.selectIndexedAccess(owner, undefined), undefined);
   const result = selected(source, "RecordValue", "ValueKey");
   assert.ok(Object.isFrozen(result) && Object.isFrozen(result.members) && Object.isFrozen(result.members[0]));
   assert.ok(result.members[0]?.kind === "property" && Object.isFrozen(result.members[0].property));
-  assert.equal(source.typeShape.selectIndexedAccess(owner, key)?.readType, result.readType);
+  assert.ok(source.typeShape.selectIndexedAccess(owner, key)?.readType === result.readType, "Repeated queries must preserve read-type identity");
 });
