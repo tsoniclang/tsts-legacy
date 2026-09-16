@@ -69,7 +69,7 @@ import { AnyToString } from "../../evaluator/evaluator.js";
 import type { ResolvedModule } from "../../module/types.js";
 import { IsExternalModuleNameRelative } from "../../tspath/path.js";
 import type { TypeMapper } from "../mapper.js";
-import type { ExtensionConditionalCapture } from "./conditional-evidence.js";
+import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
 import { TypeMapper_Map, appendTypeMapping, Checker_combineTypeMappers, newSimpleTypeMapper, prependTypeMapping } from "../mapper.js";
 import { Checker_createNormalizedTupleTypeEx, Checker_createTypeReferenceEx, Checker_addDiagnostic } from "../checker.js";
 import type { AccessFlags, ConditionalRoot, ContextFlags, ElementFlags, IndexInfo, NodeLinks, ObjectFlags, Signature, StructuredType, TupleElementInfo, Type, TypeAlias, TypeComparer, TypeData, TypeFlags, TypeNodeLinks, ConstrainedType, ObjectType, TypeReference, InterfaceType, UnionOrIntersectionType, IntrinsicType, LiteralType, UnionType, IntersectionType, TemplateLiteralType, MappedType, ReverseMappedType, EvolvingArrayType, InstantiationExpressionType, TupleType, ConditionalType, ExportTypeLinks, DeclaredTypeLinks } from "../types.js";

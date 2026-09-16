@@ -11,7 +11,7 @@ import { Checker_instantiateType } from "../internal/checker/checker/types.js";
 import { Checker_combineTypeMappers, newTypeMapper } from "../internal/checker/mapper.js";
 import type { TypeMapper } from "../internal/checker/mapper.js";
 import { Checker_isTypeAssignableTo, Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
-import { createExtensionConditionalCapture } from "../internal/checker/checker/conditional-evidence.js";
+import { createExtensionConditionalCapture } from "../extensions/conditional-type-evidence.js";
 import { Checker_getConditionalTypeInstantiationWithCapture } from "../internal/checker/checker/inference.js";
 import { Checker_fillMissingTypeArguments, Checker_getMinTypeArgumentCount } from "../internal/checker/checker/signatures.js";
 import type { Checker } from "../internal/checker/checker/state.js";

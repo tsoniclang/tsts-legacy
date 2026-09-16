@@ -19,7 +19,7 @@ import { Checker_symbolToString, Checker_TypeToString } from "../printer.js";
 import { All_declarations_of_0_must_have_identical_constraints, Type_parameter_0_has_a_circular_constraint, Circularity_originates_in_type_at_this_location, Property_0_of_type_1_is_not_assignable_to_2_index_type_3, X_0_is_declared_here, X_infer_declarations_are_only_permitted_in_the_extends_clause_of_a_conditional_type, Type_0_has_no_signatures_for_which_the_type_argument_list_is_applicable } from "../../diagnostics/generated/messages.js";
 import { Checker_combineTypeMappers, prependTypeMapping, newTypeMapper, TypeMapper_Map } from "../mapper.js";
 import type { TypeMapper } from "../mapper.js";
-import type { ExtensionConditionalCapture } from "./conditional-evidence.js";
+import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
 import { Checker_getConditionalTypeWithCapture } from "./types.js";
 import { Checker_isMemberOfStringMapping, Checker_isTypeMatchedByTemplateLiteralType, getRecursionIdentity } from "../relater.js";
 import type { RecursionId } from "../relater.js";

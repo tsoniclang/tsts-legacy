@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
-import { createExtensionConditionalCapture } from "../internal/checker/checker/conditional-evidence.js";
+import { createExtensionConditionalCapture } from "../extensions/conditional-type-evidence.js";
 import { Type_AsConditionalType } from "../internal/checker/types.js";
 
 function applicationSource() {
