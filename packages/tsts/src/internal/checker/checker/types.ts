@@ -69,6 +69,7 @@ import { AnyToString } from "../../evaluator/evaluator.js";
 import type { ResolvedModule } from "../../module/types.js";
 import { IsExternalModuleNameRelative } from "../../tspath/path.js";
 import type { TypeMapper } from "../mapper.js";
+import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
 import { TypeMapper_Map, appendTypeMapping, Checker_combineTypeMappers, newSimpleTypeMapper, prependTypeMapping } from "../mapper.js";
 import { Checker_createNormalizedTupleTypeEx, Checker_createTypeReferenceEx, Checker_addDiagnostic } from "../checker.js";
 import type { AccessFlags, ConditionalRoot, ContextFlags, ElementFlags, IndexInfo, NodeLinks, ObjectFlags, Signature, StructuredType, TupleElementInfo, Type, TypeAlias, TypeComparer, TypeData, TypeFlags, TypeNodeLinks, ConstrainedType, ObjectType, TypeReference, InterfaceType, UnionOrIntersectionType, IntrinsicType, LiteralType, UnionType, IntersectionType, TemplateLiteralType, MappedType, ReverseMappedType, EvolvingArrayType, InstantiationExpressionType, TupleType, ConditionalType, ExportTypeLinks, DeclaredTypeLinks } from "../types.js";
@@ -9591,6 +9592,7 @@ export function Checker_getTypeFromConditionalTypeNode(receiver: GoPtr<Checker>,
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getConditionalType","kind":"method","status":"implemented","sigHash":"d50653c4663f396a2282f172098515c6e4820dfb760b0e6fd67b8aa329f4d70a","bodyHash":"0411b47fdc5ca799887f1017dc6d54a330d6db3b87576fe4bca6775f78ba2eda"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Delegates to the same conditional branch worker with an absent capture. Explicit alias-application queries retain bounded branch and mapper provenance without a global observer or checker-state side table."}
  *
  * Go source:
  * func (c *Checker) getConditionalType(root *ConditionalRoot, mapper *TypeMapper, forConstraint bool, alias *TypeAlias) *Type {
@@ -9740,6 +9742,10 @@ export function Checker_getTypeFromConditionalTypeNode(receiver: GoPtr<Checker>,
  * }
  */
 export function Checker_getConditionalType(receiver: GoPtr<Checker>, root: GoPtr<ConditionalRoot>, mapper: GoPtr<TypeMapper>, forConstraint: bool, alias: GoPtr<TypeAlias>): GoPtr<Type> {
+  return Checker_getConditionalTypeWithCapture(receiver, root, mapper, forConstraint, alias, undefined);
+}
+
+export function Checker_getConditionalTypeWithCapture(receiver: GoPtr<Checker>, root: GoPtr<ConditionalRoot>, mapper: GoPtr<TypeMapper>, forConstraint: bool, alias: GoPtr<TypeAlias>, capture: ExtensionConditionalCapture | undefined): GoPtr<Type> {
   let result: GoPtr<Type> = undefined;
   let extraTypes: GoSlice<GoPtr<Type>> = [];
   let tailCount = 0;
@@ -9791,8 +9797,10 @@ export function Checker_getConditionalType(receiver: GoPtr<Checker>, root: GoPtr
               Checker_isTypeAssignableTo(receiver, t, Checker_getPermissiveInstantiation(receiver, checkType)),
             ))
         ) {
+          capture?.record(root, "true", rootNode.TrueType, core.OrElse(combinedMapper, mapper));
           extraTypes = [...(extraTypes ?? []), Checker_instantiateType(receiver, Checker_getTypeFromTypeNode(receiver, rootNode.TrueType), core.OrElse(combinedMapper, mapper))];
         }
+        capture?.record(root, "false", rootNode.FalseType, mapper);
         const falseType = Checker_getTypeFromTypeNode(receiver, rootNode.FalseType);
         if ((falseType!.flags & TypeFlagsConditional) !== 0) {
           const newRoot = Type_AsConditionalType(falseType)!.root;
@@ -9820,6 +9828,7 @@ export function Checker_getConditionalType(receiver: GoPtr<Checker>, root: GoPtr
       ) {
         const trueType = Checker_getTypeFromTypeNode(receiver, rootNode.TrueType);
         const trueMapper = core.OrElse(combinedMapper, mapper);
+        capture?.record(root, "true", rootNode.TrueType, trueMapper);
         const [tailRoot, tailMapper] = Checker_getTailRecursionRoot(receiver, trueType, trueMapper);
         if (tailRoot !== undefined) {
           root = tailRoot;
@@ -9834,6 +9843,7 @@ export function Checker_getConditionalType(receiver: GoPtr<Checker>, root: GoPtr
         break;
       }
     }
+    capture?.record(root, "deferred", undefined, mapper);
     result = Checker_newConditionalType(receiver, root, mapper, combinedMapper);
     if (alias !== undefined) {
       result!.alias = alias;

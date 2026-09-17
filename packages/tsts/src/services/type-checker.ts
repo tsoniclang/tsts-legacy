@@ -122,6 +122,7 @@ export type ResolvedSourceCallInfo = ResolvedCallEvidence;
 export interface ResolvedSourceReceiverValueEvidence {
   readonly valueSymbol?: Symbol;
   readonly valueDeclaration?: Node;
+  readonly intrinsic?: "global-object";
 }
 
 export type ResolvedSourcePropertyAccessInfo = CheckerResolvedSourcePropertyAccessInfo & {
@@ -593,7 +594,7 @@ function withResolvedSourceReceiverValueEvidence<
   }
   const sourceSymbol = getDiagnosticFreeResolvedSymbol(
     checker,
-    selected.receiver.expression,
+    SkipOuterExpressions(selected.receiver.expression, (OEKAssertions | OEKParentheses) as OuterExpressionKinds),
   );
   const valueSymbol = sourceSymbol !== undefined &&
       (sourceSymbol.Flags & SymbolFlagsAlias) !== 0
@@ -607,6 +608,7 @@ function withResolvedSourceReceiverValueEvidence<
     receiver: Object.freeze({
       ...selected.receiver,
       valueSymbol,
+      ...(valueSymbol === checker.globalThisSymbol ? { intrinsic: "global-object" as const } : {}),
       ...(valueSymbol.ValueDeclaration === undefined
         ? {}
         : { valueDeclaration: valueSymbol.ValueDeclaration }),

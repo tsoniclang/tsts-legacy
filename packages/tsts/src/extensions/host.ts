@@ -7878,6 +7878,9 @@ function hasValidProviderValueHeritageReferences(declaration: ProviderExportDecl
 }
 
 function hasValidProviderValueHeritageReference(type: ProviderTypeExpression, context: ProviderDeclarationValidationContext): boolean {
+  if (type.kind === "source-global") {
+    return true;
+  }
   if (type.kind !== "provider-ref") {
     return false;
   }

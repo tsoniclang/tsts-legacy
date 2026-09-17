@@ -86,6 +86,33 @@ test("property selection uses the selected symbol with distinct read and write t
   assertCleanSemanticDiagnostics(program, index);
 });
 
+test("receiver evidence identifies the intrinsic global object without spelling inference", () => {
+  const { program, index } = createProgram(`
+    const direct = globalThis.Number;
+    const parenthesized = (globalThis).Number;
+    const element = globalThis["Number"];
+    function local(globalThis: { Number: number }): number { return globalThis.Number; }
+    const alias = globalThis;
+    const indirect = alias.Number;
+    export {};
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAccessExpression);
+  assert.equal(properties.length, 4);
+  const expected = ["global-object", "global-object", undefined, undefined];
+  for (const [index, node] of properties.entries()) {
+    const info = queries.getResolvedPropertyAccessInfo(node);
+    assert.equal(info?.receiver.intrinsic, expected[index]);
+    assert.equal(queries.getResolvedPropertyAccessInfo(node), info);
+    assert.ok(Object.isFrozen(info?.receiver));
+  }
+  const element = findNodesByKind(index, KindElementAccessExpression)[0];
+  const info = queries.getResolvedElementAccessInfo(element);
+  assert.equal(info?.receiver.intrinsic, "global-object");
+  assert.equal(queries.getResolvedElementAccessInfo(element), info);
+});
+
 test("property access info preserves compound read-write and optional-chain roles", () => {
   const { program, index } = createProgram(`
     class Counter {

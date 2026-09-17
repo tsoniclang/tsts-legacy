@@ -318,6 +318,50 @@ test("provider value heritage rejects non-class targets and wrong family arity",
   }
 });
 
+test("provider classes extend exact source-global constructors with checked inherited members", () => {
+  const specifier = "@test/global-derived.js";
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier: specifier,
+    providerModuleId: "Test.GlobalDerived",
+    exports: [{
+      id: "Derived", name: "Derived", kind: "class",
+      heritage: [{ kind: "extends", type: {
+        kind: "source-global", name: "GlobalBase", typeArguments: [{ kind: "number" }],
+      } }],
+    }],
+  };
+  for (const scenario of [{
+    global: "interface GlobalBase<T> { [index: number]: T; readonly length: number; } declare var GlobalBase: { new<T>(): GlobalBase<T>; };",
+    accepted: true,
+  }, {
+    global: "", accepted: false,
+  }, {
+    global: "interface GlobalBase<T> { value: T; }", accepted: false,
+  }, {
+    global: "declare var GlobalBase: number;", accepted: false,
+  }, {
+    global: "declare var GlobalBase: { new(): { value: string }; };", accepted: false,
+  }, {
+    global: "declare class GlobalBase<T> { [index: number]: T; readonly length: number; }", accepted: false,
+  }]) {
+    const session = createCompilerSessionFromFiles({
+      currentDirectory: "/src",
+      rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+      files: {
+        "/src/core.d.ts": `${testCoreDeclarations}\n${scenario.global}`,
+        "/src/index.ts": `import { Derived } from "${specifier}";
+          export function read(value: Derived): number { return value[0] + value.length; }`,
+      },
+      compilerOptions: { ...testNoLibCompilerOptions, strict: true },
+      extensionHostOptions: { extensions: [sourceProviderExtension(new Map([[specifier, model]]))] },
+    });
+    const checked = session.checkSource();
+    assert.equal(checked.extensionDiagnostics.length, 0);
+    assert.equal(checked.diagnostics.length === 0, scenario.accepted,
+      `${scenario.global}\n${checked.diagnostics.map(Diagnostic_String).join("\n")}`);
+  }
+});
+
 function assertProgramAccepts(
   models: ReadonlyMap<string, ProviderDeclarationModel>,
   moduleSpecifier: string,

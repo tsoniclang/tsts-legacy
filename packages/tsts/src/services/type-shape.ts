@@ -1,12 +1,14 @@
 import type { GoPtr } from "../go/compat.js";
+import { readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
+import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type-indexed-access.js";
+import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
+import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
-import { SymbolName } from "../internal/ast/symbol.js";
 import {
   CheckFlagsOptionalParameter,
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
-import { SymbolFlagsOptional } from "../internal/ast/symbolflags.js";
 import type { Program } from "../internal/compiler/program.js";
 import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
 import type { Context } from "../go/context.js";
@@ -20,7 +22,6 @@ import {
   Checker_GetSignaturesOfType,
   Checker_GetTypeArguments,
   Checker_GetTypeFromTypeNode,
-  Checker_GetTypeOfPropertyOfType,
   Checker_GetWidenedType,
   Checker_IsArrayLikeType,
   Checker_RemoveMissingOrUndefinedType,
@@ -28,7 +29,6 @@ import {
 } from "../internal/checker/exports.js";
 import {
   Checker_getTypeOfSymbol,
-  Checker_isReadonlySymbol,
 } from "../internal/checker/checker/symbols.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import {
@@ -40,7 +40,6 @@ import { PseudoBigInt_String } from "../internal/jsnum/pseudobigint.js";
 import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import {
   Checker_GetConstantValue,
-  Checker_GetRootSymbols,
 } from "../internal/checker/services.js";
 import { Checker_TypeToString } from "../internal/checker/printer.js";
 import type { Checker } from "../internal/checker/checker/state.js";
@@ -49,6 +48,7 @@ import {
   ElementFlagsRest,
   ElementFlagsVariadic,
   ObjectFlagsReference,
+  ObjectFlagsClassOrInterface,
   SignatureKindCall,
   SignatureKindConstruct,
   TypeFlagsAny,
@@ -61,6 +61,7 @@ import {
   TypeFlagsNull,
   TypeFlagsNumberLike,
   TypeFlagsNumberLiteral,
+  TypeFlagsObject,
   TypeFlagsStringLike,
   TypeFlagsSubstitution,
   TypeFlagsUnion,
@@ -71,6 +72,8 @@ import {
   Type_Target,
   Type_TargetTupleType,
   Type_AsSubstitutionType,
+  Type_AsInterfaceType,
+  InterfaceType_TypeParameters,
   Type_Types,
   Signature_ThisParameter,
 } from "../internal/checker/types.js";
@@ -83,6 +86,12 @@ export interface TypeIndexInfo {
   readonly declaration: GoPtr<Node>;
   readonly symbol: GoPtr<Symbol>;
   readonly components: readonly GoPtr<Node>[];
+}
+
+export interface TypeReferenceArgumentInfo {
+  readonly parameter: Type;
+  readonly argument: Type;
+  readonly scope: "outer" | "local";
 }
 
 export interface TypePropertyInfo {
@@ -121,6 +130,8 @@ export interface CreateTypeShapeQueriesOptions {
 export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
+  readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
+  readonly getTypeAliasApplication: (type: GoPtr<Type>) => TypeAliasApplicationInfo | undefined;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
@@ -146,6 +157,7 @@ export interface TypeShapeQueries {
   readonly getUnionOrIntersectionTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
+  readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
   readonly getSubstitutionBaseType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTupleElementTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTupleElementInfos: (type: GoPtr<Type>) => readonly TypeTupleElementInfo[];
@@ -160,6 +172,8 @@ export interface TypeShapeQueries {
   ) => TypeSignatureThisParameterInfo | undefined;
   readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
   readonly getIndexInfos: (type: GoPtr<Type>) => readonly TypeIndexInfo[];
+  readonly getIndexedAccessComponents: (type: GoPtr<Type>) => TypeIndexedAccessComponents | undefined;
+  readonly selectIndexedAccess: (objectType: GoPtr<Type>, indexType: GoPtr<Type>) => TypeIndexedAccessSelection | undefined;
   readonly getApparentType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getWidenedType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly removeMissingOrUndefined: (type: GoPtr<Type>) => GoPtr<Type>;
@@ -172,6 +186,22 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
+    instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(
+      program, declaration, defaultOptions,
+      checker => resolveTypeAliasApplication(checker, declaration, arguments_),
+    ),
+    getTypeAliasApplication: (type) => withCheckerForSourceFile(
+      program, defaultOptions.sourceFile, defaultOptions,
+      checker => readTypeAliasApplication(checker, type),
+    ),
+    getIndexedAccessComponents: (type) => withCheckerForSourceFile(
+      program, defaultOptions.sourceFile, defaultOptions,
+      checker => readTypeIndexedAccessComponents(checker, type),
+    ),
+    selectIndexedAccess: (objectType, indexType) => withCheckerForSourceFile(
+      program, defaultOptions.sourceFile, defaultOptions,
+      checker => selectTypeIndexedAccess(checker, objectType, indexType),
+    ),
     getConstantValue: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetConstantValue(checker, node)),
     getNumericLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
       if (hasFlags(type, TypeFlagsNumberLiteral)) return getNumberLiteralValue(type);
@@ -212,7 +242,36 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     ) === true,
     getUnionOrIntersectionTypes: (type) => Type_Types(type) ?? [],
     getTypeReferenceTarget: (type) => Type_Target(type),
-    getTypeArguments: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetTypeArguments(checker, type)) ?? [],
+    getTypeArguments: (type) => withCheckerForType(program, type, defaultOptions, (checker) =>
+      hasFlags(type, TypeFlagsObject) && type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0
+        ? Checker_GetTypeArguments(checker, type)
+        : []) ?? [],
+    getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
+      if (type === undefined || checker === undefined || !hasFlags(type, TypeFlagsObject)) return undefined;
+      const target = Type_Target(type) ?? type;
+      if ((target.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
+      const definition = Type_AsInterfaceType(target);
+      if (definition === undefined) return undefined;
+      const parameters = InterfaceType_TypeParameters(definition);
+      if ((type.objectFlags & ObjectFlagsReference) === 0) {
+        return parameters.length === 0 && definition.outerTypeParameterCount === 0
+          ? Object.freeze([])
+          : undefined;
+      }
+      const arguments_ = Checker_GetTypeArguments(checker, type);
+      if (!Number.isSafeInteger(definition.outerTypeParameterCount) ||
+        definition.outerTypeParameterCount < 0 || definition.outerTypeParameterCount > parameters.length ||
+        arguments_.length < parameters.length ||
+        arguments_.length > parameters.length + (definition.thisType === undefined ? 0 : 1)) return undefined;
+      const result: TypeReferenceArgumentInfo[] = [];
+      for (const [index, parameter] of parameters.entries()) {
+        const argument = arguments_[index];
+        if (parameter === undefined || argument === undefined) return undefined;
+        result.push(Object.freeze({ parameter, argument,
+          scope: index < definition.outerTypeParameterCount ? "outer" : "local" }));
+      }
+      return Object.freeze(result);
+    }),
     getSubstitutionBaseType: (type) => hasFlags(type, TypeFlagsSubstitution)
       ? Type_AsSubstitutionType(type)?.baseType
       : undefined,
@@ -250,14 +309,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     ),
     getReturnTypeOfSignature: (signature) => withCheckerForSignature(program, signature, defaultOptions, (checker) => Checker_GetReturnTypeOfSignature(checker, signature)),
     getIndexInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) =>
-      (Checker_GetIndexInfosOfType(checker, type) ?? []).map((info) => ({
-        keyType: info?.keyType,
-        valueType: info?.valueType,
-        readonly: info?.isReadonly === true,
-        declaration: info?.declaration,
-        symbol: info?.indexSymbol,
-        components: info?.components ?? [],
-      } satisfies TypeIndexInfo))) ?? [],
+      (Checker_GetIndexInfosOfType(checker, type) ?? []).map((info) => readTypeIndexInfo(checker, type, info))) ?? [],
     getApparentType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetApparentType(checker, type)),
     getWidenedType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetWidenedType(checker, type)),
     removeMissingOrUndefined: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_RemoveMissingOrUndefinedType(checker, type)),
@@ -277,34 +329,7 @@ function getTypePropertyInfos(
     throw new Error("The source type has no owning checker for property analysis.");
   }
   const properties = Checker_GetPropertiesOfType(checker, type) ?? [];
-  return properties.map((symbol) => {
-    if (symbol === undefined) {
-      throw new Error("The checker returned an absent property symbol for a source type.");
-    }
-    const name = SymbolName(symbol);
-    const propertyType = Checker_GetTypeOfPropertyOfType(
-      checker,
-      type,
-      symbol.Name,
-    );
-    if (propertyType === undefined) {
-      throw new Error(
-        `The checker returned property '${name}' without its effective source type.`,
-      );
-    }
-    return {
-      symbol,
-      rootSymbols: Object.freeze(
-        Checker_GetRootSymbols(checker, symbol).filter(
-          (root): root is Symbol => root !== undefined,
-        ),
-      ),
-      name,
-      type: propertyType,
-      optional: (symbol.Flags & SymbolFlagsOptional) !== 0,
-      readonly: Checker_isReadonlySymbol(checker, symbol) === true,
-    } satisfies TypePropertyInfo;
-  });
+  return properties.map((symbol) => readTypePropertyInfo(checker, type, symbol));
 }
 
 function getTypeTupleElementInfos(
