@@ -20,6 +20,7 @@ import {
   SourceFile_FileName,
 } from "../internal/ast/ast.js";
 import { Node_ForEachChild, Node_Name } from "../internal/ast/spine.js";
+import { GetSourceFileOfNode } from "../internal/ast/utilities.js";
 import { AsExportDeclaration, AsImportClause, AsNamespaceImport, AsQualifiedName, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindClassDeclaration,
@@ -948,6 +949,40 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
       "TSTS_SOURCE_SEMANTICS_0002",
     ],
   );
+});
+
+test("imported pointer storage retains canonical declaration identity and mutability", () => {
+  const { extended, program, index } = createProgram(`
+    import { addressOf } from "@example/native/lang.js";
+    import { fixed, mutable } from "./values.js";
+    import { fixed as reexportedFixed, mutable as reexportedMutable } from "./exports.js";
+    const first = addressOf(mutable);
+    const second = addressOf(reexportedMutable);
+    const invalid = addressOf(fixed);
+    const invalidAlias = addressOf(reexportedFixed);
+  `, new Map([
+    ["/src/values.ts", `import type { int } from "@example/native/types.js";
+      export const fixed: int = 7; export let mutable: int = 11;`],
+    ["/src/exports.ts", `export { fixed, mutable } from "./values.js";`],
+  ]));
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+  const facts = [0, 1, 2, 3].map(ordinal => extended.extensionHost.facts.get(
+    getCallExpression(index, "addressOf", ordinal), pointerOperationFactKey,
+  ));
+  const first = facts[0];
+  const second = facts[1];
+  assert.equal(first?.operation, "address-of");
+  assert.equal(second?.operation, "address-of");
+  assert.ok(first?.operation === "address-of" && second?.operation === "address-of");
+  assert.equal(first.storageDeclaration?.Kind, KindVariableDeclaration);
+  assert.equal(first.storageDeclaration, second.storageDeclaration);
+  assert.equal(first.storageSymbol, second.storageSymbol);
+  assert.equal(GetSourceFileOfNode(first.storageDeclaration), Program_GetSourceFile(program, "/src/values.ts"));
+  assert.equal(facts[2], undefined);
+  assert.equal(facts[3], undefined);
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode),
+    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"]);
 });
 
 test("source-semantics records opaque raw-pointer identity operations by declaration identity", () => {
