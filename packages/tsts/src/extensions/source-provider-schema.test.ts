@@ -232,7 +232,7 @@ test("declaration kinds reject fields that their rendered schema cannot represen
       type: { kind: "number" },
     },
   }, {
-    name: "function with members",
+    name: "function with unrenderable optional member",
     declaration: {
       id: "Value",
       name: "Value",
@@ -242,6 +242,7 @@ test("declaration kinds reject fields that their rendered schema cannot represen
         id: "Value::item",
         name: "item",
         kind: "property",
+        optional: true,
         type: { kind: "number" },
       }],
     },

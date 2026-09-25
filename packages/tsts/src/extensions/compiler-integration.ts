@@ -311,7 +311,8 @@ function recordProviderVirtualMemberFacts(
   evidence: readonly ExtensionEvidence[],
 ): void {
   const directExportDeclarations = (exportSymbol.Declarations ?? []).filter((node) =>
-    node !== undefined && providerExportDeclarationMatchesNode(declaration, node));
+    node !== undefined && (providerExportDeclarationMatchesNode(declaration, node)
+      || declaration.kind === "function" && node.Kind === KindModuleDeclaration));
   if (directExportDeclarations.length === 0) {
     throw new Error(`Provider virtual artifact '${virtualModule.fileName}' has no direct declaration for member-owning export identity '${declaration.id}'.`);
   }

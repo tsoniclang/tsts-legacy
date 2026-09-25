@@ -6306,7 +6306,8 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
   const declarationName = options.localName ?? declaration.name;
   const exportName = getProviderExportName(declaration);
   const isDefault = exportName === "default" || declaration.exportKind === "default";
-  const canInlineDefault = isDefault && canRenderInlineDefaultProviderExport(declaration.kind);
+  const canInlineDefault = isDefault && canRenderInlineDefaultProviderExport(declaration.kind)
+    && !(declaration.kind === "function" && (declaration.members?.length ?? 0) > 0);
   const directNamedExport = options.localOnly !== true && !isDefault && exportName === declarationName;
   const declarationPrefix = directNamedExport
     ? "export declare "
@@ -6333,6 +6334,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
       rendered = renderProviderSignatures(declarationName, declaration.signatures ?? [], declarationContext)
         .map((signature) => `${canInlineDefault ? "export default " : declarationPrefix}function ${signature}`)
         .join("\n");
+      if ((declaration.members?.length ?? 0) > 0) {
+        rendered += `\n${declarationPrefix}namespace ${declarationName} {\n${renderProviderNamespaceMembers(declaration.members ?? [], declarationContext)}\n}`;
+      }
       break;
     case "type": {
       const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
@@ -7328,7 +7332,7 @@ function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boo
     && (value.signatures ?? []).every(isValidProviderSignatureDeclaration)
     && (value.kind === "enum"
       ? (value.members ?? []).every(isValidProviderEnumMemberDeclaration)
-      : value.kind === "namespace"
+      : value.kind === "namespace" || value.kind === "function"
         ? (value.members ?? []).every(isValidProviderNamespaceMemberDeclaration)
         : (value.members ?? []).every(isValidProviderMemberDeclaration));
 }
@@ -7344,7 +7348,7 @@ function hasNoUnrenderedProviderExportShape(value: ProviderExportDeclaration): b
     case "interface":
       return noType && noSignatures;
     case "function":
-      return noType && noTypeParameters && noHeritage && noMembers;
+      return noType && noTypeParameters && noHeritage;
     case "type":
       return noHeritage && noMembers && noSignatures;
     case "value":
