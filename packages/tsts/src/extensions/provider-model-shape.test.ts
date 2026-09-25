@@ -8,6 +8,30 @@ import {
   validateProviderDeclarationModelGraph,
 } from "./provider-model-graph.js";
 
+test("provider bigint literals retain exact canonical values in immutable snapshots", () => {
+  for (const value of ["0", "9007199254740992", "9007199254740993", "-9223372036854775808", "18446744073709551615"]) {
+    const type: ProviderTypeExpression = { kind: "bigint-literal", value };
+    const result = validateProviderDeclarationModelGraph(modelWithType(type));
+    assert.equal(result.kind, "valid", value);
+    if (result.kind !== "valid") continue;
+    assert.deepEqual(result.model.exports[0]?.type, type);
+    assert.ok(Object.isFrozen(result.model.exports[0]?.type));
+    Reflect.set(type, "value", "1");
+    assert.equal(result.model.exports[0]?.type?.kind, "bigint-literal");
+    assert.equal(Reflect.get(result.model.exports[0]!.type!, "value"), value);
+  }
+});
+
+test("provider bigint literals reject noncanonical values and source injection", () => {
+  for (const value of ["", "01", "-0", "+1", "1n", "0x10", "1.5", "1e3", "NaN", " 1", "1; type Injected = string"]) {
+    const result = validateProviderDeclarationModelGraph(modelWithType({ kind: "bigint-literal", value }));
+    assert.equal(result.kind, "invalid", value);
+  }
+  const malformed: ProviderTypeExpression = { kind: "bigint-literal", value: "1" };
+  Reflect.set(malformed, "value", 1);
+  assert.equal(validateProviderDeclarationModelGraph(modelWithType(malformed)).kind, "invalid");
+});
+
 test("provider type variants reject every field outside their exact schema", () => {
   const cases: readonly {
     readonly name: string;

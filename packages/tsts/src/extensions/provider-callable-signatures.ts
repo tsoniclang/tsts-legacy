@@ -202,6 +202,7 @@ function collectProviderTypeCallableIdentities(
     case "source-primitive":
     case "type-parameter":
     case "literal":
+    case "bigint-literal":
       return true;
   }
 }

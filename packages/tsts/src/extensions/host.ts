@@ -515,6 +515,7 @@ export type ProviderTypeExpression =
       readonly typeParameters?: readonly ProviderTypeParameterDeclaration[];
     }
   | { readonly kind: "literal"; readonly value: string | number | boolean | null }
+  | { readonly kind: "bigint-literal"; readonly value: string }
   | { readonly kind: "provider-ref"; readonly moduleSpecifier: string; readonly exportName: string; readonly localName?: string; readonly namespaceImport?: string; readonly typeArguments?: readonly ProviderTypeExpression[] };
 
 export interface ProviderParameterDeclaration {
@@ -5726,6 +5727,7 @@ function collectProviderDeclarationReferenceUses(
         case "source-primitive":
         case "type-parameter":
         case "literal":
+        case "bigint-literal":
           return;
         case "source-global":
           for (const typeArgument of type.typeArguments ?? []) {
@@ -6668,6 +6670,8 @@ function renderProviderTypeExpressionWorker(type: ProviderTypeExpression, parent
     }
     case "literal":
       return type.value === null ? "null" : JSON.stringify(type.value);
+    case "bigint-literal":
+      return type.value + "n";
     case "provider-ref":
       const typeArgumentCount = type.typeArguments?.length ?? 0;
       const providerRefKey = getProviderRefKey(type.moduleSpecifier, type.exportName, typeArgumentCount);
@@ -7664,6 +7668,8 @@ function isValidProviderTypeExpression(value: ProviderTypeExpression): boolean {
         && (value.typeParameters ?? []).every(isValidProviderTypeParameterDeclaration);
     case "literal":
       return typeof value.value !== "number" || Number.isFinite(value.value);
+    case "bigint-literal":
+      return /^(?:0|-?[1-9][0-9]*)$/.test(value.value);
     case "provider-ref":
       return value.moduleSpecifier.length > 0
         && !isHostOwnedProviderVirtualFileName(value.moduleSpecifier)
@@ -7814,6 +7820,7 @@ function hasValidProviderReferenceBindings(type: ProviderTypeExpression, context
     case "source-primitive":
     case "type-parameter":
     case "literal":
+    case "bigint-literal":
       return true;
     case "source-global":
       return (type.typeArguments ?? []).every((typeArgument) => hasValidProviderReferenceBindings(typeArgument, context));
@@ -7950,6 +7957,7 @@ function hasValidProviderTypeExpressionScope(type: ProviderTypeExpression, scope
     case "object":
     case "source-primitive":
     case "literal":
+    case "bigint-literal":
       return true;
     case "source-global":
       return (type.typeArguments ?? []).every((typeArgument) => hasValidProviderTypeExpressionScope(typeArgument, scope));
