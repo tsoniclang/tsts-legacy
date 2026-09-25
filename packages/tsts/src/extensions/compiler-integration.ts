@@ -91,7 +91,7 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
   if (compilerMetadata === undefined) {
     throw new Error(`Provider virtual artifact '${virtualModule.fileName}' has no compiler-owned metadata.`);
   }
-  const directDeclarationIds = new Set(compilerMetadata.directDeclarationIds);
+  const directDeclarations = new Map(compilerMetadata.directDeclarations.map(({ id, localName }) => [id, localName]));
   extensionHost[extensionHostSetFact](file, canonicalIdentityFactKey, {
     kind: "module",
     id: virtualModule.declarationModel.providerModuleId,
@@ -135,34 +135,29 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
   }
 
   for (const declaration of virtualModule.declarationModel.exports) {
-    const isDirectDeclaration = directDeclarationIds.has(declaration.id);
-    if (declaration.sourceTypeFamily !== undefined && !isDirectDeclaration) {
+    const directName = directDeclarations.get(declaration.id);
+    if (declaration.sourceTypeFamily !== undefined && directName === undefined) {
       continue;
     }
-    const exportName = getProviderSourceExportName(declaration);
     const symbol = getProviderDeclarationSymbol(file, fileSymbol, declaration);
     if (symbol === undefined) {
       throw new Error(`Provider virtual artifact '${virtualModule.fileName}' did not bind export identity '${declaration.id}'.`);
     }
-    extensionHost[extensionHostSetFact](symbol, canonicalIdentityFactKey, {
-      kind: "export",
-      id: declaration.sourceTypeFamily === undefined
-        ? `${virtualModule.declarationModel.providerModuleId}::${exportName}`
-        : `${virtualModule.declarationModel.providerModuleId}::${exportName}:${declaration.sourceTypeFamily.typeArgumentCount}`,
-      ...(virtualModule.packageName !== undefined ? { packageName: virtualModule.packageName } : {}),
-      ...(virtualModule.packageVersion !== undefined ? { packageVersion: virtualModule.packageVersion } : {}),
-      subpath: virtualModule.moduleSpecifier,
-      exportName,
-      canonicalSymbolId: getSymbolFactId(symbol),
-    }, evidence);
-    extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+    recordProviderVirtualExportSymbolFacts(extensionHost, symbol, virtualModule, declaration, evidence);
 
-    if (!isDirectDeclaration) {
+    if (directName === undefined) {
       continue;
+    }
+    const directSymbol = Node_Locals(file)?.get(directName);
+    if (directSymbol === undefined) {
+      throw new Error(`Provider virtual artifact '${virtualModule.fileName}' did not bind direct declaration '${declaration.id}'.`);
+    }
+    if (directSymbol !== symbol) {
+      recordProviderVirtualExportSymbolFacts(extensionHost, directSymbol, virtualModule, declaration, evidence);
     }
 
     if (declaration.signatures === undefined || declaration.signatures.length === 0) {
-      for (const exportDeclaration of symbol.Declarations ?? []) {
+      for (const exportDeclaration of directSymbol.Declarations ?? []) {
         if (exportDeclaration === undefined) {
           continue;
         }
@@ -178,7 +173,7 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
     if (declaration.signatures !== undefined && declaration.signatures.length > 0) {
       recordProviderVirtualSignatureFacts(
         extensionHost,
-        symbol,
+        directSymbol,
         virtualModule,
         declaration,
         declaration.signatures,
@@ -190,9 +185,31 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
       declaration.members !== undefined
       || (declaration.kind === "class" && declaration.sourceTypeFamily !== undefined)
     ) {
-      recordProviderVirtualMemberFacts(extensionHost, symbol, virtualModule, declaration, evidence);
+      recordProviderVirtualMemberFacts(extensionHost, directSymbol, virtualModule, declaration, evidence);
     }
   }
+}
+
+function recordProviderVirtualExportSymbolFacts(
+  extensionHost: ExtensionHost,
+  symbol: Symbol,
+  virtualModule: ProviderVirtualModuleArtifact,
+  declaration: ProviderExportDeclaration,
+  evidence: readonly ExtensionEvidence[],
+): void {
+  const exportName = getProviderSourceExportName(declaration);
+  extensionHost[extensionHostSetFact](symbol, canonicalIdentityFactKey, {
+    kind: "export",
+    id: declaration.sourceTypeFamily === undefined
+      ? `${virtualModule.declarationModel.providerModuleId}::${exportName}`
+      : `${virtualModule.declarationModel.providerModuleId}::${exportName}:${declaration.sourceTypeFamily.typeArgumentCount}`,
+    ...(virtualModule.packageName !== undefined ? { packageName: virtualModule.packageName } : {}),
+    ...(virtualModule.packageVersion !== undefined ? { packageVersion: virtualModule.packageVersion } : {}),
+    subpath: virtualModule.moduleSpecifier,
+    exportName,
+    canonicalSymbolId: getSymbolFactId(symbol),
+  }, evidence);
+  extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(

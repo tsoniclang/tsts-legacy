@@ -6083,8 +6083,10 @@ function providerVirtualCompilerMetadataEqual(
   left: ProviderVirtualCompilerMetadata,
   right: ProviderVirtualCompilerMetadata,
 ): boolean {
-  return left.directDeclarationIds.length === right.directDeclarationIds.length
-    && left.directDeclarationIds.every((id, index) => id === right.directDeclarationIds[index])
+  return left.directDeclarations.length === right.directDeclarations.length
+    && left.directDeclarations.every((declaration, index) =>
+      declaration.id === right.directDeclarations[index]?.id
+      && declaration.localName === right.directDeclarations[index]?.localName)
     && providerRenderedFunctionSignaturesEqual(left.renderedFunctionSignatures, right.renderedFunctionSignatures);
 }
 
@@ -6124,7 +6126,7 @@ function renderProviderDeclarationModel(model: ProviderDeclarationModel, options
       [...(options.exactImports ?? new Map())].map(([key, binding]) => [key, binding.localName]),
     ),
     exactImportsInTypePositions: options.exactImportsInTypePositions === true,
-    directDeclarationIds: new Set(),
+    directDeclarations: new Map(),
     renderedFunctionSignatures: [],
   };
   const hasDirectDeclarations = model.exports.some((declaration) =>
@@ -6219,7 +6221,8 @@ function renderProviderDeclarationModel(model: ProviderDeclarationModel, options
 
 function snapshotProviderVirtualCompilerMetadata(context: ProviderRenderContext): ProviderVirtualCompilerMetadata {
   return Object.freeze({
-    directDeclarationIds: Object.freeze([...context.directDeclarationIds]),
+    directDeclarations: Object.freeze([...context.directDeclarations].map(([id, localName]) =>
+      Object.freeze({ id, localName }))),
     renderedFunctionSignatures: Object.freeze([...context.renderedFunctionSignatures]),
   });
 }
@@ -6249,7 +6252,7 @@ interface ProviderRenderContext {
   readonly typeFamilyVariantByProviderRefKey: ReadonlyMap<string, ProviderExportDeclaration>;
   readonly exactImportLocalNameByProviderRefKey: ReadonlyMap<string, string>;
   readonly exactImportsInTypePositions: boolean;
-  readonly directDeclarationIds: Set<string>;
+  readonly directDeclarations: Map<string, string>;
   readonly renderedFunctionSignatures: ProviderRenderedFunctionSignature[];
   readonly declaration?: ProviderExportDeclaration;
   readonly member?: ProviderMemberDeclaration;
@@ -6298,12 +6301,12 @@ function getProviderCanonicalExportLocalName(exportName: string): string {
 }
 
 function renderProviderExportDeclaration(declaration: ProviderExportDeclaration, context: ProviderRenderContext, options: ProviderExportRenderOptions = {}): string {
-  if (context.directDeclarationIds.has(declaration.id)) {
+  if (context.directDeclarations.has(declaration.id)) {
     throw new Error(`Provider declaration identity '${declaration.id}' was rendered more than once in one virtual artifact.`);
   }
-  context.directDeclarationIds.add(declaration.id);
   const declarationContext = withProviderRenderOwner(context, declaration);
   const declarationName = options.localName ?? declaration.name;
+  context.directDeclarations.set(declaration.id, declarationName);
   const exportName = getProviderExportName(declaration);
   const isDefault = exportName === "default" || declaration.exportKind === "default";
   const canInlineDefault = isDefault && canRenderInlineDefaultProviderExport(declaration.kind)

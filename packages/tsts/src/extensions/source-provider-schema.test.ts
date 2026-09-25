@@ -247,6 +247,21 @@ test("declaration kinds reject fields that their rendered schema cannot represen
       }],
     },
   }, {
+    name: "function with unrenderable readonly namespace member",
+    declaration: {
+      id: "Value",
+      name: "Value",
+      kind: "function",
+      signatures: [{ id: "Value()", parameters: [], returnType: { kind: "void" } }],
+      members: [{
+        id: "Value::item",
+        name: "item",
+        kind: "property",
+        readonly: true,
+        type: { kind: "number" },
+      }],
+    },
+  }, {
     name: "type alias with members",
     declaration: {
       id: "Value",

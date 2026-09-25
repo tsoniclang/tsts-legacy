@@ -14,7 +14,10 @@ export const providerVirtualCompilerMetadataLookup: unique symbol = Symbol("tsts
 export const providerVirtualStructuredTypeDemand: unique symbol = Symbol("tsts.provider.structuredTypeDemand");
 
 export interface ProviderVirtualCompilerMetadata {
-  readonly directDeclarationIds: readonly string[];
+  readonly directDeclarations: readonly {
+    readonly id: string;
+    readonly localName: string;
+  }[];
   readonly renderedFunctionSignatures: readonly ProviderRenderedFunctionSignature[];
 }
 
