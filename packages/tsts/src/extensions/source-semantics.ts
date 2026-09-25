@@ -18,7 +18,7 @@ import {
   Node_TypeArguments,
 } from "../internal/ast/ast.js";
 import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
-import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
+import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindCallExpression,
   KindExportDeclaration,
@@ -38,6 +38,7 @@ import {
   KindStringLiteral,
   KindTypeKeyword,
   KindTypeReference,
+  KindTypeQuery,
   KindTupleType,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
@@ -1952,6 +1953,9 @@ function createMarkerEvidence(exportName: string): readonly ExtensionEvidence[] 
 }
 
 function getTypeReferenceNameText(node: GoPtr<Node>): string {
+  if (node?.Kind === KindTypeQuery) {
+    return getTypeReferenceNameText(AsTypeQueryNode(node)?.ExprName);
+  }
   if (node?.Kind === KindTypeReference) {
     return getTypeReferenceNameText(AsTypeReferenceNode(node)?.TypeName);
   }
@@ -1961,7 +1965,7 @@ function getTypeReferenceNameText(node: GoPtr<Node>): string {
     const right = getTypeReferenceNameText(qualifiedName?.Right);
     return left === "" ? right : `${left}.${right}`;
   }
-  return Node_Text(node);
+  return node?.Kind === KindIdentifier || node?.Kind === KindStringLiteral ? Node_Text(node) : "";
 }
 
 function getModuleMarker(moduleIdentity: SourceSemanticsModuleRuntime | undefined, capability: SourceSemanticsModuleCapability, exportName: string): SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration | undefined {

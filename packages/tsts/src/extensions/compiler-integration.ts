@@ -516,7 +516,6 @@ function getProviderMemberCandidateNodes(exportDeclaration: GoPtr<Node>): readon
     || exportDeclaration.Kind === KindInterfaceDeclaration
     || exportDeclaration.Kind === KindEnumDeclaration
     || exportDeclaration.Kind === KindTypeAliasDeclaration
-    || exportDeclaration.Kind === KindFunctionDeclaration
     || exportDeclaration.Kind === KindVariableDeclaration) {
     return Node_Members(exportDeclaration) ?? [];
   }
