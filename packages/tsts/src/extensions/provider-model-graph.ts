@@ -590,6 +590,14 @@ function pushProviderTypeExpressionChildren(
       const value = readProviderModelField(reads, literal, "value");
       return value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number";
     }
+    case "bigint-literal": {
+      const literal = type as Extract<ProviderTypeExpression, { readonly kind: "bigint-literal" }>;
+      if (!captureExactProviderModelRecord(reads, literal, providerModelShapeFields.literalType, path, depth)) {
+        return false;
+      }
+      const value = readProviderModelField(reads, literal, "value");
+      return typeof value === "string" && /^(?:0|-?[1-9][0-9]*)$/.test(value);
+    }
     case "source-primitive":
     case "type-parameter": {
       const named = type as Extract<ProviderTypeExpression, { readonly kind: "source-primitive" | "type-parameter" }>;
@@ -1721,6 +1729,14 @@ function snapshotProviderTypeExpression(
       };
       break;
     }
+    case "bigint-literal": {
+      const literal = type as Extract<ProviderTypeExpression, { readonly kind: "bigint-literal" }>;
+      snapshot = {
+        kind: typeKind,
+        value: readProviderModelField(context.reads, literal, "value"),
+      };
+      break;
+    }
     case "provider-ref": {
       const reference = type as Extract<ProviderTypeExpression, { readonly kind: "provider-ref" }>;
       const moduleSpecifier = readProviderModelField(context.reads, reference, "moduleSpecifier");
@@ -2300,6 +2316,9 @@ function canonicalizeProviderExportOwnerType(
         kind: type.kind,
         value: typeof type.value === "number" && Object.is(type.value, -0) ? 0 : type.value,
       };
+      break;
+    case "bigint-literal":
+      canonical = { kind: type.kind, value: type.value };
       break;
     case "provider-ref":
       {

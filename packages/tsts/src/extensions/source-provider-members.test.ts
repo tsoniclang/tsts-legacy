@@ -198,6 +198,45 @@ test("provider rest parameters retain one declared parameter across effective ar
   );
 });
 
+test("provider bigint literal declarations preserve adjacent types through generic defaults and signatures", () => {
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier: "@test/exact-literals.js",
+    providerModuleId: "Test.ExactLiterals",
+    exports: [{
+      id: "Exact",
+      name: "Exact",
+      kind: "type",
+      typeParameters: [{
+        name: "Value",
+        constraints: [{ kind: "bigint" }],
+        defaultType: { kind: "bigint-literal", value: "9007199254740993" },
+      }],
+      type: { kind: "type-parameter", name: "Value" },
+    }, {
+      id: "read",
+      name: "read",
+      kind: "function",
+      signatures: [{
+        id: "read()",
+        parameters: [],
+        returnType: { kind: "bigint-literal", value: "9007199254740993" },
+      }],
+    }],
+  };
+  assertNoDiagnostics(providerProgram(model, [
+    'import { read, type Exact } from "@test/exact-literals.js";',
+    "const value: Exact = read();",
+    "const same: 9007199254740993n = value;",
+    "const negative: Exact<-9223372036854775808n> = -9223372036854775808n;",
+  ].join("\n")));
+  const rejected = providerProgram(model, [
+    'import { read } from "@test/exact-literals.js";',
+    "const different: 9007199254740992n = read();",
+  ].join("\n"));
+  assert.equal(rejected.diagnostics.length, 1);
+  assert.match(rejected.diagnostics.map(Diagnostic_String).join("\n"), /9007199254740993n/);
+});
+
 function providerProgram(model: ProviderDeclarationModel, source: string) {
   return createCompilerSessionFromFiles({
     currentDirectory: "/src",
