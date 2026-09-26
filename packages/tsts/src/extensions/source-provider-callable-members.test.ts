@@ -31,6 +31,9 @@ function callableModel(exportForm: "named" | "renamed" | "default"): ProviderDec
           returnType: { kind: "type-parameter", name: "T" } }],
       }, {
         id: "select::version", name: "version", kind: "property", type: { kind: "string" },
+      }, {
+        id: "select::default", name: "default", kind: "method",
+        signatures: [{ id: "select::default()", parameters: [], returnType: { kind: "number" } }],
       }],
     }],
   };
@@ -53,6 +56,7 @@ for (const exportForm of ["named", "renamed", "default"] as const) {
           export const selected: boolean = choose.module(true);
           export const version: string = choose.version;
           export const namespaced: number = library.${exportName}.module(2);
+          export const fallback: number = choose.default();
         `,
       },
       compilerOptions: testNoLibCompilerOptions,
@@ -73,6 +77,7 @@ for (const exportForm of ["named", "renamed", "default"] as const) {
       ["select", undefined, "select(string)"],
       ["select", "select::module", "select::module<T>(T)"],
       ["select", "select::module", "select::module<T>(T)"],
+      ["select", "select::default", "select::default()"],
     ]);
     assert.deepEqual(session.checkSource().diagnostics, checked.diagnostics);
   });

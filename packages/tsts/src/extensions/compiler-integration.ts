@@ -1,6 +1,6 @@
 import type { GoPtr } from "../go/compat.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
-import { Node_Body, Node_Expression, Node_Locals, Node_Members, Node_ModifierFlags, Node_Parameters, Node_Symbol, Node_Text, Node_Type, SourceFile_FileName, SourceFile_Text } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Locals, Node_Members, Node_ModifierFlags, Node_Parameters, Node_Symbol, Node_Text, Node_Type, SourceFile_FileName, SourceFile_Text } from "../internal/ast/ast.js";
 import { Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Program } from "../internal/compiler/program.js";
@@ -14,18 +14,18 @@ import {
   KindConstructor,
   KindEnumDeclaration,
   KindEnumMember,
-  KindFunctionDeclaration,
+  KindCallSignature,
   KindFunctionType,
   KindIndexSignature,
   KindInterfaceDeclaration,
   KindMethodDeclaration,
   KindMethodSignature,
-  KindModuleDeclaration,
   KindNeverKeyword,
   KindPropertyDeclaration,
   KindPropertyAccessExpression,
   KindPropertySignature,
   KindTypeAliasDeclaration,
+  KindTypeLiteral,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import {
@@ -328,8 +328,7 @@ function recordProviderVirtualMemberFacts(
   evidence: readonly ExtensionEvidence[],
 ): void {
   const directExportDeclarations = (exportSymbol.Declarations ?? []).filter((node) =>
-    node !== undefined && (providerExportDeclarationMatchesNode(declaration, node)
-      || declaration.kind === "function" && node.Kind === KindModuleDeclaration));
+    node !== undefined && providerExportDeclarationMatchesNode(declaration, node));
   if (directExportDeclarations.length === 0) {
     throw new Error(`Provider virtual artifact '${virtualModule.fileName}' has no direct declaration for member-owning export identity '${declaration.id}'.`);
   }
@@ -435,13 +434,13 @@ function providerExportDeclarationMatchesNode(declaration: ProviderExportDeclara
     case "interface":
       return node.Kind === KindInterfaceDeclaration;
     case "function":
-      return node.Kind === KindFunctionDeclaration;
+      return node.Kind === KindVariableDeclaration;
     case "type":
       return node.Kind === KindTypeAliasDeclaration;
     case "value":
       return node.Kind === KindVariableDeclaration;
     case "namespace":
-      return node.Kind === KindModuleDeclaration;
+      return node.Kind === KindVariableDeclaration;
     case "enum":
       return node.Kind === KindEnumDeclaration;
   }
@@ -516,7 +515,7 @@ function providerMemberKindMatchesNode(member: ProviderMemberDeclaration, node: 
     case "constructor":
       return node.Kind === KindConstructor || node.Kind === KindConstructSignature;
     case "method":
-      return node.Kind === KindMethodDeclaration || node.Kind === KindMethodSignature || node.Kind === KindFunctionDeclaration;
+      return node.Kind === KindMethodDeclaration || node.Kind === KindMethodSignature;
     case "property":
     case "field":
       return node.Kind === KindPropertyDeclaration || node.Kind === KindPropertySignature || node.Kind === KindEnumMember || node.Kind === KindVariableDeclaration;
@@ -532,33 +531,16 @@ function getProviderMemberCandidateNodes(exportDeclaration: GoPtr<Node>): readon
   if (exportDeclaration.Kind === KindClassDeclaration
     || exportDeclaration.Kind === KindInterfaceDeclaration
     || exportDeclaration.Kind === KindEnumDeclaration
-    || exportDeclaration.Kind === KindTypeAliasDeclaration
-    || exportDeclaration.Kind === KindVariableDeclaration) {
+    || exportDeclaration.Kind === KindTypeAliasDeclaration) {
     return Node_Members(exportDeclaration) ?? [];
   }
-  if (exportDeclaration.Kind !== KindModuleDeclaration) {
-    return [];
+  if (exportDeclaration.Kind === KindVariableDeclaration) {
+    const type = Node_Type(exportDeclaration);
+    return type?.Kind === KindTypeLiteral
+      ? (Node_Members(type) ?? []).filter(member => member?.Kind !== KindCallSignature)
+      : [];
   }
-  const candidates: GoPtr<Node>[] = [];
-  collectProviderNamespaceMemberCandidateNodes(Node_Body(exportDeclaration), candidates);
-  return candidates;
-}
-
-function collectProviderNamespaceMemberCandidateNodes(node: GoPtr<Node>, candidates: GoPtr<Node>[]): void {
-  if (node === undefined) {
-    return;
-  }
-  switch (node.Kind) {
-    case KindFunctionDeclaration:
-    case KindVariableDeclaration:
-      candidates.push(node);
-      return;
-    default:
-      Node_ForEachChild(node, (child) => {
-        collectProviderNamespaceMemberCandidateNodes(child, candidates);
-        return false;
-      });
-  }
+  return [];
 }
 
 function recordProviderVirtualSignatureFacts(
@@ -573,13 +555,18 @@ function recordProviderVirtualSignatureFacts(
   if (signatures.length === 0) {
     throw new Error(`Provider export identity '${declaration.id}' has no signatures to record.`);
   }
-  const signatureDeclarations = (symbol.Declarations ?? []).filter((candidate) => candidate?.Kind === KindFunctionDeclaration);
+  const signatureDeclarations = (symbol.Declarations ?? []).flatMap(candidate => {
+    const type = candidate?.Kind === KindVariableDeclaration ? Node_Type(candidate) : undefined;
+    return type?.Kind === KindTypeLiteral
+      ? (Node_Members(type) ?? []).filter(member => member?.Kind === KindCallSignature)
+      : [];
+  });
   if (signatureDeclarations.length === 0) {
-    throw new Error(`Provider virtual artifact '${virtualModule.fileName}' has no direct function declarations for export identity '${declaration.id}'.`);
+    throw new Error(`Provider virtual artifact '${virtualModule.fileName}' has no direct call signatures for export identity '${declaration.id}'.`);
   }
   if (signatureDeclarations.length !== signatures.length) {
     throw new Error(
-      `Provider virtual artifact '${virtualModule.fileName}' bound ${signatureDeclarations.length} function declarations for export identity '${declaration.id}', expected ${signatures.length}.`,
+      `Provider virtual artifact '${virtualModule.fileName}' bound ${signatureDeclarations.length} call signatures for export identity '${declaration.id}', expected ${signatures.length}.`,
     );
   }
   for (let index = 0; index < signatures.length; index++) {
