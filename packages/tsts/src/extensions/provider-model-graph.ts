@@ -101,6 +101,7 @@ const providerModelFieldNameRecord = {
   localName: true,
   kind: true,
   id: true,
+  intrinsicId: true,
   name: true,
   exportName: true,
   exportKind: true,
@@ -143,7 +144,7 @@ const providerModelShapeFields = {
   import: providerModelFields("moduleSpecifier", "defaultImport", "namespaceImport", "typeOnly", "namedImports"),
   requestedExport: providerModelFields("exportedName", "localName", "kind"),
   export: providerModelFields(
-    "id", "name", "kind", "exportName", "exportKind", "sourceTypeFamily",
+    "id", "intrinsicId", "name", "kind", "exportName", "exportKind", "sourceTypeFamily",
     "documentation", "type", "typeParameters", "heritage", "members", "signatures",
   ),
   heritage: providerModelFields("kind", "type"),
@@ -435,6 +436,7 @@ function pushProviderModelGraphChildren(
         return false;
       }
       const id = readProviderModelField(reads, declaration, "id");
+      const intrinsicId = readProviderModelField(reads, declaration, "intrinsicId");
       const name = readProviderModelField(reads, declaration, "name");
       const declarationKind = readProviderModelField(reads, declaration, "kind");
       const exportName = readProviderModelField(reads, declaration, "exportName");
@@ -447,6 +449,7 @@ function pushProviderModelGraphChildren(
       const members = readProviderModelField(reads, declaration, "members");
       const signatures = readProviderModelField(reads, declaration, "signatures");
       return typeof id === "string"
+        && isOptionalString(intrinsicId)
         && typeof name === "string"
         && isProviderDeclarationKind(declarationKind)
         && isOptionalString(exportName)
@@ -1329,6 +1332,7 @@ function snapshotProviderExportDeclaration(
     return cached;
   }
   const id = readProviderModelField(context.reads, declaration, "id");
+  const intrinsicId = readProviderModelField(context.reads, declaration, "intrinsicId");
   const name = readProviderModelField(context.reads, declaration, "name");
   const exportName = readProviderModelField(context.reads, declaration, "exportName");
   const exportKind = readProviderModelField(context.reads, declaration, "exportKind");
@@ -1342,6 +1346,7 @@ function snapshotProviderExportDeclaration(
   const documentation = readProviderModelField(context.reads, declaration, "documentation");
   const snapshot: ProviderExportDeclaration = {
     id,
+    ...(intrinsicId === undefined ? {} : { intrinsicId }),
     name,
     ...(exportName === undefined ? {} : { exportName }),
     ...(exportKind === undefined ? {} : { exportKind }),
@@ -2071,6 +2076,7 @@ function canonicalizeProviderAbiExportDeclarationWithContext(
     : "__TstsProvider_" + declaration.sourceTypeFamily.exportName + "_" + declaration.sourceTypeFamily.typeArgumentCount;
   return {
     id: declaration.id,
+    ...(declaration.intrinsicId === undefined ? {} : { intrinsicId: declaration.intrinsicId }),
     name: canonicalName,
     ...(targetExportName === "default"
       ? { exportKind: "default" as const }

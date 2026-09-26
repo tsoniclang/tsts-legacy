@@ -133,6 +133,10 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
       canonicalSymbolId: getSymbolFactId(familySymbol),
     }, evidence);
     extensionHost[extensionHostSetFact](familySymbol, providerTypeFamilyFactKey, getProviderTypeFamilyFact(virtualModule, family), evidence);
+    const intrinsicVariant = family.variants[0];
+    if (intrinsicVariant?.intrinsicId !== undefined) {
+      recordProviderIntrinsicSymbolFact(extensionHost, familySymbol, virtualModule, intrinsicVariant, evidence);
+    }
   }
 
   for (const declaration of virtualModule.declarationModel.exports) {
@@ -211,9 +215,22 @@ function recordProviderVirtualExportSymbolFacts(
     canonicalSymbolId: getSymbolFactId(symbol),
   }, evidence);
   extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
-  if (declaration.kind === "intrinsic") {
-    extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+  if (declaration.kind === "intrinsic" || declaration.intrinsicId !== undefined) {
+    recordProviderIntrinsicSymbolFact(extensionHost, symbol, virtualModule, declaration, evidence);
   }
+}
+
+function recordProviderIntrinsicSymbolFact(
+  extensionHost: ExtensionHost,
+  symbol: Symbol,
+  virtualModule: ProviderVirtualModuleArtifact,
+  declaration: ProviderExportDeclaration,
+  evidence: readonly ExtensionEvidence[],
+): void {
+  extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, {
+    ...getProviderVirtualDeclarationFact(virtualModule, declaration),
+    exportId: declaration.intrinsicId ?? declaration.id,
+  }, evidence);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(

@@ -550,6 +550,7 @@ export interface ProviderMemberDeclaration {
 
 export interface ProviderExportDeclaration {
   readonly id: string;
+  readonly intrinsicId?: string;
   readonly name: string;
   readonly exportName?: string;
   readonly exportKind?: ProviderExportKind;
@@ -6287,9 +6288,9 @@ function getProviderExportTypeOnlyMap(exports: readonly ProviderExportDeclaratio
     if (result.has(exportName)) {
       continue;
     }
-    const typeOnly = declaration.sourceTypeFamily === undefined
+    const typeOnly = declaration.intrinsicId === undefined && (declaration.sourceTypeFamily === undefined
       ? declaration.kind === "interface" || declaration.kind === "type"
-      : typeFamilies.get(exportName)?.variants.every((variant) => variant.kind === "class") !== true;
+      : typeFamilies.get(exportName)?.variants.every((variant) => variant.kind === "class") !== true);
     result.set(exportName, typeOnly);
   }
   return result;
@@ -6309,7 +6310,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
   context.directDeclarations.set(declaration.id, declarationName);
   const exportName = getProviderExportName(declaration);
   const isDefault = exportName === "default" || declaration.exportKind === "default";
-  const canInlineDefault = isDefault && canRenderInlineDefaultProviderExport(declaration.kind);
+  const needsIntrinsicBinding = declaration.intrinsicId !== undefined
+    && (declaration.kind === "interface" || declaration.kind === "type");
+  const canInlineDefault = isDefault && !needsIntrinsicBinding && canRenderInlineDefaultProviderExport(declaration.kind);
   const directNamedExport = options.localOnly !== true && !isDefault && exportName === declarationName;
   const declarationPrefix = directNamedExport
     ? "export declare "
@@ -6354,6 +6357,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
     case "enum":
       rendered = `${declarationPrefix}enum ${declarationName} {\n${(declaration.members ?? []).map((member) => `  ${renderProviderPropertyName(member.name)},`).join("\n")}\n}`;
       break;
+  }
+  if (needsIntrinsicBinding) {
+    rendered += `\n${declarationPrefix}const ${declarationName}: unique symbol;`;
   }
   if (options.localOnly === true || directNamedExport || canInlineDefault) {
     return rendered;
@@ -6412,7 +6418,9 @@ function renderProviderTypeFamilyLocalVariants(group: ProviderTypeFamilyRenderGr
 
 function renderProviderTypeFamilyValueExport(exportName: string, variants: readonly ProviderExportDeclaration[]): string {
   if (!variants.every((variant) => variant.kind === "class")) {
-    return "";
+    return variants[0]?.intrinsicId === undefined
+      ? ""
+      : `\nexport declare const ${exportName}: unique symbol;`;
   }
   const valueType = variants
     .map((variant) => `typeof ${getProviderTypeFamilyVariantLocalName(variant)}`)
@@ -7299,6 +7307,8 @@ function isValidProviderRequestedExport(value: ProviderRequestedExport): boolean
 
 function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boolean {
   return value.id.length > 0
+    && (value.intrinsicId === undefined || (value.kind !== "intrinsic"
+      && value.intrinsicId.length > 0 && value.intrinsicId !== value.id))
     && isIdentifierText(value.name)
     && isValidProviderExportName(value)
     && isValidProviderTypeFamilyDeclaration(value)
@@ -7430,6 +7440,9 @@ function isValidProviderTypeFamilyDeclarations(
       return false;
     }
     publicExports.add(familyName);
+    if (variants.some((variant) => variant.intrinsicId !== variants[0]!.intrinsicId)) {
+      return false;
+    }
     if (variants.some((variant) => variant.kind === "class") && !variants.every((variant) => variant.kind === "class")) {
       return false;
     }
