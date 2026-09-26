@@ -31,6 +31,7 @@ import {
 import {
   argumentPassingFactKey,
   canonicalIdentityFactKey,
+  providerIntrinsicDeclarationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
 } from "./facts.js";
@@ -210,6 +211,9 @@ function recordProviderVirtualExportSymbolFacts(
     canonicalSymbolId: getSymbolFactId(symbol),
   }, evidence);
   extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+  if (declaration.kind === "intrinsic") {
+    extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+  }
 }
 
 function recordProviderVirtualFunctionSignatureFacts(
@@ -438,6 +442,7 @@ function providerExportDeclarationMatchesNode(declaration: ProviderExportDeclara
     case "type":
       return node.Kind === KindTypeAliasDeclaration;
     case "value":
+    case "intrinsic":
       return node.Kind === KindVariableDeclaration;
     case "namespace":
       return node.Kind === KindVariableDeclaration;

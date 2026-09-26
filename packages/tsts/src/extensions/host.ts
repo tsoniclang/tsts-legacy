@@ -451,7 +451,7 @@ export interface ProviderModuleResolution {
   readonly evidence?: readonly ExtensionEvidence[];
 }
 
-export type ProviderDeclarationKind = "type" | "value" | "namespace" | "function" | "class" | "interface" | "enum";
+export type ProviderDeclarationKind = "type" | "value" | "namespace" | "function" | "class" | "interface" | "enum" | "intrinsic";
 
 export type ProviderExportKind = "named" | "default";
 
@@ -6348,6 +6348,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
     case "value":
       rendered = `${declarationPrefix}const ${declarationName}: ${renderProviderTypeExpression(declaration.type!, declarationContext)};`;
       break;
+    case "intrinsic":
+      rendered = `${declarationPrefix}const ${declarationName}: unique symbol;`;
+      break;
     case "enum":
       rendered = `${declarationPrefix}enum ${declarationName} {\n${(declaration.members ?? []).map((member) => `  ${renderProviderPropertyName(member.name)},`).join("\n")}\n}`;
       break;
@@ -7329,6 +7332,8 @@ function hasNoUnrenderedProviderExportShape(value: ProviderExportDeclaration): b
       return noHeritage && noMembers && noSignatures;
     case "value":
       return noTypeParameters && noHeritage && noMembers && noSignatures;
+    case "intrinsic":
+      return noType && noTypeParameters && noHeritage && noMembers && noSignatures;
     case "namespace":
     case "enum":
       return noType && noTypeParameters && noHeritage && noSignatures;
@@ -7514,6 +7519,8 @@ function hasRequiredProviderExportShape(value: ProviderExportDeclaration): boole
     case "interface":
     case "namespace":
     case "enum":
+      return true;
+    case "intrinsic":
       return true;
   }
 }

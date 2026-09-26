@@ -35,6 +35,7 @@ export {
   pointerOperationFactKey,
   rawPointerFactKey,
   rawPointerOperationFactKey,
+  providerIntrinsicDeclarationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,

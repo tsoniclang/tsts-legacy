@@ -1099,7 +1099,8 @@ function isProviderDeclarationKind(value: unknown): boolean {
     || value === "function"
     || value === "class"
     || value === "interface"
-    || value === "enum";
+    || value === "enum"
+    || value === "intrinsic";
 }
 
 function isProviderMemberKind(value: unknown): boolean {
