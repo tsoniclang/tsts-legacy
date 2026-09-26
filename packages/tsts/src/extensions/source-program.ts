@@ -1,6 +1,7 @@
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { SourceFile_FileName } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import {
   Program_GetDefaultResolutionModeForFile,
@@ -57,6 +58,11 @@ export function createSourceProgramQueries(
   const sourceFileQueries = new WeakMap<SourceFile, SourceFileQueries>();
   const moduleSourceFiles = new WeakMap<Node, SourceFile | null>();
   const included = (sourceFile: SourceFile): boolean => options.includeSourceFile?.(sourceFile) !== false;
+  const requireOwnedSourceFile = (sourceFile: SourceFile): void => {
+    if (Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
+      throw new Error("Source queries cannot use a source file from a different compiler program or epoch.");
+    }
+  };
   const getSourceFiles = (): readonly GoPtr<SourceFile>[] =>
     (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
       sourceFile !== undefined && included(sourceFile));
@@ -70,6 +76,7 @@ export function createSourceProgramQueries(
     if (sourceFile === undefined || !included(sourceFile)) {
       throw new Error("Source-file queries require an included source file from the checked program.");
     }
+    requireOwnedSourceFile(sourceFile);
     const existing = sourceFileQueries.get(sourceFile);
     if (existing !== undefined) {
       return existing;
@@ -101,6 +108,7 @@ export function createSourceProgramQueries(
       containingSourceFile === undefined || !included(containingSourceFile)) {
       return undefined;
     }
+    requireOwnedSourceFile(containingSourceFile);
     const cached = moduleSourceFiles.get(moduleSpecifier);
     if (cached !== undefined) {
       return cached ?? undefined;

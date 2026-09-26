@@ -152,6 +152,39 @@ test("checked source program resolves authored module literals on demand", () =>
   assert.equal(checked.resolveModuleSourceFile(missingSpecifier), undefined);
 });
 
+test("checked source queries reject foreign files even when their paths and text are identical", () => {
+  const create = () => createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts", "/src/value.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": 'import { value } from "./value.js"; export const copy = value;',
+      "/src/value.ts": "export const value = 1;",
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  }).checkSource();
+  const first = create();
+  const second = create();
+  assert.equal(first.diagnostics.length, 0);
+  assert.equal(second.diagnostics.length, 0);
+  const original = first.getSourceFile("/src/index.ts");
+  const current = second.getSourceFile("/src/index.ts");
+  const value = second.getSourceFile("/src/value.ts");
+  assert.ok(original);
+  assert.ok(current);
+  assert.ok(value);
+  assert.throws(() => second.getSourceFileQueries(original), /different compiler program or epoch/u);
+  assert.doesNotThrow(() => second.getSourceFileQueries(current));
+  assert.doesNotThrow(() => second.getSourceFileQueries(value));
+  const originalImport = findNodes(original, first.ast.children, first.ast.is.IsStringLiteral)[0];
+  const currentImport = findNodes(current, second.ast.children, second.ast.is.IsStringLiteral)[0];
+  assert.ok(originalImport);
+  assert.ok(currentImport);
+  assert.throws(() => second.resolveModuleSourceFile(originalImport), /different compiler program or epoch/u);
+  assert.equal(second.resolveModuleSourceFile(currentImport), value);
+  assert.equal(first.resolveModuleSourceFile(originalImport), first.getSourceFile("/src/value.ts"));
+});
+
 test("compiler sessions normalize nil Go diagnostic slices at the public boundary", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",

@@ -39,6 +39,7 @@ import type { CheckedSourceProgram } from "../extensions/source-program.js";
 import { getProviderVirtualArtifactForCompiler } from "../extensions/provider-virtual-internal.js";
 import { createCompilerHost, createInMemoryFileSystem } from "./embedding-host.js";
 import type { CompilerHostOptions } from "./embedding-host.js";
+import { createCompilerSessionHost } from "./compiler-session-source.js";
 export type CompilerDiagnosticKind =
   | "config"
   | "program"
@@ -80,9 +81,10 @@ export interface CompilerSession {
 
 export function createCompilerSession(options: CompilerSessionOptions): CompilerSession {
   const context = options.context ?? Background();
+  const host = createCompilerSessionHost(options.programOptions.Host);
   return createCompilerSessionForProgramOwner(
-    createMaterializingProgramOwner(options.programOptions, options.extensionHostOptions ?? {}, context),
-    options.programOptions.Host,
+    createMaterializingProgramOwner({ ...options.programOptions, Host: host }, options.extensionHostOptions ?? {}, context),
+    host,
     options.programOptions.Config,
     context,
   );
