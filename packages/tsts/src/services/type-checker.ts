@@ -2,6 +2,14 @@ import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
+import {
+  assertSemanticNodeOwned,
+  assertSemanticProgramActive,
+  assertSemanticSignatureOwned,
+  assertSemanticSourceFileOwned,
+  assertSemanticSymbolOwned,
+  assertSemanticTypeOwned,
+} from "./semantic-query-ownership.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Text } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
@@ -218,6 +226,19 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   if (program === undefined || defaultOptions.sourceFile === undefined) {
     throw new Error("Type-checker queries require one source file from the compiler program.");
   }
+  assertSemanticSourceFileOwned(program, defaultOptions.sourceFile);
+  const ownedSymbol = (symbol: GoPtr<Symbol>): GoPtr<Symbol> => {
+    assertSemanticSymbolOwned(program, symbol);
+    return symbol;
+  };
+  const ownedType = (type: GoPtr<Type>): GoPtr<Type> => {
+    assertSemanticTypeOwned(program, type);
+    return type;
+  };
+  const ownedSignature = (signature: GoPtr<Signature>): GoPtr<Signature> => {
+    assertSemanticSignatureOwned(program, signature);
+    return signature;
+  };
   const callInfos = new WeakMap<Node, ResolvedSourceCallInfo>();
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
@@ -266,7 +287,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getResolvedSignature: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal)),
     getResolvedCallInfo: (node) =>
-      memoizeResolvedNodeQuery(callInfos, node, () =>
+      memoizeResolvedNodeQuery(program, callInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) => {
           if (!IsCallOrNewExpression(node)) {
             return undefined;
@@ -276,44 +297,45 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
           return Checker_finalizeResolvedCallEvidence(checker, node, sourceResultType);
         })),
     getResolvedPropertyAccessInfo: (node) =>
-      memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
+      memoizeResolvedNodeQuery(program, propertyAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           withResolvedSourceReceiverValueEvidence(
             checker,
             Checker_getResolvedSourcePropertyAccessInfo(checker, node),
           ))),
     getResolvedElementAccessInfo: (node) =>
-      memoizeResolvedNodeQuery(elementAccessInfos, node, () =>
+      memoizeResolvedNodeQuery(program, elementAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           withResolvedSourceReceiverValueEvidence(
             checker,
             Checker_getResolvedSourceElementAccessInfo(checker, node),
           ))),
     getResolvedIterationInfo: (node) =>
-      memoizeResolvedNodeQuery(iterationInfos, node, () =>
+      memoizeResolvedNodeQuery(program, iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           Checker_getResolvedSourceIterationInfo(checker, node))),
     getResolvedObjectLiteralElementInfo: (node) =>
-      memoizeResolvedNodeQuery(objectLiteralElementInfos, node, () =>
+      memoizeResolvedNodeQuery(program, objectLiteralElementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           getResolvedSourceObjectLiteralElementInfo(checker, node))),
     getResolvedStorageInfo: (node) =>
-      memoizeResolvedNodeQuery(storageInfos, node, () =>
+      memoizeResolvedNodeQuery(program, storageInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           getResolvedSourceStorageInfo(checker, node))),
     getResolvedCallableCompletionInfo: (node) =>
-      memoizeResolvedNodeQuery(callableCompletionInfos, node, () =>
+      memoizeResolvedNodeQuery(program, callableCompletionInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceCallableCompletionInfo(checker, node))),
     getResolvedGeneratorInfo: (node) =>
-      memoizeResolvedNodeQuery(generatorInfos, node, () =>
+      memoizeResolvedNodeQuery(program, generatorInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceGeneratorInfo(checker, node))),
     getResolvedYieldInfo: (node) =>
-      memoizeResolvedNodeQuery(yieldInfos, node, () =>
+      memoizeResolvedNodeQuery(program, yieldInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) => {
           const declaration = GetContainingFunction(node);
           const generator = memoizeResolvedNodeQuery(
+            program,
             generatorInfos,
             declaration,
             () => resolveSourceGeneratorInfo(checker, declaration),
@@ -321,11 +343,11 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
           return resolveSourceYieldInfo(checker, node, generator);
         })),
     getResolvedWellKnownSymbolInfo: (node) =>
-      memoizeResolvedNodeQuery(wellKnownSymbolInfos, node, () =>
+      memoizeResolvedNodeQuery(program, wellKnownSymbolInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceWellKnownSymbolInfo(checker, node))),
     getResolvedResourceManagementInfo: (node) =>
-      memoizeResolvedNodeQuery(resourceManagementInfos, node, () =>
+      memoizeResolvedNodeQuery(program, resourceManagementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceResourceManagementInfo(checker, node))),
     getReturnTypeOfSignature: (signature) =>
@@ -348,8 +370,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForSymbol(program, moduleSymbol, defaultOptions, (checker) => Checker_resolveExternalModuleSymbol(checker, moduleSymbol, dontResolveAlias as bool)),
     getExportsOfModule: (moduleSymbol) =>
       withCheckerForSymbol(program, moduleSymbol, defaultOptions, (checker) => Checker_GetExportsOfModule(checker, moduleSymbol)) ?? [],
-    getSymbolName: (symbol) => symbol?.Name ?? "",
-    getSymbolDeclarations: (symbol) => symbol?.Declarations ?? [],
+    getSymbolName: (symbol) => ownedSymbol(symbol)?.Name ?? "",
+    getSymbolDeclarations: (symbol) => ownedSymbol(symbol)?.Declarations ?? [],
     getRootSymbols: (symbol) =>
       withCheckerForSymbol(
         program,
@@ -357,14 +379,14 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         defaultOptions,
         (checker) => Checker_GetRootSymbols(checker, symbol),
       ) ?? [],
-    getSymbolValueDeclaration: (symbol) => symbol?.ValueDeclaration,
-    getPrimarySymbolDeclaration: (symbol) => getPrimarySymbolDeclaration(symbol),
-    getSymbolSourceFile: (symbol) => getSymbolSourceFile(symbol),
-    getTypeSymbol: (type) => type?.symbol,
-    getTypeAliasSymbol: (type) => type?.alias?.symbol,
-    getSignatureDeclaration: (signature) => signature?.declaration,
-    getSignatureParameters: (signature) => signature?.parameters ?? [],
-    getSignatureThisParameter: (signature) => signature?.thisParameter,
+    getSymbolValueDeclaration: (symbol) => ownedSymbol(symbol)?.ValueDeclaration,
+    getPrimarySymbolDeclaration: (symbol) => getPrimarySymbolDeclaration(ownedSymbol(symbol)),
+    getSymbolSourceFile: (symbol) => getSymbolSourceFile(ownedSymbol(symbol)),
+    getTypeSymbol: (type) => ownedType(type)?.symbol,
+    getTypeAliasSymbol: (type) => ownedType(type)?.alias?.symbol,
+    getSignatureDeclaration: (signature) => ownedSignature(signature)?.declaration,
+    getSignatureParameters: (signature) => ownedSignature(signature)?.parameters ?? [],
+    getSignatureThisParameter: (signature) => ownedSignature(signature)?.thisParameter,
   };
   return Object.freeze(queries);
 }
@@ -565,10 +587,12 @@ function selectedAccessType(
 }
 
 function memoizeResolvedNodeQuery<T extends object>(
+  program: Program,
   cache: WeakMap<Node, T>,
   node: GoPtr<Node>,
   query: () => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticNodeOwned(program, node);
   if (node === undefined) {
     return undefined;
   }
@@ -631,6 +655,7 @@ function withCheckerForNode<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticNodeOwned(program, node);
   if (node === undefined) {
     return undefined;
   }
@@ -648,6 +673,7 @@ function withCheckerForSymbol<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticSymbolOwned(program, symbol);
   if (symbol === undefined) {
     return undefined;
   }
@@ -665,6 +691,7 @@ function withCheckerForType<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticTypeOwned(program, type);
   if (type === undefined) {
     return undefined;
   }
@@ -685,6 +712,7 @@ function withCheckerForSignature<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticSignatureOwned(program, signature);
   if (signature === undefined) {
     return undefined;
   }
@@ -697,9 +725,11 @@ function withChecker<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
+  assertSemanticProgramActive(program);
   if (program === undefined || sourceFile === undefined) {
     return undefined;
   }
+  assertSemanticSourceFileOwned(program, sourceFile);
   const context = defaultOptions.context ?? Background();
   const [checker, done] = Program_GetTypeCheckerForFile(program, context, sourceFile);
   try {

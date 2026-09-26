@@ -144,6 +144,8 @@ for (const invalidAssignment of [false, true]) {
           `import type { Value } from "${moduleSpecifier}";`,
           "declare const value: Value;",
           `export const count: ${invalidAssignment ? "string" : "number"} = value.count;`,
+          "export function identity(input: number): number { return input; }",
+          "export const answer = identity(42);",
         ].join("\n"),
       },
       compilerOptions: testNoLibCompilerOptions,
@@ -167,6 +169,16 @@ for (const invalidAssignment of [false, true]) {
     assert.ok(original);
     session.ensureBound();
     const originalSymbol = Node_Symbol(original);
+    const originalQueries = createSourceProgramQueries(session.program);
+    const originalQuery = originalQueries.getSourceFileQueries(original);
+    const originalCall = findNodes(original, originalQuery.ast.children, originalQuery.ast.is.IsCallExpression)[0];
+    assert.ok(originalCall);
+    const originalCallInfo = originalQuery.checker.getResolvedCallInfo(originalCall);
+    const originalType = originalQuery.checker.getTypeAtLocation(originalCall);
+    const originalSignature = originalQuery.checker.getResolvedSignature(originalCall);
+    assert.ok(originalCallInfo);
+    assert.ok(originalType);
+    assert.ok(originalSignature);
     const checked = session.checkSource();
     const current = checked.getSourceFile(sourceName);
     assert.ok(current);
@@ -180,6 +192,19 @@ for (const invalidAssignment of [false, true]) {
       checked.diagnostics.map(Diagnostic_String).join("\n"));
     assert.throws(() => checked.getSourceFileQueries(original), /different compiler program or epoch/u);
     const query = checked.getSourceFileQueries(current);
+    const retired = /retired compiler program or epoch/u;
+    assert.throws(() => originalQueries.getSourceFiles(), retired);
+    assert.throws(() => originalQueries.getSourceFile(sourceName), retired);
+    assert.throws(() => originalQueries.getSourceFileQueries(original), retired);
+    assert.throws(() => originalQuery.checker.getResolvedCallInfo(originalCall), retired);
+    assert.throws(() => originalQuery.checker.getTypeAtLocation(originalCall), retired);
+    assert.throws(() => originalQuery.checker.getReturnTypeOfSignature(originalSignature), retired);
+    assert.throws(() => originalQuery.typeShape.isNumberLike(originalType), retired);
+    assert.throws(() => originalQuery.typeShape.getPropertyInfos(originalType), retired);
+    assert.throws(() => query.checker.getTypeAtLocation(originalCall), /different compiler program or epoch/u);
+    assert.throws(() => query.checker.typeToString(originalType), retired);
+    assert.throws(() => query.typeShape.isNumberLike(originalType), retired);
+    assert.throws(() => query.typeShape.getReturnTypeOfSignature(originalSignature), /different compiler program or epoch/u);
     const access = findNodes(current, query.ast.children, query.ast.is.IsPropertyAccessExpression)[0];
     assert.ok(access);
     assert.equal(query.checker.typeToString(query.checker.getTypeAtLocation(access)), "number");

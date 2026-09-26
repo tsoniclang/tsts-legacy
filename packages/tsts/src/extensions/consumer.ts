@@ -61,14 +61,17 @@ export class SourceFactQueries implements ReadonlySourceFactResolver {
   }
 
   getFact<T>(subject: ExtensionFactSubject | undefined, key: ExtensionFactKey<T>): T | undefined {
+    this.#host.assertCompilerProgramActive();
     return this.#host.facts.get(subject, key);
   }
 
   getFacts(subject: ExtensionFactSubject | undefined): readonly ExtensionFactEntry<unknown>[] {
+    this.#host.assertCompilerProgramActive();
     return this.#host.facts.entries(subject);
   }
 
   getVirtualDeclarationDocument(uriOrFileName: string): ProviderVirtualDeclarationDocument | undefined {
+    this.#host.assertCompilerProgramActive();
     return this.#host.providers.getVirtualDeclarationDocument(uriOrFileName);
   }
 

@@ -25,6 +25,7 @@ import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfig
 import type { ParseConfigHost } from "../internal/tsoptions/tsconfigparsing.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
 import {
+  extensionHostRetireCompilerProgram,
   snapshotExtensionHostOptionsForCompilerSession,
   type ExtensionHostOptions,
 } from "../extensions/host.js";
@@ -229,6 +230,7 @@ function createMaterializingProgramOwner(
     if (!coordinator.finishRound(state.round)) {
       throw new Error("Provider materialization recorded demands without monotonic progress.");
     }
+    requireExtensionHost(state.program)[extensionHostRetireCompilerProgram]();
     state = createProgramMaterializationRound(
       coordinator,
       baseProgramOptions,

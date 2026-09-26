@@ -652,6 +652,7 @@ export interface ExtendedProgram<TProgram extends object = object> {
 
 export const extensionHostSetFact: unique symbol = Symbol("tsts.extensionHost.setFact");
 export const extensionHostRunSourceAnalysis: unique symbol = Symbol("tsts.extensionHost.runSourceAnalysis");
+export const extensionHostRetireCompilerProgram: unique symbol = Symbol("tsts.extensionHost.retireCompilerProgram");
 
 export interface AttachExtensionHostToProgramOptions {
   readonly bindCompilerProgram?: boolean;
@@ -3696,6 +3697,7 @@ export class ExtensionHost {
   readonly #mutationAttemptStack: HostMutationAttempt[] = [];
   readonly #ownerAuthority: ExtensionOwnerAuthority;
   #program: object;
+  #compilerProgramRetired = false;
   #compilerContext: SourceProgramQueries | undefined;
   #sourceAnalysisState: "pending" | "running" | "completed" | "failed" = "pending";
   #semanticFinalizationState: "open" | "finalized" | "failed" = "open";
@@ -3802,7 +3804,27 @@ export class ExtensionHost {
     return this.#program;
   }
 
+  assertCompilerProgramActive(): void {
+    if (this.#compilerProgramRetired) {
+      throw new Error("Source semantic queries cannot use a retired compiler program or epoch.");
+    }
+  }
+
+  [extensionHostRetireCompilerProgram](): void {
+    const activeOwner = this.#ownerAuthority.stack[this.#ownerAuthority.stack.length - 1];
+    if (activeOwner !== undefined || this.#mutationAttemptStack.length !== 0) {
+      throw new Error("Only the compiler session can retire a program outside extension callbacks.");
+    }
+    if (this.#compilerProgramRetired) {
+      throw new Error("A compiler program can retire only once.");
+    }
+    this.#compilerProgramRetired = true;
+    this.#compilerContext = undefined;
+    this.facts[factStoreInvalidate]();
+  }
+
   bindCompilerProgram(program: object): void {
+    this.assertCompilerProgramActive();
     const activeOwner = this.#ownerAuthority.stack[this.#ownerAuthority.stack.length - 1];
     if (activeOwner !== undefined) {
       throw new Error(`Extension '${activeOwner}' cannot replace the host compiler program.`);
@@ -4109,6 +4131,7 @@ export class ExtensionHost {
   }
 
   finalizeSemantics(): void {
+    this.assertCompilerProgramActive();
     if (this.#semanticFinalizationState === "finalized") {
       return;
     }
@@ -4144,6 +4167,7 @@ export class ExtensionHost {
   }
 
   getCompilerQueryContext(context?: Context): SourceProgramQueries {
+    this.assertCompilerProgramActive();
     if (this.#compilerContext !== undefined) {
       return this.#compilerContext;
     }
