@@ -260,6 +260,7 @@ function createMaterializingProgramOwner(
     if (finalized !== undefined) return operation(finalized.program);
     while (true) {
       try {
+        if (state.elaboration !== undefined) Program_BindSourceFiles(state.program);
         requireExtensionHost(state.program)[extensionHostRunElaboration]();
         if (rebuildForPendingDemands()) continue;
         if (state.elaboration !== undefined || state.round.hasIncrementalProvider()) {
@@ -330,7 +331,6 @@ function createProgramMaterializationRound(
   }
   const extensionHost = requireExtensionHost(program);
   if (extensionHost.hasSourceElaboration) {
-    Program_BindSourceFiles(program);
     const elaboration = elaborationCoordinator.beginRound(extensionHost.getCompilerQueryContext());
     extensionHost[extensionHostAttachElaboration](elaboration);
     return Object.freeze({ program, round, elaboration });

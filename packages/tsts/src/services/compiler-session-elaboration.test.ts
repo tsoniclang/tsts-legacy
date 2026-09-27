@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Node } from "../internal/ast/ast.js";
+import { SourceFile_IsBound } from "../internal/ast/ast.js";
 import { Diagnostic_Code, Diagnostic_String } from "../internal/ast/diagnostic.js";
 import {
   defineExtensionFactKey,
@@ -71,6 +72,28 @@ test("source elaboration batches independent demands and publishes facts only in
   assert.deepEqual(variables(checked).map(node => checked.sourceFacts.getFact(node, factKey)), [1, 2, 3]);
   assert.throws(() => oldQueries.getSourceFile("/src/index.ts"), /retired compiler/);
   assert.equal(compiler.checkSource(), checked);
+});
+
+test("an elaborating session attaches its lifecycle before binding starts", () => {
+  const factKey = key<number>(value => value);
+  let resolutions = 0;
+  const compiler = session([extension(factKey, context => {
+    const file = context.source.getSourceFile("/src/index.ts");
+    assert.ok(file);
+    assert.equal(SourceFile_IsBound(file), true);
+    resolutions += 1;
+    return 42;
+  })]);
+  const file = createSourceProgramQueries(compiler.program).getSourceFile("/src/index.ts");
+  assert.ok(file);
+  assert.equal(SourceFile_IsBound(file), false);
+  assert.equal(resolutions, 0);
+  compiler.ensureBound();
+  const current = createSourceProgramQueries(compiler.program).getSourceFile("/src/index.ts");
+  assert.ok(current);
+  assert.notEqual(current, file);
+  assert.equal(SourceFile_IsBound(current), true);
+  assert.equal(resolutions, 1);
 });
 
 for (const operation of ["bind", "semantic", "suggestion", "declaration", "ensureBound", "ensureChecked", "emit-files"] as const) {

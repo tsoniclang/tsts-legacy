@@ -9,6 +9,7 @@ import { createCompilerSessionFromFiles } from "./compiler-session.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { SourceElaborationCoordinator } from "../extensions/source-elaboration.js";
 import { createSourceProgramQueries } from "../extensions/source-program.js";
+import { SourceFile_IsBound } from "../internal/ast/ast.js";
 
 let nextOwner = 0;
 
@@ -84,6 +85,38 @@ test("elaboration references reject another session even with identical source a
   const reference = first.value.reference(first.source.getSourceFile("/src/left.ts")!);
   second.value.reference(second.source.getSourceFile("/src/left.ts")!);
   assert.throws(() => second.value.resolveReference(reference), /different session or input revision/);
+});
+
+test("accepted elaboration facts resolve into unbound syntax before the new epoch binds", () => {
+  const compiler = session();
+  compiler.ensureBound();
+  const source = createSourceProgramQueries(compiler.program);
+  const owner = new SourceElaborationCoordinator();
+  const first = owner.beginRound(source);
+  const file = source.getSourceFile("/src/left.ts");
+  assert.ok(file);
+  const parameter = findNodes(file, source.ast.children, source.ast.is.IsTypeParameterDeclaration)[0];
+  assert.ok(parameter);
+  const factKey = defineExtensionFactKey<number>({ extensionId: "test.unbound.replay", name: "value", snapshot: value => value });
+  first.request(parameter, factKey);
+  const request = first.ready()[0];
+  assert.ok(request);
+  first.resolve(request, () => 42);
+  owner.finishRound(first, false);
+
+  const fresh = session();
+  const freshSource = createSourceProgramQueries(fresh.program);
+  const freshFile = freshSource.getSourceFile("/src/left.ts");
+  assert.ok(freshFile);
+  assert.equal(SourceFile_IsBound(freshFile), false);
+  const next = owner.beginRound(freshSource);
+  const answer = next.accepted()[0];
+  assert.ok(answer);
+  assert.equal(answer.value, 42);
+  assert.notEqual(answer.node, parameter);
+  assert.equal(answer.node, findNodes(freshFile, freshSource.ast.children, freshSource.ast.is.IsTypeParameterDeclaration)[0]);
+  assert.equal(SourceFile_IsBound(freshFile), false);
+  owner.seal(next);
 });
 
 test("provider revision changes invalidate previously issued source references", () => {

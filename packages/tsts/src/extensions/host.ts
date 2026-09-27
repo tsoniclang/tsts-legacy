@@ -3856,6 +3856,17 @@ export class ExtensionHost {
       throw new Error("Only the compiler session can attach one elaboration round to a program.");
     }
     this.#elaboration = round;
+    for (const answer of round.accepted()) {
+      this.#requireSourceElaborator(answer.key);
+      const result = this[extensionHostSetFact](answer.node, answer.key, answer.value);
+      if (result !== "inserted" && result !== "idempotent") {
+        throw new Error("Source elaboration answer conflicts with current source facts.");
+      }
+      const installed = snapshotProviderBoundaryData(this.facts.get(answer.node, answer.key), "sourceElaboration.installed");
+      if (installed.kind === "invalid" || !providerBoundaryDataEquals(installed.value, answer.value)) {
+        throw new Error("Source elaboration answer changed while installing its exact fact snapshot.");
+      }
+    }
   }
 
   [extensionHostRequireElaboration]<T>(node: Node, key: ExtensionFactKey<T>): T {
@@ -3879,17 +3890,6 @@ export class ExtensionHost {
     if (this.#ownerAuthority.stack.length !== 0) throw new Error("Source elaboration cannot nest extension callbacks.");
     if (this.#elaborationRun) return;
     this.#elaborationRun = true;
-    for (const answer of round.accepted()) {
-      this.#requireSourceElaborator(answer.key);
-      const result = this[extensionHostSetFact](answer.node, answer.key, answer.value);
-      if (result !== "inserted" && result !== "idempotent") {
-        throw new Error("Source elaboration answer conflicts with current source facts.");
-      }
-      const installed = snapshotProviderBoundaryData(this.facts.get(answer.node, answer.key), "sourceElaboration.installed");
-      if (installed.kind === "invalid" || !providerBoundaryDataEquals(installed.value, answer.value)) {
-        throw new Error("Source elaboration answer changed while installing its exact fact snapshot.");
-      }
-    }
     const source = this.getCompilerQueryContext();
     for (const extension of this.#extensions) {
       if (extension.elaborateSource === undefined) continue;
