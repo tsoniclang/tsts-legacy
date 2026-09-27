@@ -25,6 +25,8 @@ import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfig
 import type { ParseConfigHost } from "../internal/tsoptions/tsconfigparsing.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
 import {
+  extensionHostAttachElaboration,
+  extensionHostRunElaboration,
   extensionHostRetireCompilerProgram,
   snapshotExtensionHostOptionsForCompilerSession,
   type ExtensionHostOptions,
@@ -35,6 +37,8 @@ import {
   ProviderMaterializationCoordinator,
   type ProviderMaterializationRound,
 } from "../extensions/provider-materialization.js";
+import { SourceElaborationCoordinator, isSourceElaborationSuspension, type SourceElaborationRound } from "../extensions/source-elaboration.js";
+import type { SourceElaborationLimits } from "../extensions/source-elaboration-model.js";
 import { createSourceFactQueries } from "../extensions/consumer.js";
 import type { CheckedSourceProgram } from "../extensions/source-program.js";
 import { getProviderVirtualArtifactForCompiler } from "../extensions/provider-virtual-internal.js";
@@ -55,6 +59,7 @@ export type CompilerDiagnosticKind =
 export interface CompilerSessionOptions {
   readonly programOptions: ProgramOptions;
   readonly extensionHostOptions?: ExtensionHostOptions;
+  readonly sourceElaborationLimits?: SourceElaborationLimits;
   readonly context?: Context;
 }
 
@@ -65,6 +70,7 @@ export interface InMemoryCompilerSessionOptions {
   readonly configFileName?: string;
   readonly compilerOptions?: Record<string, unknown>;
   readonly extensionHostOptions?: ExtensionHostOptions;
+  readonly sourceElaborationLimits?: SourceElaborationLimits;
   readonly useCaseSensitiveFileNames?: boolean;
   readonly context?: Context;
 }
@@ -84,7 +90,7 @@ export function createCompilerSession(options: CompilerSessionOptions): Compiler
   const context = options.context ?? Background();
   const host = createCompilerSessionHost(options.programOptions.Host);
   return createCompilerSessionForProgramOwner(
-    createMaterializingProgramOwner({ ...options.programOptions, Host: host }, options.extensionHostOptions ?? {}, context),
+    createMaterializingProgramOwner({ ...options.programOptions, Host: host }, options.extensionHostOptions ?? {}, context, options.sourceElaborationLimits),
     host,
     options.programOptions.Config,
     context,
@@ -194,6 +200,9 @@ function createFixedProgramOwner(program: Program, context: Context): CompilerSe
   if (getExtensionHost(program) === undefined) {
     attachExtensionHost(program!);
   }
+  if (requireExtensionHost(program).hasSourceElaboration) {
+    throw new Error("Source elaboration requires a compiler session that owns fresh program creation.");
+  }
   return {
     program,
     prepareForSemanticQueries(): void {},
@@ -212,40 +221,67 @@ function createMaterializingProgramOwner(
   baseProgramOptions: ProgramOptions,
   baseExtensionHostOptions: ExtensionHostOptions,
   context: Context,
+  sourceElaborationLimits?: SourceElaborationLimits,
 ): CompilerSessionProgramOwner {
   const coordinator = new ProviderMaterializationCoordinator();
+  const elaborationCoordinator = new SourceElaborationCoordinator(sourceElaborationLimits);
   const extensionHostOptionsSnapshot = snapshotExtensionHostOptionsForCompilerSession(
     baseExtensionHostOptions,
   );
   let state = createProgramMaterializationRound(
     coordinator,
+    elaborationCoordinator,
     baseProgramOptions,
     extensionHostOptionsSnapshot,
   );
   let finalized: PreparedCompilerProgram | undefined;
+  let failed = false;
   const rebuildForPendingDemands = (): boolean => {
-    if (!state.round.hasPendingDemands()) {
+    const providerPending = state.round.hasPendingDemands();
+    if (!providerPending && state.elaboration?.needsReplay() !== true) {
       return false;
     }
-    if (!coordinator.finishRound(state.round)) {
+    const providerChanged = coordinator.finishRound(state.round);
+    if (providerPending && !providerChanged) {
       throw new Error("Provider materialization recorded demands without monotonic progress.");
     }
+    if (state.elaboration !== undefined) elaborationCoordinator.finishRound(state.elaboration, providerChanged);
     requireExtensionHost(state.program)[extensionHostRetireCompilerProgram]();
     state = createProgramMaterializationRound(
       coordinator,
+      elaborationCoordinator,
       baseProgramOptions,
       extensionHostOptionsSnapshot,
     );
     return true;
   };
-  const prepareForSemanticQueries = (): void => {
-    if (finalized !== undefined || !state.round.hasIncrementalProvider()) {
-      return;
-    }
+  const prepare = (finalize: boolean): void => {
+    if (failed) throw new Error("Compiler session preparation previously failed.");
+    if (finalized !== undefined) return;
     while (true) {
-      getDiagnostics(state.program, context, "all", undefined);
-      if (!rebuildForPendingDemands()) {
+      try {
+        requireExtensionHost(state.program)[extensionHostRunElaboration]();
+        if (rebuildForPendingDemands()) continue;
+        const diagnostics = Object.freeze([...getDiagnostics(state.program, context, "all", undefined)]);
+        if (rebuildForPendingDemands()) continue;
+        if (!finalize) return;
+        const finalizedHost = finalizeExtensionSemantics(state.program);
+        if (rebuildForPendingDemands()) continue;
+        if (state.elaboration !== undefined) elaborationCoordinator.seal(state.elaboration);
+        coordinator.seal(state.round);
+        finalized = Object.freeze({ program: state.program, diagnostics, finalizedHost });
         return;
+      } catch (error) {
+        if (state.elaboration !== undefined && isSourceElaborationSuspension(error, state.elaboration)) {
+          try {
+            if (rebuildForPendingDemands()) continue;
+          } catch (replayError) {
+            failed = true;
+            throw replayError;
+          }
+        }
+        failed = true;
+        throw error;
       }
     }
   };
@@ -253,28 +289,16 @@ function createMaterializingProgramOwner(
     get program() {
       return state.program;
     },
-    prepareForSemanticQueries,
+    prepareForSemanticQueries(): void {
+      if (state.elaboration !== undefined || state.round.hasIncrementalProvider()) prepare(false);
+    },
     prepareFinalizedProgram(): PreparedCompilerProgram {
       if (finalized !== undefined) {
         return finalized;
       }
-      while (true) {
-        const diagnostics = Object.freeze([...getDiagnostics(state.program, context, "all", undefined)]);
-        if (rebuildForPendingDemands()) {
-          continue;
-        }
-        const finalizedHost = finalizeExtensionSemantics(state.program!);
-        if (rebuildForPendingDemands()) {
-          continue;
-        }
-        coordinator.seal(state.round);
-        finalized = Object.freeze({
-          program: state.program,
-          diagnostics,
-          finalizedHost,
-        });
-        return finalized;
-      }
+      prepare(true);
+      if (finalized === undefined) throw new Error("Compiler session preparation did not finalize its source program.");
+      return finalized;
     },
   };
   return owner;
@@ -283,10 +307,12 @@ function createMaterializingProgramOwner(
 interface ProgramMaterializationRoundState {
   readonly program: Program;
   readonly round: ProviderMaterializationRound;
+  readonly elaboration?: SourceElaborationRound;
 }
 
 function createProgramMaterializationRound(
   coordinator: ProviderMaterializationCoordinator,
+  elaborationCoordinator: SourceElaborationCoordinator,
   baseProgramOptions: ProgramOptions,
   baseExtensionHostOptions: ExtensionHostOptions,
 ): ProgramMaterializationRoundState {
@@ -297,6 +323,13 @@ function createProgramMaterializationRound(
   const program = NewProgram(programOptions);
   if (program === undefined) {
     throw new Error("Compiler sessions require a compiler program.");
+  }
+  const extensionHost = requireExtensionHost(program);
+  if (extensionHost.hasSourceElaboration) {
+    Program_BindSourceFiles(program);
+    const elaboration = elaborationCoordinator.beginRound(extensionHost.getCompilerQueryContext());
+    extensionHost[extensionHostAttachElaboration](elaboration);
+    return Object.freeze({ program, round, elaboration });
   }
   return Object.freeze({ program, round });
 }
@@ -347,11 +380,13 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
     const programOptions = { Config: config, Host: host } satisfies ProgramOptions;
     return createCompilerSession({
       programOptions,
+      ...(options.sourceElaborationLimits === undefined ? {} : { sourceElaborationLimits: options.sourceElaborationLimits }),
       ...(options.extensionHostOptions !== undefined ? { extensionHostOptions: options.extensionHostOptions } : {}),
       ...(options.context !== undefined ? { context: options.context } : {}),
     });
   }
   return createCompilerSession({
+    ...(options.sourceElaborationLimits === undefined ? {} : { sourceElaborationLimits: options.sourceElaborationLimits }),
     programOptions: {
       Config: config,
       Host: host,

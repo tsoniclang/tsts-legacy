@@ -4,6 +4,9 @@ export type ExtensionFactSubject = object;
 
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
+import type { Node } from "../internal/ast/ast.js";
+import type { SourceElaborationContext, SourceElaborationResolver, SourceElaborationResolverContext } from "./source-elaboration-model.js";
+import type { SourceElaborationRound } from "./source-elaboration.js";
 import { SourceFile_FileName, type SourceFile } from "../internal/ast/ast.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
@@ -292,6 +295,7 @@ export interface CompilerExtension {
   readonly identity: CompilerExtensionIdentity;
   readonly dependencies?: ExtensionDependencySpec;
   readonly initialize?: (context: ExtensionInitializeContext) => void;
+  readonly elaborateSource?: (context: SourceElaborationContext) => void;
   readonly analyzeSource?: (context: SourceAnalysisContext) => void;
 }
 
@@ -340,6 +344,7 @@ export interface SourceAnalysisContext {
 
 export interface ExtensionInitializeContext {
   readonly diagnostics: ExtensionDiagnosticWriter;
+  readonly registerSourceElaborator: <T>(key: ExtensionFactKey<T>, resolver: SourceElaborationResolver<T>) => void;
   readonly registerFactResolver: <T>(
     key: ExtensionFactKey<T>,
     resolver: ExtensionFactResolverCallback<T>,
@@ -653,6 +658,9 @@ export interface ExtendedProgram<TProgram extends object = object> {
 export const extensionHostSetFact: unique symbol = Symbol("tsts.extensionHost.setFact");
 export const extensionHostRunSourceAnalysis: unique symbol = Symbol("tsts.extensionHost.runSourceAnalysis");
 export const extensionHostRetireCompilerProgram: unique symbol = Symbol("tsts.extensionHost.retireCompilerProgram");
+export const extensionHostAttachElaboration: unique symbol = Symbol("tsts.extensionHost.attachElaboration");
+export const extensionHostRunElaboration: unique symbol = Symbol("tsts.extensionHost.runElaboration");
+export const extensionHostRequireElaboration: unique symbol = Symbol("tsts.extensionHost.requireElaboration");
 
 export interface AttachExtensionHostToProgramOptions {
   readonly bindCompilerProgram?: boolean;
@@ -3698,6 +3706,12 @@ export class ExtensionHost {
   readonly #ownerAuthority: ExtensionOwnerAuthority;
   #program: object;
   #compilerProgramRetired = false;
+  #elaboration: SourceElaborationRound | undefined;
+  #elaborationRun = false;
+  readonly #sourceElaborators = new Map<string, {
+    readonly key: ExtensionFactKey<unknown>;
+    readonly resolve: SourceElaborationResolver<unknown>;
+  }>();
   #compilerContext: SourceProgramQueries | undefined;
   #sourceAnalysisState: "pending" | "running" | "completed" | "failed" = "pending";
   #semanticFinalizationState: "open" | "finalized" | "failed" = "open";
@@ -3744,6 +3758,8 @@ export class ExtensionHost {
         continue;
       }
       const attempt = this.#beginFactAttempt();
+      const elaborators = new Map<string, { readonly key: ExtensionFactKey<unknown>; readonly resolve: SourceElaborationResolver<unknown> }>();
+      let elaboratorRegistrationFailed = false;
       try {
         const capabilities = this.#getOwnerCapabilities(extension.identity.id);
         let rangeRegistered = false;
@@ -3759,6 +3775,22 @@ export class ExtensionHost {
           try {
             extension.initialize?.(Object.freeze({
               diagnostics: createExtensionDiagnosticWriter(capabilities.diagnostics, scope),
+              registerSourceElaborator: <T>(key: ExtensionFactKey<T>, resolve: SourceElaborationResolver<T>): void => {
+                assertExtensionCapabilityActive(scope);
+                try {
+                  getExtensionFactKeyIdentity(key);
+                  if (key.extensionId !== extension.identity.id || typeof resolve !== "function") {
+                    throw new Error("A source elaborator requires its exact owning extension and a resolver.");
+                  }
+                  if (elaborators.has(key.id) || this.#sourceElaborators.has(key.id)) {
+                    throw new Error(`Source elaborator '${key.id}' is already registered.`);
+                  }
+                  elaborators.set(key.id, Object.freeze({ key: key as ExtensionFactKey<unknown>, resolve }));
+                } catch (error) {
+                  elaboratorRegistrationFailed = true;
+                  throw error;
+                }
+              },
               registerFactResolver: <T>(
                 key: ExtensionFactKey<T>,
                 resolver: ExtensionFactResolverCallback<T>,
@@ -3779,7 +3811,9 @@ export class ExtensionHost {
           this.#discardFactAttemptPreservingDiagnostics(attempt);
           continue;
         }
+        if (elaboratorRegistrationFailed) throw new Error("Source elaborator registration failed during initialization.");
         this.#commitFactAttempt(attempt);
+        for (const [id, elaborator] of elaborators) this.#sourceElaborators.set(id, elaborator);
         this.#extensionsById.set(extension.identity.id, extension);
         this.#extensions.push(extension);
       } catch (error) {
@@ -3804,10 +3838,110 @@ export class ExtensionHost {
     return this.#program;
   }
 
+  get hasSourceElaboration(): boolean {
+    return this.#sourceElaborators.size !== 0 || this.#extensions.some(extension => extension.elaborateSource !== undefined);
+  }
+
   assertCompilerProgramActive(): void {
     if (this.#compilerProgramRetired) {
       throw new Error("Source semantic queries cannot use a retired compiler program or epoch.");
     }
+    this.#elaboration?.assertNotSuspended();
+  }
+
+  [extensionHostAttachElaboration](round: SourceElaborationRound): void {
+    this.assertCompilerProgramActive();
+    if (this.#elaboration !== undefined || this.#ownerAuthority.stack.length !== 0) {
+      throw new Error("Only the compiler session can attach one elaboration round to a program.");
+    }
+    this.#elaboration = round;
+  }
+
+  [extensionHostRequireElaboration]<T>(node: Node, key: ExtensionFactKey<T>): T {
+    this.assertCompilerProgramActive();
+    if (this.#elaboration === undefined) {
+      throw new Error("Source elaboration requires a compiler session with an elaborating source extension.");
+    }
+    this.#requireSourceElaborator(key);
+    return this.#elaboration.require(node, key);
+  }
+
+  [extensionHostRunElaboration](): void {
+    this.assertCompilerProgramActive();
+    const round = this.#elaboration;
+    if (round === undefined) {
+      if (this.hasSourceElaboration) {
+        throw new Error("Source elaboration requires a replay-capable compiler session.");
+      }
+      return;
+    }
+    if (this.#ownerAuthority.stack.length !== 0) throw new Error("Source elaboration cannot nest extension callbacks.");
+    if (this.#elaborationRun) return;
+    this.#elaborationRun = true;
+    for (const answer of round.accepted()) {
+      this.#requireSourceElaborator(answer.key);
+      const result = this[extensionHostSetFact](answer.node, answer.key, answer.value);
+      if (result !== "inserted" && result !== "idempotent") {
+        throw new Error("Source elaboration answer conflicts with current source facts.");
+      }
+    }
+    const source = this.getCompilerQueryContext();
+    for (const extension of this.#extensions) {
+      if (extension.elaborateSource === undefined) continue;
+      const scope = createExtensionCapabilityScope();
+      try {
+        runWithExtensionOwnerAuthority(this.#ownerAuthority, extension.identity.id, () => {
+          extension.elaborateSource!(Object.freeze({
+            source,
+            request: <T>(node: Node, key: ExtensionFactKey<T>): void => {
+              assertExtensionCapabilityActive(scope);
+              this.#assertSourceAnalyzerFactReadable(extension.identity.id, key);
+              this.#requireSourceElaborator(key);
+              round.request(node, key);
+            },
+          }));
+        });
+      } finally {
+        revokeExtensionCapabilityScope(scope);
+      }
+    }
+    for (const request of round.ready()) {
+      const elaborator = this.#requireSourceElaborator(request.key);
+      const scope = createExtensionCapabilityScope();
+      const assertReadable = <T>(key: ExtensionFactKey<T>): void => {
+        assertExtensionCapabilityActive(scope);
+        this.#assertSourceAnalyzerFactReadable(request.key.extensionId, key);
+        this.#requireSourceElaborator(key);
+      };
+      const resolverContext: SourceElaborationResolverContext = Object.freeze({
+        source,
+        node: request.node,
+        request: <T>(node: Node, key: ExtensionFactKey<T>): void => {
+          assertReadable(key);
+          round.request(node, key);
+        },
+        require: <T>(node: Node, key: ExtensionFactKey<T>): T => {
+          assertReadable(key);
+          return round.require(node, key);
+        },
+      });
+      try {
+        runWithExtensionOwnerAuthority(this.#ownerAuthority, request.key.extensionId, () => {
+          round.resolve(request, () => elaborator.resolve(resolverContext));
+        });
+      } finally {
+        revokeExtensionCapabilityScope(scope);
+      }
+    }
+  }
+
+  #requireSourceElaborator<T>(key: ExtensionFactKey<T>) {
+    getExtensionFactKeyIdentity(key);
+    const elaborator = this.#sourceElaborators.get(key.id);
+    if (elaborator === undefined || elaborator.key !== key) {
+      throw new Error(`Source elaboration '${key.id}' has no exact registered owner.`);
+    }
+    return elaborator;
   }
 
   [extensionHostRetireCompilerProgram](): void {
@@ -4500,6 +4634,7 @@ function snapshotCompilerExtension(extension: CompilerExtension): CompilerExtens
     identity,
     ...(dependencies === undefined ? {} : { dependencies }),
     ...(extension.initialize === undefined ? {} : { initialize: extension.initialize }),
+    ...(extension.elaborateSource === undefined ? {} : { elaborateSource: extension.elaborateSource }),
     ...(extension.analyzeSource === undefined ? {} : { analyzeSource: extension.analyzeSource }),
   });
 }

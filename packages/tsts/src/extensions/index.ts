@@ -21,6 +21,13 @@ export {
   SourceFactQueries,
   createSourceFactQueries,
 } from "./consumer.js";
+export { defaultSourceElaborationLimits } from "./source-elaboration-model.js";
+export type {
+  SourceElaborationContext,
+  SourceElaborationLimits,
+  SourceElaborationResolver,
+  SourceElaborationResolverContext,
+} from "./source-elaboration-model.js";
 export {
   argumentPassingFactKey,
   associatedTypeFactKey,
