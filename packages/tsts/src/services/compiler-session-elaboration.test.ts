@@ -73,7 +73,7 @@ test("source elaboration batches independent demands and publishes facts only in
   assert.equal(compiler.checkSource(), checked);
 });
 
-for (const operation of ["semantic", "suggestion", "declaration", "ensureChecked", "emit-files"] as const) {
+for (const operation of ["bind", "semantic", "suggestion", "declaration", "ensureBound", "ensureChecked", "emit-files"] as const) {
   test(`compiler session ${operation} stays inside the same demand/replay owner`, () => {
     const factKey = key<number>(value => value);
     const compiler = session([extension(factKey, () => 42)]);
@@ -83,6 +83,8 @@ for (const operation of ["semantic", "suggestion", "declaration", "ensureChecked
     if (operation === "emit-files") {
       const files = compiler.getSourceFilesToEmit(originalFile);
       assert.ok(files.some(file => file !== undefined && file !== originalFile && file.Text() === originalFile.Text()));
+    } else if (operation === "ensureBound") {
+      compiler.ensureBound();
     } else {
       const diagnostics = operation === "ensureChecked"
         ? compiler.ensureChecked(originalFile)
@@ -162,6 +164,33 @@ test("a failed source elaboration retires escaped queries without replacing the 
   const source = retained;
   assert.throws(() => source.getSourceFiles(), /retired compiler/);
   assert.throws(() => compiler.ensureChecked(), /previously failed/);
+  assert.throws(() => compiler.ensureBound(), /previously failed/);
+  assert.throws(() => compiler.getDiagnostics("bind"), /previously failed/);
+});
+
+test("binding through replay retains actual duplicate declaration diagnostics", () => {
+  const factKey = key<number>(value => value);
+  const compiler = session([extension(factKey, () => 42)], undefined,
+    "export const duplicate = 1; export const duplicate = 2;");
+  const originalProgram = compiler.program;
+  const diagnostics = compiler.getDiagnostics("bind");
+  assert.notEqual(compiler.program, originalProgram);
+  assert.ok(diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 2451),
+    diagnostics.map(Diagnostic_String).join("\n"));
+  compiler.ensureBound();
+  const checked = compiler.checkSource();
+  assert.equal(checked.sourceFacts.getFact(variables(checked)[0], factKey), 42);
+  assert.ok(checked.diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 2451));
+});
+
+test("ordinary binding does not add replay or semantic checking", () => {
+  const compiler = session([], undefined, "export const value: string = 42;");
+  const originalProgram = compiler.program;
+  compiler.ensureBound();
+  assert.equal(compiler.program, originalProgram);
+  assert.deepEqual(compiler.getDiagnostics("bind"), []);
+  assert.equal(compiler.program, originalProgram);
+  assert.ok(compiler.ensureChecked().some(diagnostic => Diagnostic_Code(diagnostic) === 2322));
 });
 
 test("a swallowed demand suspension cannot publish the resolver's fabricated answer", () => {

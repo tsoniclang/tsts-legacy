@@ -148,7 +148,7 @@ function createCompilerSessionForProgramOwner(
             !== "canonical-export-owner");
       });
     },
-    ensureBound: () => Program_BindSourceFiles(owner.program),
+    ensureBound: () => owner.query(program => Program_BindSourceFiles(program)),
     ensureChecked: (sourceFile) => {
       const fileName = sourceFile === undefined ? undefined : SourceFile_FileName(sourceFile);
       return owner.query(program => diagnosticsOrEmpty(Program_GetSemanticDiagnostics(
@@ -355,7 +355,8 @@ function requireCurrentSourceFile(program: Program, fileName: string): GoPtr<Sou
 }
 
 function diagnosticKindRequiresSemanticProgram(kind: CompilerDiagnosticKind): boolean {
-  return kind === "semantic"
+  return kind === "bind"
+    || kind === "semantic"
     || kind === "suggestion"
     || kind === "declaration"
     || kind === "all";
