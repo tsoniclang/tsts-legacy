@@ -226,11 +226,17 @@ function recordProviderIntrinsicSymbolFact(
   virtualModule: ProviderVirtualModuleArtifact,
   declaration: ProviderExportDeclaration,
   evidence: readonly ExtensionEvidence[],
+  member?: ProviderMemberDeclaration,
 ): void {
-  extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, {
-    ...getProviderVirtualDeclarationFact(virtualModule, declaration),
-    exportId: declaration.intrinsicId ?? declaration.id,
-  }, evidence);
+  const fact = {
+    ...getProviderVirtualDeclarationFact(virtualModule, declaration, member),
+    exportId: member === undefined ? declaration.intrinsicId ?? declaration.id : declaration.id,
+  };
+  const existing = extensionHost.facts.get(symbol, providerIntrinsicDeclarationFactKey);
+  if (existing !== undefined && !providerIntrinsicDeclarationFactKey.equals(existing, fact)) {
+    throw new Error("A provider intrinsic symbol resolved to conflicting exact declaration identities.");
+  }
+  extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, fact, evidence);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(
@@ -394,6 +400,9 @@ function recordProviderVirtualMemberFacts(
         memberFact,
         evidence,
       );
+      if (member.kind === "intrinsic") {
+        recordProviderIntrinsicSymbolFact(extensionHost, memberSymbol, virtualModule, declaration, evidence, member);
+      }
     }
     for (let index = 0; index < matchingMemberNodes.length; index++) {
       const memberNode = matchingMemberNodes[index];
@@ -424,6 +433,9 @@ function recordProviderVirtualMemberFacts(
           memberFact,
           evidence,
         );
+        if (member.kind === "intrinsic") {
+          recordProviderIntrinsicSymbolFact(extensionHost, nodeSymbol, virtualModule, declaration, evidence, member);
+        }
       }
     }
   }
@@ -476,6 +488,7 @@ function providerMemberDeclarationCount(member: ProviderMemberDeclaration): numb
       return member.signatures?.length ?? 0;
     case "property":
     case "field":
+    case "intrinsic":
       return 1;
   }
 }
@@ -540,6 +553,7 @@ function providerMemberKindMatchesNode(member: ProviderMemberDeclaration, node: 
       return node.Kind === KindMethodDeclaration || node.Kind === KindMethodSignature;
     case "property":
     case "field":
+    case "intrinsic":
       return node.Kind === KindPropertyDeclaration || node.Kind === KindPropertySignature || node.Kind === KindEnumMember || node.Kind === KindVariableDeclaration;
     case "indexer":
       return node.Kind === KindIndexSignature;

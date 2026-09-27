@@ -545,7 +545,7 @@ export interface ProviderSignatureDeclaration {
 export interface ProviderMemberDeclaration {
   readonly id: string;
   readonly name: ProviderPropertyName;
-  readonly kind: "method" | "constructor" | "property" | "field" | "indexer";
+  readonly kind: "method" | "constructor" | "property" | "field" | "indexer" | "intrinsic";
   readonly static?: boolean;
   readonly readonly?: boolean;
   readonly optional?: boolean;
@@ -6524,7 +6524,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
       rendered = `${declarationPrefix}const ${declarationName}: ${renderProviderTypeExpression(declaration.type!, declarationContext)};`;
       break;
     case "intrinsic":
-      rendered = `${declarationPrefix}const ${declarationName}: unique symbol;`;
+      rendered = (declaration.members?.length ?? 0) === 0
+        ? `${declarationPrefix}const ${declarationName}: unique symbol;`
+        : `${declarationPrefix}const ${declarationName}: {\n${renderProviderMembers(declaration.members!, declarationContext)}\n};`;
       break;
     case "enum":
       rendered = `${declarationPrefix}enum ${declarationName} {\n${(declaration.members ?? []).map((member) => `  ${renderProviderPropertyName(member.name)},`).join("\n")}\n}`;
@@ -6680,6 +6682,8 @@ function renderProviderMember(member: ProviderMemberDeclaration, context: Provid
   const optionalSuffix = member.optional === true ? "?" : "";
   const name = renderProviderPropertyName(member.name);
   switch (member.kind) {
+    case "intrinsic":
+      return `readonly ${name}: unique symbol;`;
     case "constructor":
       return renderProviderSignatures("constructor", member.signatures ?? [{ id: member.id, parameters: [] }], memberContext, true).join("\n  ");
     case "method":
@@ -7493,6 +7497,8 @@ function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boo
     && (value.signatures ?? []).every(isValidProviderSignatureDeclaration)
     && (value.kind === "enum"
       ? (value.members ?? []).every(isValidProviderEnumMemberDeclaration)
+      : value.kind === "intrinsic"
+        ? (value.members ?? []).every(member => member.kind === "intrinsic" && isValidProviderNamespaceMemberDeclaration(member))
       : value.kind === "namespace" || value.kind === "function"
         ? (value.members ?? []).every(isValidProviderNamespaceMemberDeclaration)
         : (value.members ?? []).every(isValidProviderMemberDeclaration));
@@ -7515,7 +7521,7 @@ function hasNoUnrenderedProviderExportShape(value: ProviderExportDeclaration): b
     case "value":
       return noTypeParameters && noHeritage && noMembers && noSignatures;
     case "intrinsic":
-      return noType && noTypeParameters && noHeritage && noMembers && noSignatures;
+      return noType && noTypeParameters && noHeritage && noSignatures;
     case "namespace":
     case "enum":
       return noType && noTypeParameters && noHeritage && noSignatures;
@@ -7712,6 +7718,7 @@ function hasRequiredProviderExportShape(value: ProviderExportDeclaration): boole
 
 function isValidProviderMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
+    && value.kind !== "intrinsic"
     && (value.kind === "constructor" || isValidProviderPropertyName(value.name))
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderMemberShape(value)
@@ -7732,7 +7739,7 @@ function isValidProviderEnumMemberDeclaration(value: ProviderMemberDeclaration):
 function isValidProviderNamespaceMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
     && isValidProviderNamespaceMemberName(value.name)
-    && (value.kind === "method" || value.kind === "property" || value.kind === "field")
+    && (value.kind === "method" || value.kind === "property" || value.kind === "field" || value.kind === "intrinsic")
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderNamespaceMemberShape(value)
     && (value.type === undefined || isValidProviderTypeExpression(value.type))
@@ -7741,6 +7748,12 @@ function isValidProviderNamespaceMemberDeclaration(value: ProviderMemberDeclarat
 
 function hasNoUnrenderedProviderMemberShape(value: ProviderMemberDeclaration): boolean {
   switch (value.kind) {
+    case "intrinsic":
+      return value.static === undefined
+        && value.readonly === undefined
+        && value.optional === undefined
+        && value.type === undefined
+        && value.signatures === undefined;
     case "constructor":
       return value.static !== true
         && value.readonly !== true
@@ -7761,6 +7774,7 @@ function hasNoUnrenderedProviderMemberShape(value: ProviderMemberDeclaration): b
 }
 
 function hasNoUnrenderedProviderNamespaceMemberShape(value: ProviderMemberDeclaration): boolean {
+  if (value.kind === "intrinsic") return hasNoUnrenderedProviderMemberShape(value);
   return value.static !== true
     && value.readonly !== true
     && value.optional !== true
@@ -7769,6 +7783,8 @@ function hasNoUnrenderedProviderNamespaceMemberShape(value: ProviderMemberDeclar
 
 function hasRequiredProviderMemberShape(value: ProviderMemberDeclaration): boolean {
   switch (value.kind) {
+    case "intrinsic":
+      return true;
     case "method":
       return value.signatures !== undefined
         && value.signatures.length > 0

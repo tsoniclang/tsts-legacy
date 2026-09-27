@@ -102,6 +102,7 @@ function providerMemberSurfaceKey(member: ProviderMemberDeclaration): string {
     case "method":
     case "property":
     case "field":
+    case "intrinsic":
       return JSON.stringify([
         staticMember,
         providerPropertySourceKey(member.name),

@@ -1111,7 +1111,8 @@ function isProviderMemberKind(value: unknown): boolean {
     || value === "constructor"
     || value === "property"
     || value === "field"
-    || value === "indexer";
+    || value === "indexer"
+    || value === "intrinsic";
 }
 
 function isValidProviderTypeFamilyShape(
