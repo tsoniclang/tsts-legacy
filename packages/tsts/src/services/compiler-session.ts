@@ -122,7 +122,7 @@ interface PreparedCompilerProgram {
 
 interface CompilerSessionProgramOwner {
   readonly program: Program;
-  prepareForSemanticQueries(): void;
+  query<T>(operation: (program: Program) => T): T;
   prepareFinalizedProgram(): PreparedCompilerProgram;
 }
 
@@ -141,36 +141,31 @@ function createCompilerSessionForProgramOwner(
     config,
     getSourceFilesToEmit: (targetSourceFile, forceDtsEmit = false) => {
       const targetFileName = targetSourceFile === undefined ? undefined : SourceFile_FileName(targetSourceFile);
-      owner.prepareForSemanticQueries();
-      const currentTargetSourceFile = targetFileName === undefined
-        ? undefined
-        : requireCurrentSourceFile(owner.program, targetFileName);
-      return (Program_getSourceFilesToEmit(owner.program, currentTargetSourceFile, forceDtsEmit) ?? [])
-        .filter((file) =>
-          getProviderVirtualArtifactForCompiler(requireExtensionHost(owner.program).providers, SourceFile_FileName(file))?.kind
-          !== "canonical-export-owner");
+      return owner.query(program => {
+        const currentTargetSourceFile = targetFileName === undefined ? undefined : requireCurrentSourceFile(program, targetFileName);
+        return (Program_getSourceFilesToEmit(program, currentTargetSourceFile, forceDtsEmit) ?? [])
+          .filter(file => getProviderVirtualArtifactForCompiler(requireExtensionHost(program).providers, SourceFile_FileName(file))?.kind
+            !== "canonical-export-owner");
+      });
     },
     ensureBound: () => Program_BindSourceFiles(owner.program),
     ensureChecked: (sourceFile) => {
       const fileName = sourceFile === undefined ? undefined : SourceFile_FileName(sourceFile);
-      owner.prepareForSemanticQueries();
-      return diagnosticsOrEmpty(Program_GetSemanticDiagnostics(
-        owner.program,
+      return owner.query(program => diagnosticsOrEmpty(Program_GetSemanticDiagnostics(
+        program,
         context,
-        fileName === undefined ? undefined : requireCurrentSourceFile(owner.program, fileName),
-      ));
+        fileName === undefined ? undefined : requireCurrentSourceFile(program, fileName),
+      )));
     },
     getDiagnostics: (kind = "all", sourceFile) => {
       const fileName = sourceFile === undefined ? undefined : SourceFile_FileName(sourceFile);
-      if (diagnosticKindRequiresSemanticProgram(kind)) {
-        owner.prepareForSemanticQueries();
-      }
-      return getDiagnostics(
-        owner.program,
+      const read = (program: Program) => getDiagnostics(
+        program,
         context,
         kind,
-        fileName === undefined ? undefined : requireCurrentSourceFile(owner.program, fileName),
+        fileName === undefined ? undefined : requireCurrentSourceFile(program, fileName),
       );
+      return diagnosticKindRequiresSemanticProgram(kind) ? owner.query(read) : read(owner.program);
     },
     checkSource: () => {
       if (checkedSourceProgram !== undefined) {
@@ -205,7 +200,7 @@ function createFixedProgramOwner(program: Program, context: Context): CompilerSe
   }
   return {
     program,
-    prepareForSemanticQueries(): void {},
+    query: operation => operation(program),
     prepareFinalizedProgram(): PreparedCompilerProgram {
       const diagnostics = Object.freeze([...getDiagnostics(program, context, "all", undefined)]);
       return Object.freeze({
@@ -236,6 +231,11 @@ function createMaterializingProgramOwner(
   );
   let finalized: PreparedCompilerProgram | undefined;
   let failed = false;
+  const fail = (error: unknown): never => {
+    failed = true;
+    requireExtensionHost(state.program)[extensionHostRetireCompilerProgram]();
+    throw error;
+  };
   const rebuildForPendingDemands = (): boolean => {
     const providerPending = state.round.hasPendingDemands();
     if (!providerPending && state.elaboration?.needsReplay() !== true) {
@@ -255,33 +255,29 @@ function createMaterializingProgramOwner(
     );
     return true;
   };
-  const prepare = (finalize: boolean): void => {
+  const query = <T>(operation: (program: Program) => T): T => {
     if (failed) throw new Error("Compiler session preparation previously failed.");
-    if (finalized !== undefined) return;
+    if (finalized !== undefined) return operation(finalized.program);
     while (true) {
       try {
         requireExtensionHost(state.program)[extensionHostRunElaboration]();
         if (rebuildForPendingDemands()) continue;
-        const diagnostics = Object.freeze([...getDiagnostics(state.program, context, "all", undefined)]);
+        if (state.elaboration !== undefined || state.round.hasIncrementalProvider()) {
+          getDiagnostics(state.program, context, "all", undefined);
+          if (rebuildForPendingDemands()) continue;
+        }
+        const result = operation(state.program);
         if (rebuildForPendingDemands()) continue;
-        if (!finalize) return;
-        const finalizedHost = finalizeExtensionSemantics(state.program);
-        if (rebuildForPendingDemands()) continue;
-        if (state.elaboration !== undefined) elaborationCoordinator.seal(state.elaboration);
-        coordinator.seal(state.round);
-        finalized = Object.freeze({ program: state.program, diagnostics, finalizedHost });
-        return;
+        return result;
       } catch (error) {
         if (state.elaboration !== undefined && isSourceElaborationSuspension(error, state.elaboration)) {
           try {
             if (rebuildForPendingDemands()) continue;
           } catch (replayError) {
-            failed = true;
-            throw replayError;
+            return fail(replayError);
           }
         }
-        failed = true;
-        throw error;
+        return fail(error);
       }
     }
   };
@@ -289,15 +285,23 @@ function createMaterializingProgramOwner(
     get program() {
       return state.program;
     },
-    prepareForSemanticQueries(): void {
-      if (state.elaboration !== undefined || state.round.hasIncrementalProvider()) prepare(false);
-    },
+    query,
     prepareFinalizedProgram(): PreparedCompilerProgram {
       if (finalized !== undefined) {
         return finalized;
       }
-      prepare(true);
-      if (finalized === undefined) throw new Error("Compiler session preparation did not finalize its source program.");
+      const prepared = query(program => {
+        const diagnostics = Object.freeze([...getDiagnostics(program, context, "all", undefined)]);
+        const finalizedHost = finalizeExtensionSemantics(program);
+        return Object.freeze({ program, diagnostics, finalizedHost });
+      });
+      try {
+        if (state.elaboration !== undefined) elaborationCoordinator.seal(state.elaboration);
+        coordinator.seal(state.round);
+      } catch (error) {
+        return fail(error);
+      }
+      finalized = prepared;
       return finalized;
     },
   };

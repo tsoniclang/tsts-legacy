@@ -73,6 +73,28 @@ test("source elaboration batches independent demands and publishes facts only in
   assert.equal(compiler.checkSource(), checked);
 });
 
+for (const operation of ["semantic", "suggestion", "declaration", "ensureChecked", "emit-files"] as const) {
+  test(`compiler session ${operation} stays inside the same demand/replay owner`, () => {
+    const factKey = key<number>(value => value);
+    const compiler = session([extension(factKey, () => 42)]);
+    const originalProgram = compiler.program;
+    const originalFile = createSourceProgramQueries(originalProgram).getSourceFile("/src/index.ts");
+    assert.ok(originalFile);
+    if (operation === "emit-files") {
+      const files = compiler.getSourceFilesToEmit(originalFile);
+      assert.ok(files.some(file => file !== undefined && file !== originalFile && file.Text() === originalFile.Text()));
+    } else {
+      const diagnostics = operation === "ensureChecked"
+        ? compiler.ensureChecked(originalFile)
+        : compiler.getDiagnostics(operation, originalFile);
+      assert.deepEqual(diagnostics, [], diagnostics.map(Diagnostic_String).join("\n"));
+    }
+    assert.notEqual(compiler.program, originalProgram);
+    const checked = compiler.checkSource();
+    assert.equal(checked.sourceFacts.getFact(variables(checked)[0], factKey), 42);
+  });
+}
+
 test("source elaboration resolves a dependency chain without retrying a mutated checker", () => {
   const factKey = key<number>(value => value);
   const visited: string[] = [];
@@ -115,14 +137,32 @@ test("source elaboration preserves independent completed results when a later de
 for (const length of [1, 2]) {
   test(`source elaboration rejects an unresolved ${length}-node cycle`, () => {
     const factKey = key<number>(value => value);
+    const queries: SourceProgramQueries[] = [];
     const compiler = session([extension(factKey, context => {
+      queries.push(context.source);
       const nodes = variables(context.source);
       return context.require(nodes[(nodes.indexOf(context.node) + 1) % length]!, factKey);
     })]);
     assert.throws(() => compiler.checkSource(), /cyclic or unresolved demands/);
     assert.throws(() => compiler.checkSource(), /previously failed/);
+    for (const source of queries) assert.throws(() => source.getSourceFiles(), /retired compiler/);
   });
 }
+
+test("a failed source elaboration retires escaped queries without replacing the original error", () => {
+  const factKey = key<number>(value => value);
+  const failure = new Error("rejected native evidence");
+  let retained: SourceProgramQueries | undefined;
+  const compiler = session([extension(factKey, context => {
+    retained = context.source;
+    throw failure;
+  })]);
+  assert.throws(() => compiler.checkSource(), error => error === failure);
+  assert.ok(retained);
+  const source = retained;
+  assert.throws(() => source.getSourceFiles(), /retired compiler/);
+  assert.throws(() => compiler.ensureChecked(), /previously failed/);
+});
 
 test("a swallowed demand suspension cannot publish the resolver's fabricated answer", () => {
   const factKey = key<number>(value => value);

@@ -3963,7 +3963,7 @@ export class ExtensionHost {
       throw new Error("Only the compiler session can retire a program outside extension callbacks.");
     }
     if (this.#compilerProgramRetired) {
-      throw new Error("A compiler program can retire only once.");
+      return;
     }
     this.#compilerProgramRetired = true;
     this.#compilerContext = undefined;
