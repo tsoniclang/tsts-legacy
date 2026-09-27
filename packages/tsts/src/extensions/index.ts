@@ -25,6 +25,7 @@ export { defaultSourceElaborationLimits } from "./source-elaboration-model.js";
 export type {
   SourceElaborationContext,
   SourceElaborationLimits,
+  SourceElaborationNodeReference,
   SourceElaborationResolver,
   SourceElaborationResolverContext,
 } from "./source-elaboration-model.js";

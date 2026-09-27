@@ -93,6 +93,16 @@ test("elaboration fails permanently when a result snapshot fails", () => {
   assert.throws(() => compiler.checkSource(), /previously failed/);
 });
 
+test("elaboration rejects a fact snapshot that changes the accepted answer during replay", () => {
+  const key = factKey<number>(value => value + 1);
+  const compiler = session([{
+    identity: { id: key.extensionId, version: "1.0.0" },
+    initialize: context => context.registerSourceElaborator(key, () => 42),
+    elaborateSource: context => context.request(context.source.getSourceFile("/src/main.ts")!, key),
+  }]);
+  assert.throws(() => compiler.checkSource(), /changed while installing/);
+});
+
 test("failed elaboration initializer cannot leak a foreign resolver registration", () => {
   const owned = factKey<number>(value => value);
   const foreign = factKey<number>(value => value);

@@ -148,7 +148,7 @@ test("source elaboration retains ordinary strict source errors rather than certi
 });
 
 test("source elaboration keeps copied data immutable through source analysis and consumer reads", () => {
-  const factKey = key<{ readonly nested: readonly number[] }>(value => value);
+  const factKey = key<{ readonly nested: readonly number[] }>(value => Object.freeze({ nested: Object.freeze([...value.nested]) }));
   const result = { nested: [42] };
   const compiler = session([extension(factKey, () => result)]);
   const checked = compiler.checkSource();
@@ -275,16 +275,21 @@ test("provider materialization invalidates elaboration answers before source che
 for (const [field, selected, expected] of [
   ["maximumRounds", 1, /replay budget/],
   ["maximumRequests", 1, /request budget/],
+  ["maximumReferences", 1, /reference budget/],
   ["maximumDependencies", 1, /dependency budget/],
   ["maximumAnchorDepth", 1, /depth budget/],
   ["maximumDataRows", 1, /evidence budget/],
   ["maximumDataCodeUnits", 1, /evidence budget/],
 ] as const) {
   test(`source elaboration independently enforces ${field}`, () => {
-    const factKey = key<unknown>(value => value);
+    const factKey = key<unknown>(value => value !== null && typeof value === "object" ? Object.freeze(structuredClone(value)) : value);
     const compiler = session([extension(factKey, context => {
       const nodes = variables(context.source);
       const index = nodes.indexOf(context.node);
+      if (field === "maximumReferences") {
+        context.reference(nodes[0]!);
+        context.reference(nodes[1]!);
+      }
       if (field === "maximumDependencies" && index === 0) {
         context.require(nodes[1]!, factKey);
         context.require(nodes[2]!, factKey);

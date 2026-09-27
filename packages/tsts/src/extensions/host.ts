@@ -5,7 +5,7 @@ export type ExtensionFactSubject = object;
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import type { Node } from "../internal/ast/ast.js";
-import type { SourceElaborationContext, SourceElaborationResolver, SourceElaborationResolverContext } from "./source-elaboration-model.js";
+import type { SourceElaborationContext, SourceElaborationNodeReference, SourceElaborationResolver, SourceElaborationResolverContext } from "./source-elaboration-model.js";
 import type { SourceElaborationRound } from "./source-elaboration.js";
 import { SourceFile_FileName, type SourceFile } from "../internal/ast/ast.js";
 import type { Program } from "../internal/compiler/program.js";
@@ -63,6 +63,7 @@ import {
   assertProviderAncillaryAggregateScalarCodeUnits,
   assertProviderBoundaryString,
   formatProviderBoundarySnapshotFailure,
+  snapshotProviderBoundaryData,
   snapshotProviderEvidenceArray,
 } from "./provider-boundary-data.js";
 import {
@@ -3884,6 +3885,10 @@ export class ExtensionHost {
       if (result !== "inserted" && result !== "idempotent") {
         throw new Error("Source elaboration answer conflicts with current source facts.");
       }
+      const installed = snapshotProviderBoundaryData(this.facts.get(answer.node, answer.key), "sourceElaboration.installed");
+      if (installed.kind === "invalid" || !providerBoundaryDataEquals(installed.value, answer.value)) {
+        throw new Error("Source elaboration answer changed while installing its exact fact snapshot.");
+      }
     }
     const source = this.getCompilerQueryContext();
     for (const extension of this.#extensions) {
@@ -3916,6 +3921,14 @@ export class ExtensionHost {
       const resolverContext: SourceElaborationResolverContext = Object.freeze({
         source,
         node: request.node,
+        reference: (node: Node) => {
+          assertExtensionCapabilityActive(scope);
+          return round.reference(node);
+        },
+        resolve: (reference: SourceElaborationNodeReference) => {
+          assertExtensionCapabilityActive(scope);
+          return round.resolveReference(reference);
+        },
         request: <T>(node: Node, key: ExtensionFactKey<T>): void => {
           assertReadable(key);
           round.request(node, key);

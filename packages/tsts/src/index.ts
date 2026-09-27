@@ -112,6 +112,7 @@ export type {
   SourceDeclarationMaterializationMode,
   SourceElaborationContext,
   SourceElaborationLimits,
+  SourceElaborationNodeReference,
   SourceElaborationResolver,
   SourceElaborationResolverContext,
   SourceFileQueries,

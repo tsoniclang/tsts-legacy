@@ -3,10 +3,12 @@ import { getExtensionFactKeyIdentity, type ExtensionFactKey } from "./fact-key.j
 import { encodeIdentityTuple } from "./identity-tuple.js";
 import { snapshotProviderBoundaryData, formatProviderBoundarySnapshotFailure } from "./provider-boundary-data.js";
 import { SourceElaborationAnchors, type SourceElaborationAnchor } from "./source-elaboration-anchors.js";
+import { SourceElaborationBudget } from "./source-elaboration-budget.js";
 import {
   defaultSourceElaborationLimits,
   snapshotSourceElaborationLimits,
   type SourceElaborationLimits,
+  type SourceElaborationNodeReference,
   type SourceElaborationRequest,
 } from "./source-elaboration-model.js";
 import type { SourceProgramQueries } from "./source-program.js";
@@ -27,12 +29,16 @@ interface ReplayData {
   readonly requests: ReadonlyMap<string, StoredRequest>;
   readonly answers: ReadonlyMap<string, StoredAnswer>;
   readonly dependencies: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly references: ReadonlyMap<number, SourceElaborationAnchor>;
 }
 
 const suspensionRounds = new WeakMap<object, SourceElaborationRound>();
+let nextSession = 0;
 
 export class SourceElaborationCoordinator {
   readonly #limits: SourceElaborationLimits;
+  readonly #session: number;
+  #revision = 0;
   #data: ReplayData = emptyReplayData();
   #inputs: ReadonlyMap<string, string> | undefined;
   #active: SourceElaborationRound | undefined;
@@ -42,6 +48,8 @@ export class SourceElaborationCoordinator {
 
   constructor(limits: SourceElaborationLimits = defaultSourceElaborationLimits) {
     this.#limits = snapshotSourceElaborationLimits(limits);
+    if (nextSession === Number.MAX_SAFE_INTEGER) throw new Error("Source elaboration session identity capacity is exhausted.");
+    this.#session = ++nextSession;
   }
 
   beginRound(source: SourceProgramQueries): SourceElaborationRound {
@@ -52,14 +60,17 @@ export class SourceElaborationCoordinator {
       this.#failed = true;
       throw new Error("Source elaboration exceeds its bounded replay budget.");
     }
-    const anchors = new SourceElaborationAnchors(source, this.#limits.maximumAnchorDepth);
+    const budget = new SourceElaborationBudget(this.#limits);
+    for (const answer of this.#data.answers.values()) budget.reserve(answer.rows, answer.codeUnits);
+    const anchors = new SourceElaborationAnchors(source, this.#limits.maximumAnchorDepth, budget,
+      [...this.#data.requests.values()].map(request => request.anchor).concat([...this.#data.references.values()]));
     const inputs = anchors.sourceInputs();
     if (this.#inputs !== undefined && !sameSourceInputs(this.#inputs, inputs)) {
       this.#failed = true;
       throw new Error("Source elaboration cannot reuse evidence after its source inputs changed.");
     }
     this.#inputs = inputs;
-    this.#active = new SourceElaborationRound(anchors, this.#limits, this.#data);
+    this.#active = new SourceElaborationRound(anchors, this.#limits, this.#data, this.#session, this.#revision, budget);
     return this.#active;
   }
 
@@ -68,6 +79,7 @@ export class SourceElaborationCoordinator {
     try {
       const completed = round.finish();
       if (providerRevisionChanged) {
+        this.#revision += 1;
         this.#inputs = undefined;
         this.#data = emptyReplayData();
       } else {
@@ -105,24 +117,29 @@ export class SourceElaborationRound {
   readonly #answers: ReadonlyMap<string, StoredAnswer>;
   readonly #dependencies: Map<string, Set<string>>;
   readonly #published = new Map<string, StoredAnswer>();
+  readonly #session: number;
+  readonly #revision: number;
+  readonly #references: Map<number, SourceElaborationAnchor>;
+  readonly #referenceIds: Map<string, number>;
+  readonly #budget: SourceElaborationBudget;
   #resolving: string | undefined;
   #suspension: Error | undefined;
-  #rows = 0;
-  #codeUnits = 0;
   #dependencyCount = 0;
   #state: "active" | "finished" | "sealed" | "failed" = "active";
 
-  constructor(anchors: SourceElaborationAnchors, limits: SourceElaborationLimits, data: ReplayData) {
+  constructor(anchors: SourceElaborationAnchors, limits: SourceElaborationLimits, data: ReplayData, session: number, revision: number,
+    budget: SourceElaborationBudget) {
     this.#anchors = anchors;
     this.#limits = limits;
+    this.#budget = budget;
     this.#requests = new Map(data.requests);
     this.#answers = data.answers;
+    this.#session = session;
+    this.#revision = revision;
+    this.#references = new Map(data.references);
+    this.#referenceIds = new Map([...data.references].map(([id, anchor]) => [anchor.id, id]));
     this.#dependencies = new Map([...data.dependencies].map(([id, dependencies]) => [id, new Set(dependencies)]));
     for (const dependencies of this.#dependencies.values()) this.#dependencyCount += dependencies.size;
-    for (const answer of this.#answers.values()) {
-      this.#rows += answer.rows;
-      this.#codeUnits += answer.codeUnits;
-    }
   }
 
   request<T>(node: Node, key: ExtensionFactKey<T>): void {
@@ -135,6 +152,42 @@ export class SourceElaborationRound {
       this.#fail("Source elaboration exceeds its request budget.");
     }
     this.#requests.set(id, Object.freeze({ anchor, key: key as ExtensionFactKey<unknown> }));
+  }
+
+  reference(node: Node): SourceElaborationNodeReference {
+    this.#assertActive();
+    const anchor = this.#anchors.reference(node);
+    let id = this.#referenceIds.get(anchor.id);
+    if (id === undefined) {
+      if (this.#references.size >= this.#limits.maximumReferences) this.#fail("Source elaboration exceeds its reference budget.");
+      id = this.#references.size;
+      this.#references.set(id, anchor);
+      this.#referenceIds.set(anchor.id, id);
+    }
+    return Object.freeze({ session: this.#session, revision: this.#revision, id });
+  }
+
+  resolveReference(reference: SourceElaborationNodeReference): Node {
+    this.#assertActive();
+    if (reference === null || typeof reference !== "object" || Reflect.ownKeys(reference).length !== 3 ||
+        Object.getPrototypeOf(reference) !== Object.prototype && Object.getPrototypeOf(reference) !== null) {
+      return this.#fail("Source elaboration reference must be an exact issued data record.");
+    }
+    const fields = ["session", "revision", "id"] as const;
+    const values = fields.map(field => {
+      const descriptor = Object.getOwnPropertyDescriptor(reference, field);
+      const value: unknown = descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+        return this.#fail("Source elaboration reference has an invalid identity field.");
+      }
+      return value;
+    });
+    if (values[0] !== this.#session || values[1] !== this.#revision) {
+      return this.#fail("Source elaboration reference belongs to a different session or input revision.");
+    }
+    const anchor = this.#references.get(values[2]!);
+    if (anchor === undefined) return this.#fail("Source elaboration reference was not issued by this session.");
+    return this.#anchors.resolve(anchor);
   }
 
   require<T>(node: Node, key: ExtensionFactKey<T>): T {
@@ -169,11 +222,7 @@ export class SourceElaborationRound {
       if (snapshot.kind === "invalid") this.#fail(formatProviderBoundarySnapshotFailure(snapshot));
       const rows = snapshot.physicalNodeAndCollectionEntryCount;
       const codeUnits = snapshot.scalarCodeUnits;
-      if (rows > this.#limits.maximumDataRows - this.#rows || codeUnits > this.#limits.maximumDataCodeUnits - this.#codeUnits) {
-        this.#fail("Source elaboration exceeds its aggregate evidence budget.");
-      }
-      this.#rows += rows;
-      this.#codeUnits += codeUnits;
+      this.#budget.reserve(rows, codeUnits);
       this.#published.set(id, Object.freeze({ request: this.#requests.get(id)!, value: snapshot.value, rows, codeUnits }));
     } catch (error) {
       if (!isSourceElaborationSuspension(error, this)) this.#state = "failed";
@@ -220,6 +269,7 @@ export class SourceElaborationRound {
       requests: this.#requests,
       answers: new Map([...this.#answers, ...this.#published]),
       dependencies: this.#dependencies,
+      references: this.#references,
     });
   }
 
@@ -258,7 +308,7 @@ function requestId(anchor: SourceElaborationAnchor, key: { readonly id: string }
 }
 
 function emptyReplayData(): ReplayData {
-  return { requests: new Map(), answers: new Map(), dependencies: new Map() };
+  return { requests: new Map(), answers: new Map(), dependencies: new Map(), references: new Map() };
 }
 
 function dependencyCount(data: ReplayData): number {

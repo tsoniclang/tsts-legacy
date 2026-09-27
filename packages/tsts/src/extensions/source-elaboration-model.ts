@@ -7,6 +7,12 @@ export interface SourceElaborationRequest {
   readonly key: ExtensionFactKey<unknown>;
 }
 
+export interface SourceElaborationNodeReference {
+  readonly session: number;
+  readonly revision: number;
+  readonly id: number;
+}
+
 export interface SourceElaborationContext {
   readonly source: SourceProgramQueries;
   readonly request: <T>(node: Node, key: ExtensionFactKey<T>) => void;
@@ -15,6 +21,8 @@ export interface SourceElaborationContext {
 export interface SourceElaborationResolverContext extends SourceElaborationContext {
   readonly node: Node;
   readonly require: <T>(node: Node, key: ExtensionFactKey<T>) => T;
+  readonly reference: (node: Node) => SourceElaborationNodeReference;
+  readonly resolve: (reference: SourceElaborationNodeReference) => Node;
 }
 
 export type SourceElaborationResolver<T> = (context: SourceElaborationResolverContext) => T;
@@ -22,6 +30,7 @@ export type SourceElaborationResolver<T> = (context: SourceElaborationResolverCo
 export interface SourceElaborationLimits {
   readonly maximumRounds: number;
   readonly maximumRequests: number;
+  readonly maximumReferences: number;
   readonly maximumDependencies: number;
   readonly maximumAnchorDepth: number;
   readonly maximumDataRows: number;
@@ -31,6 +40,7 @@ export interface SourceElaborationLimits {
 export const defaultSourceElaborationLimits: SourceElaborationLimits = Object.freeze({
   maximumRounds: 1024,
   maximumRequests: 65_536,
+  maximumReferences: 262_144,
   maximumDependencies: 262_144,
   maximumAnchorDepth: 2048,
   maximumDataRows: 4_194_304,
