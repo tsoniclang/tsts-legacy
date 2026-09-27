@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../services/compiler-session.js";
 import { Diagnostic_Code, Diagnostic_String } from "../internal/ast/diagnostic.js";
-import { Node_Expression } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Initializer } from "../internal/ast/ast.js";
 import { ExtensionHost, type ProviderDeclarationModel, type ProviderExportDeclaration } from "./host.js";
 import { providerVirtualDeclarationFactKey } from "./facts.js";
 import { getProviderExportContractKeyMap, getProviderIncrementalExportContractMap } from "./provider-export-contract.js";
@@ -54,6 +54,10 @@ test("ordinary and intrinsic facets preserve distinct identities through aliases
     const info = queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call));
     assert.ok(info);
     assert.equal(info.declaration.exportId, identity);
+    assert.equal(info.ordinary?.kind, "declaration");
+    assert.equal(info.ordinary?.kind === "declaration" && info.ordinary.declaration.exportId, functionDeclaration.id);
+    assert.equal(Object.isFrozen(info), true);
+    assert.equal(Object.isFrozen(info.ordinary), true);
     assert.equal(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey)?.exportId, functionDeclaration.id);
     assert.equal(queries.checker.getResolvedCallInfo(call)?.outcome, "applicable");
     assert.equal(queries.checker.getCallSignaturesOfType(queries.checker.getTypeAtLocation(Node_Expression(call))).length, 1);
@@ -66,6 +70,28 @@ test("adding an intrinsic facet does not loosen an ordinary signature", () => {
     'shared("wrong");',
   ].join("\n"));
   assert.deepEqual(checked.diagnostics.map(Diagnostic_Code), [2345]);
+});
+
+test("an intrinsic-only export has no manufactured ordinary declaration facet", () => {
+  const checked = check([{ id: identity, name: "shared", kind: "intrinsic" }], [
+    `import { shared } from "${moduleSpecifier}";`,
+    `import * as native from "${moduleSpecifier}";`,
+    "const alias = shared; export const selected = alias;",
+    "export const other = native.shared;",
+  ].join("\n"));
+  assert.deepEqual(checked.diagnostics, [], checked.diagnostics.map(Diagnostic_String).join("\n"));
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = checked.getSourceFileQueries(file);
+  const variables = findNodes(file, checked.ast.children, checked.ast.is.IsVariableDeclaration);
+  assert.equal(variables.length, 3);
+  for (const variable of variables) {
+    const info = queries.checker.getIntrinsicDeclarationInfo(Node_Initializer(variable));
+    assert.ok(info);
+    assert.equal(info.declaration.exportId, identity);
+    assert.equal(info.ordinary, undefined);
+    assert.equal("ordinary" in info, false);
+  }
 });
 
 for (const kind of ["type", "interface", "class", "enum", "value", "namespace"] as const) {
@@ -93,6 +119,8 @@ for (const kind of ["type", "interface", "class", "enum", "value", "namespace"] 
     const info = queries.checker.getIntrinsicDeclarationInfo(expression);
     assert.ok(info);
     assert.equal(info.declaration.exportId, identity);
+    assert.equal(info.ordinary?.kind, "declaration");
+    assert.equal(info.ordinary?.kind === "declaration" && info.ordinary.declaration.exportId, declaration.id);
     assert.equal(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey)?.exportId, declaration.id);
     if (kind === "type" || kind === "interface") {
       assert.deepEqual(queries.checker.getCallSignaturesOfType(queries.checker.getTypeAtLocation(expression)), []);
@@ -143,7 +171,14 @@ test("type families expose one intrinsic identity alongside every exact type ari
   const expression = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
   assert.ok(expression);
   const queries = checked.getSourceFileQueries(file);
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(expression)?.declaration.exportId, identity);
+  const info = queries.checker.getIntrinsicDeclarationInfo(expression);
+  assert.equal(info?.declaration.exportId, identity);
+  assert.equal(info?.ordinary?.kind, "type-family");
+  if (info?.ordinary?.kind !== "type-family") assert.fail("The exact type-family facet is required.");
+  assert.deepEqual(info.ordinary.family.variants.map(variant => [variant.sourceTypeArgumentCount, variant.declaration.exportId]),
+    [[0, "Native.Shared.Type0"], [1, "Native.Shared.Type1"]]);
+  assert.equal(Object.isFrozen(info.ordinary), true);
+  assert.equal(Object.isFrozen(info.ordinary.family), true);
   assert.deepEqual(queries.checker.getCallSignaturesOfType(queries.checker.getTypeAtLocation(expression)), []);
 });
 

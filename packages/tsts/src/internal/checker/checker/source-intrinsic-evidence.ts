@@ -7,7 +7,8 @@ import { AsElementAccessExpression } from "../../ast/generated/casts.js";
 import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression, IsVariableDeclaration } from "../../ast/generated/predicates.js";
 import { GetSourceFileOfNode, IsOptionalChain, IsStringLiteralLike, IsVarConst, OEKParentheses, SkipOuterExpressions } from "../../ast/utilities.js";
 import { getExtensionHost } from "../../../extensions/host.js";
-import { providerIntrinsicDeclarationFactKey, type ProviderVirtualDeclarationFact } from "../../../extensions/facts.js";
+import { providerIntrinsicDeclarationFactKey, providerTypeFamilyFactKey, providerVirtualDeclarationFactKey,
+  type ProviderTypeFamilyFact, type ProviderVirtualDeclarationFact } from "../../../extensions/facts.js";
 import type { Checker } from "./state.js";
 import { Checker_GetAliasedSymbol, Checker_GetSymbolAtLocation } from "./symbols.js";
 
@@ -15,6 +16,9 @@ export interface SourceIntrinsicDeclarationInfo {
   readonly expression: Node;
   readonly symbol: Symbol;
   readonly declaration: ProviderVirtualDeclarationFact;
+  readonly ordinary?:
+    | { readonly kind: "declaration"; readonly declaration: ProviderVirtualDeclarationFact }
+    | { readonly kind: "type-family"; readonly family: ProviderTypeFamilyFact };
 }
 
 export function resolveSourceIntrinsicDeclaration(
@@ -30,9 +34,14 @@ export function resolveSourceIntrinsicDeclaration(
   if (host === undefined) return undefined;
   const symbol = resolveStaticReferenceSymbol(checker, expression, new Set());
   const declaration = host.facts.get(symbol, providerIntrinsicDeclarationFactKey);
-  return symbol === undefined || declaration === undefined
-    ? undefined
-    : Object.freeze({ expression, symbol, declaration });
+  if (symbol === undefined || declaration === undefined) return undefined;
+  const family = host.facts.get(symbol, providerTypeFamilyFactKey);
+  const ordinary = host.facts.get(symbol, providerVirtualDeclarationFactKey);
+  const facet: SourceIntrinsicDeclarationInfo["ordinary"] = family !== undefined
+    ? Object.freeze({ kind: "type-family", family })
+    : ordinary !== undefined && ordinary.exportId !== declaration.exportId
+      ? Object.freeze({ kind: "declaration", declaration: ordinary }) : undefined;
+  return Object.freeze({ expression, symbol, declaration, ...(facet === undefined ? {} : { ordinary: facet }) });
 }
 
 function resolveStaticReferenceSymbol(
