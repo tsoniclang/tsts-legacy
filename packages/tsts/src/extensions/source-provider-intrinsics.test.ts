@@ -260,6 +260,37 @@ test("an exact namespace result type does not authorize executing its receiver o
   assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls.at(-1)))?.declaration.exportId, "Native.Emit");
 });
 
+test("optional namespace references cannot erase conditional source access", () => {
+  const session = sessionFor([
+    `import * as native from "${moduleSpecifier}";`,
+    "const alias = native;",
+    "const selected = native?.emit;",
+    'const keyed = alias?.["emit"];',
+    "native?.emit();",
+    'alias?.["emit"]();',
+    "(native?.emit)();",
+    "selected();",
+    "keyed();",
+    "alias.emit();",
+    'native["emit"]();',
+  ].join("\n"));
+  assert.deepEqual(session.getDiagnostics("syntactic"), []);
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = source.getSourceFileQueries(file);
+  const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+  assert.equal(calls.length, 7);
+  for (const call of calls.slice(0, 5)) {
+    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+  }
+  for (const call of calls.slice(5)) {
+    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call))?.declaration.exportId, "Native.Emit");
+  }
+  assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), Array(7).fill(2349));
+});
+
 test("intrinsic provider snapshots retain one immutable canonical declaration", () => {
   const declaration: ProviderExportDeclaration = { ...intrinsic };
   const host = new ExtensionHost({}, {

@@ -5,7 +5,7 @@ import type { Symbol } from "../../ast/symbol.js";
 import { SymbolFlagsAlias, SymbolFlagsNamespaceModule, SymbolFlagsValueModule } from "../../ast/generated/flags.js";
 import { AsElementAccessExpression } from "../../ast/generated/casts.js";
 import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression, IsVariableDeclaration } from "../../ast/generated/predicates.js";
-import { GetSourceFileOfNode, IsStringLiteralLike, IsVarConst, OEKParentheses, SkipOuterExpressions } from "../../ast/utilities.js";
+import { GetSourceFileOfNode, IsOptionalChain, IsStringLiteralLike, IsVarConst, OEKParentheses, SkipOuterExpressions } from "../../ast/utilities.js";
 import { getExtensionHost } from "../../../extensions/host.js";
 import { providerIntrinsicDeclarationFactKey, type ProviderVirtualDeclarationFact } from "../../../extensions/facts.js";
 import type { Checker } from "./state.js";
@@ -43,6 +43,7 @@ function resolveStaticReferenceSymbol(
   let selected = SkipOuterExpressions(expression, OEKParentheses);
   while (selected !== undefined && (IsIdentifier(selected) ||
       IsPropertyAccessExpression(selected) || IsElementAccessExpression(selected))) {
+    if (IsOptionalChain(selected)) return undefined;
     if (!IsIdentifier(selected)) {
       if (IsElementAccessExpression(selected) &&
           !IsStringLiteralLike(AsElementAccessExpression(selected)!.ArgumentExpression)) return undefined;
