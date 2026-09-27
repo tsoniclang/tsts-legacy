@@ -136,6 +136,130 @@ test("intrinsic identity cannot be supplied by a foreign source epoch", () => {
   ), /owning compiler program/u);
 });
 
+test("intrinsic lookup follows immutable reference aliases without checking their invocations", () => {
+  const session = sessionFor([
+    `import * as native from "${moduleSpecifier}";`,
+    "const namespaceAlias = native;",
+    'const first = namespaceAlias["emit"];',
+    "const second = ((first));",
+    "second(notDeclaredAnywhere());",
+  ].join("\n"));
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = source.getSourceFileQueries(file);
+  const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+  const expression = Node_Expression(calls[0]);
+  assert.ok(expression);
+  const info = queries.checker.getIntrinsicDeclarationInfo(expression);
+  assert.ok(info);
+  assert.equal(info.expression, expression);
+  assert.equal(info.declaration.exportId, "Native.Emit");
+  assert.equal(queries.checker.getIntrinsicDeclarationInfo(
+    findNodes(file, source.ast.children, source.ast.is.IsElementAccessExpression)[0],
+  )?.symbol, info.symbol);
+  const codes = session.getDiagnostics("semantic").map(Diagnostic_Code);
+  assert.ok(codes.includes(2349), "Identity evidence does not invent a callable signature.");
+  assert.ok(codes.includes(2304), "Identity evidence does not suppress operand diagnostics.");
+});
+
+test("intrinsic const aliases cross authored modules and retain lexical shadowing", () => {
+  const session = sessionFor([
+    'import { forwarded as selected } from "./bridge.js";',
+    "const local = selected;",
+    "local();",
+    "export function nested(): number {",
+    "  const local = ordinary;",
+    "  return local();",
+    "}",
+    `import { ordinary } from "${moduleSpecifier}";`,
+  ].join("\n"), {
+    "/src/bridge.ts": [
+      `import { emit } from "${moduleSpecifier}";`,
+      "const original = emit;",
+      "export { original as forwarded };",
+    ].join("\n"),
+  });
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = source.getSourceFileQueries(file);
+  const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+  assert.equal(calls.length, 2);
+  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[0]))?.declaration.exportId, "Native.Emit");
+  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[1])), undefined);
+  assert.equal(queries.checker.getResolvedCallInfo(calls[1])?.outcome, "applicable");
+  assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), [2349]);
+});
+
+test("runtime selection, mutable bindings and asserted types cannot manufacture intrinsic aliases", () => {
+  const session = sessionFor([
+    `import { emit, ordinary } from "${moduleSpecifier}";`,
+    "let mutable = emit;",
+    "var mutableFunctionScope = emit;",
+    "const selected = true ? emit : emit;",
+    "const asserted = ordinary as unknown as typeof emit;",
+    "const object = { member: emit, get getter() { return emit; } };",
+    "const called = (() => emit)();",
+    "mutable();",
+    "mutableFunctionScope();",
+    "selected();",
+    "asserted();",
+    "object.member();",
+    "object.getter();",
+    "called();",
+  ].join("\n"));
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = source.getSourceFileQueries(file);
+  const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+  assert.equal(calls.length, 8);
+  for (const call of calls) {
+    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+  }
+});
+
+test("cyclic immutable aliases terminate without a fabricated intrinsic result", () => {
+  const session = sessionFor("const first = second; const second = first; first();");
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
+  assert.ok(call);
+  assert.equal(source.getSourceFileQueries(file).checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+  assert.ok(session.getDiagnostics("semantic").length > 0);
+});
+
+test("an exact namespace result type does not authorize executing its receiver or property key", () => {
+  const session = sessionFor([
+    `import * as native from "${moduleSpecifier}";`,
+    "function getNamespace(): typeof native { return native; }",
+    'function getKey(): "emit" { return "emit"; }',
+    "let mutableNamespace = native;",
+    "const direct = native;",
+    "getNamespace().emit();",
+    "native[getKey()]();",
+    "mutableNamespace.emit();",
+    "direct.emit();",
+  ].join("\n"));
+  session.ensureBound();
+  const source = createSourceProgramQueries(session.program);
+  const file = source.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = source.getSourceFileQueries(file);
+  const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+  assert.equal(calls.length, 6);
+  for (const call of calls.slice(0, -1)) {
+    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+  }
+  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls.at(-1)))?.declaration.exportId, "Native.Emit");
+});
+
 test("intrinsic provider snapshots retain one immutable canonical declaration", () => {
   const declaration: ProviderExportDeclaration = { ...intrinsic };
   const host = new ExtensionHost({}, {

@@ -1,8 +1,11 @@
 import type { GoPtr } from "../../../go/compat.js";
 import type { Node } from "../../ast/ast.js";
+import { Node_Expression, Node_Initializer } from "../../ast/ast.js";
 import type { Symbol } from "../../ast/symbol.js";
-import { SymbolFlagsAlias } from "../../ast/generated/flags.js";
-import { GetSourceFileOfNode, OEKParentheses, SkipOuterExpressions } from "../../ast/utilities.js";
+import { SymbolFlagsAlias, SymbolFlagsNamespaceModule, SymbolFlagsValueModule } from "../../ast/generated/flags.js";
+import { AsElementAccessExpression } from "../../ast/generated/casts.js";
+import { IsElementAccessExpression, IsIdentifier, IsPropertyAccessExpression, IsVariableDeclaration } from "../../ast/generated/predicates.js";
+import { GetSourceFileOfNode, IsStringLiteralLike, IsVarConst, OEKParentheses, SkipOuterExpressions } from "../../ast/utilities.js";
 import { getExtensionHost } from "../../../extensions/host.js";
 import { providerIntrinsicDeclarationFactKey, type ProviderVirtualDeclarationFact } from "../../../extensions/facts.js";
 import type { Checker } from "./state.js";
@@ -25,13 +28,40 @@ export function resolveSourceIntrinsicDeclaration(
   }
   const host = getExtensionHost(checker.program);
   if (host === undefined) return undefined;
-  const selected = SkipOuterExpressions(expression, OEKParentheses);
-  const binding = Checker_GetSymbolAtLocation(checker, selected);
-  const symbol = binding !== undefined && (binding.Flags & SymbolFlagsAlias) !== 0
-    ? Checker_GetAliasedSymbol(checker, binding)
-    : binding;
+  const symbol = resolveStaticReferenceSymbol(checker, expression, new Set());
   const declaration = host.facts.get(symbol, providerIntrinsicDeclarationFactKey);
   return symbol === undefined || declaration === undefined
     ? undefined
     : Object.freeze({ expression, symbol, declaration });
+}
+
+function resolveStaticReferenceSymbol(
+  checker: GoPtr<Checker>,
+  expression: GoPtr<Node>,
+  aliases: Set<Symbol>,
+): GoPtr<Symbol> {
+  let selected = SkipOuterExpressions(expression, OEKParentheses);
+  while (selected !== undefined && (IsIdentifier(selected) ||
+      IsPropertyAccessExpression(selected) || IsElementAccessExpression(selected))) {
+    if (!IsIdentifier(selected)) {
+      if (IsElementAccessExpression(selected) &&
+          !IsStringLiteralLike(AsElementAccessExpression(selected)!.ArgumentExpression)) return undefined;
+      const namespace = resolveStaticReferenceSymbol(checker, Node_Expression(selected), aliases);
+      if (namespace === undefined ||
+          (namespace.Flags & (SymbolFlagsNamespaceModule | SymbolFlagsValueModule)) === 0) return undefined;
+    }
+    const binding = Checker_GetSymbolAtLocation(checker, selected);
+    const symbol = binding !== undefined && (binding.Flags & SymbolFlagsAlias) !== 0
+      ? Checker_GetAliasedSymbol(checker, binding)
+      : binding;
+    if (symbol === undefined) return undefined;
+    const variable = symbol.ValueDeclaration;
+    if (variable === undefined || !IsVariableDeclaration(variable) || !IsVarConst(variable)) return symbol;
+    const initializer = Node_Initializer(variable);
+    if (initializer === undefined) return symbol;
+    if (aliases.has(symbol)) return undefined;
+    aliases.add(symbol);
+    selected = SkipOuterExpressions(initializer, OEKParentheses);
+  }
+  return undefined;
 }
