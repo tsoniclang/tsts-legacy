@@ -22,6 +22,7 @@ export {
   createSourceFactQueries,
 } from "./consumer.js";
 export { defaultSourceElaborationLimits } from "./source-elaboration-model.js";
+export { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
 export type {
   SourceElaborationContext,
   SourceElaborationLimits,

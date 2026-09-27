@@ -16,6 +16,7 @@ export {
   fieldFactKey,
   flowStateFactKey,
   functionPointerFactKey,
+  getProviderMemberSurfaceKey,
   pointerFactKey,
   pointerOperationFactKey,
   rawPointerFactKey,
