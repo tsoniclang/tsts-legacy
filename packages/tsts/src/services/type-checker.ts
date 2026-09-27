@@ -57,9 +57,9 @@ import {
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
 import { CheckModeNormal } from "../internal/checker/checker/state.js";
-import { resolveSourceIntrinsicDeclaration } from "../internal/checker/checker/source-intrinsic-evidence.js";
-import type { SourceIntrinsicDeclarationInfo } from "../internal/checker/checker/source-intrinsic-evidence.js";
-export type { SourceIntrinsicDeclarationInfo } from "../internal/checker/checker/source-intrinsic-evidence.js";
+import { resolveSourceProviderReference } from "../internal/checker/checker/source-provider-reference.js";
+import type { SourceProviderReferenceInfo } from "../internal/checker/checker/source-provider-reference.js";
+export type { SourceProviderReferenceInfo } from "../internal/checker/checker/source-provider-reference.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import {
   Checker_GetAliasedSymbol,
@@ -175,7 +175,7 @@ export interface ResolvedSourceStorageInfo {
 }
 
 export interface TypeCheckerQueries {
-  readonly getIntrinsicDeclarationInfo: (expression: GoPtr<Node>) => SourceIntrinsicDeclarationInfo | undefined;
+  readonly getProviderReferenceInfo: (expression: GoPtr<Node>) => SourceProviderReferenceInfo | undefined;
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
@@ -251,8 +251,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
   const resourceManagementInfos = new WeakMap<Node, ResolvedSourceResourceManagementInfo>();
   const queries: TypeCheckerQueries = {
-    getIntrinsicDeclarationInfo: (expression) =>
-      withCheckerForNode(program, expression, defaultOptions, checker => resolveSourceIntrinsicDeclaration(checker, expression)),
+    getProviderReferenceInfo: (expression) =>
+      withCheckerForNode(program, expression, defaultOptions, checker => resolveSourceProviderReference(checker, expression)),
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
     getTypeFromTypeNode: (node) =>

@@ -52,17 +52,18 @@ for (const kind of ["intrinsic", "namespace", "function"] as const) {
     const queries = checked.getSourceFileQueries(file);
     const access = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
     assert.ok(access);
-    const info = queries.checker.getIntrinsicDeclarationInfo(access);
+    const info = queries.checker.getProviderReferenceInfo(access);
     assert.ok(info);
-    assert.equal(info.declaration.exportId, "Syntax");
-    assert.equal(info.declaration.memberId, "Syntax.Type");
-    assert.equal(info.declaration.memberName, "type");
-    assert.equal(info.declaration.signatureId, undefined);
+    assert.ok(info.intrinsic);
+    assert.equal(info.intrinsic.exportId, "Syntax");
+    assert.equal(info.intrinsic.memberId, "Syntax.Type");
+    assert.equal(info.intrinsic.memberName, "type");
+    assert.equal(info.intrinsic.signatureId, undefined);
     assert.equal(info.ordinary, undefined);
-    assert.equal(Object.isFrozen(info.declaration), true);
-    assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerIntrinsicDeclarationFactKey), info.declaration);
-    assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey), info.declaration);
-    const owner = checked.sourceFacts.getVirtualDeclarationDocument(info.declaration.artifactFileName);
+    assert.equal(Object.isFrozen(info.intrinsic), true);
+    assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerIntrinsicDeclarationFactKey), info.intrinsic);
+    assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey), info.intrinsic);
+    const owner = checked.sourceFacts.getVirtualDeclarationDocument(info.intrinsic.artifactFileName);
     assert.ok(owner);
     assert.match(owner.sourceText, /readonly type: unique symbol;/u);
     assert.doesNotMatch(owner.sourceText, /\bunknown\b|\bany\b|type\s*\(/u);
@@ -93,8 +94,8 @@ test("member identity survives exact namespace access, const aliases and authore
   const queries = source.getSourceFileQueries(file);
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 4);
-  const identities = calls.map(call => queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)));
-  assert.ok(identities.every(info => info?.declaration.memberId === "Syntax.Type"));
+  const identities = calls.map(call => queries.checker.getProviderReferenceInfo(Node_Expression(call)));
+  assert.ok(identities.every(info => info?.intrinsic?.memberId === "Syntax.Type"));
   assert.ok(identities.every(info => info?.symbol === identities[0]?.symbol));
   assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), Array(4).fill(2349));
 });
@@ -107,10 +108,69 @@ test("member selection does not inspect invocation arguments or erase ordinary d
   assert.ok(file);
   const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
   assert.ok(call);
-  assert.equal(source.getSourceFileQueries(file).checker.getIntrinsicDeclarationInfo(Node_Expression(call))?.declaration.memberId, "Syntax.Type");
+  assert.equal(source.getSourceFileQueries(file).checker.getProviderReferenceInfo(Node_Expression(call))?.intrinsic?.memberId, "Syntax.Type");
   const diagnostics = session.getDiagnostics("semantic").map(Diagnostic_Code);
   assert.ok(diagnostics.includes(2349));
   assert.ok(diagnostics.includes(2304));
+});
+
+test("ordinary provider members use the same exact static identity query without fake intrinsics", () => {
+  const member: ProviderMemberDeclaration = {
+    id: "Syntax.Run", name: "run", kind: "method",
+    signatures: [{ id: "Syntax.Run.Call", parameters: [{ name: "value", type: { kind: "number" } }], returnType: { kind: "number" } }],
+  };
+  const session = sessionFor([
+    `import { syntax } from "${moduleSpecifier}";`,
+    `import * as native from "${moduleSpecifier}";`,
+    "const owner = syntax; const selected = owner.run;",
+    "export const first = native.syntax.run(1);",
+    "export const second = selected(2);",
+  ].join("\n"), [{ ...syntax, kind: "namespace", members: [member] }]);
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = checked.getSourceFileQueries(file);
+  assert.equal("getIntrinsicDeclarationInfo" in queries.checker, false);
+  const calls = findNodes(file, checked.ast.children, checked.ast.is.IsCallExpression);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    const expression = Node_Expression(call);
+    const reference = queries.checker.getProviderReferenceInfo(expression);
+    assert.ok(reference);
+    assert.equal(reference.expression, expression);
+    assert.equal(reference.intrinsic, undefined);
+    assert.equal("intrinsic" in reference, false);
+    assert.equal(reference.ordinary?.kind, "declaration");
+    if (reference.ordinary?.kind !== "declaration") assert.fail("An exact ordinary declaration is required.");
+    assert.equal(reference.ordinary.declaration.memberId, member.id);
+    assert.equal(reference.ordinary.declaration.exportId, syntax.id);
+    assert.equal(reference.ordinary.declaration.signatureId, undefined);
+    assert.equal(queries.checker.getResolvedCallInfo(call)?.outcome, "applicable");
+  }
+});
+
+test("static provider reference lookup does not follow runtime member receivers", () => {
+  const member: ProviderMemberDeclaration = {
+    id: "Syntax.Run", name: "run", kind: "method",
+    signatures: [{ id: "Syntax.Run.Call", parameters: [], returnType: { kind: "number" } }],
+  };
+  const session = sessionFor([
+    `import { syntax } from "${moduleSpecifier}";`,
+    "function produce() { return syntax; }",
+    "export function run(input: typeof syntax) { return input.run() + produce().run(); }",
+  ].join("\n"), [{ ...syntax, kind: "namespace", members: [member] }]);
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = checked.getSourceFileQueries(file);
+  const calls = findNodes(file, checked.ast.children, checked.ast.is.IsCallExpression);
+  assert.equal(calls.length, 3);
+  for (const call of calls) {
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
+    assert.equal(queries.checker.getResolvedCallInfo(call)?.outcome, "applicable");
+  }
 });
 
 test("runtime lookalikes and dynamic receivers cannot manufacture an intrinsic member", () => {
@@ -135,7 +195,7 @@ test("runtime lookalikes and dynamic receivers cannot manufacture an intrinsic m
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 10);
   for (const call of calls) {
-    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
   }
   assert.equal(queries.checker.getResolvedCallInfo(calls[0])?.outcome, "applicable");
 });

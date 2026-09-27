@@ -50,16 +50,17 @@ test("native intrinsic exports bind exact aliases and typeof without callable si
   const queries = checked.getSourceFileQueries(file);
   const namespaceUse = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
   assert.ok(namespaceUse);
-  const info = queries.checker.getIntrinsicDeclarationInfo(namespaceUse);
+  const info = queries.checker.getProviderReferenceInfo(namespaceUse);
   assert.ok(info);
+  assert.ok(info.intrinsic);
   assert.equal(info.expression, namespaceUse);
-  assert.equal(info.declaration.exportId, "Native.Emit");
-  assert.equal(info.declaration.moduleSpecifier, moduleSpecifier);
+  assert.equal(info.intrinsic.exportId, "Native.Emit");
+  assert.equal(info.intrinsic.moduleSpecifier, moduleSpecifier);
   assert.equal(Object.isFrozen(info), true);
-  assert.equal(Object.isFrozen(info.declaration), true);
-  assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerIntrinsicDeclarationFactKey), info.declaration);
-  assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey), info.declaration);
-  const owner = checked.sourceFacts.getVirtualDeclarationDocument(info.declaration.artifactFileName);
+  assert.equal(Object.isFrozen(info.intrinsic), true);
+  assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerIntrinsicDeclarationFactKey), info.intrinsic);
+  assert.deepEqual(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey), info.intrinsic);
+  const owner = checked.sourceFacts.getVirtualDeclarationDocument(info.intrinsic.artifactFileName);
   assert.ok(owner);
   assert.match(owner.sourceText, /:\s*unique symbol;/u);
   assert.doesNotMatch(owner.sourceText, /\bunknown\b|\bany\b|=>/u);
@@ -68,7 +69,10 @@ test("native intrinsic exports bind exact aliases and typeof without callable si
   assert.deepEqual(queries.checker.getConstructSignaturesOfType(type), []);
   const normal = findNodes(file, checked.ast.children, checked.ast.is.IsCallExpression)[0];
   assert.ok(normal);
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(normal)), undefined);
+  const ordinaryReference = queries.checker.getProviderReferenceInfo(Node_Expression(normal));
+  assert.equal(ordinaryReference?.intrinsic, undefined);
+  assert.equal(ordinaryReference?.ordinary?.kind, "declaration");
+  assert.equal(ordinaryReference?.ordinary?.kind === "declaration" && ordinaryReference.ordinary.declaration.exportId, "Native.Ordinary");
   assert.equal(queries.checker.getResolvedCallInfo(normal)?.outcome, "applicable");
 });
 
@@ -84,8 +88,8 @@ test("intrinsic binding lookup does not ask for a call signature or inspect invo
   const queries = source.getSourceFileQueries(file);
   const outer = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
   assert.ok(outer);
-  const info = queries.checker.getIntrinsicDeclarationInfo(Node_Expression(outer));
-  assert.equal(info?.declaration.exportId, "Native.Emit");
+  const info = queries.checker.getProviderReferenceInfo(Node_Expression(outer));
+  assert.equal(info?.intrinsic?.exportId, "Native.Emit");
   const diagnostics = session.getDiagnostics("semantic").map(Diagnostic_Code);
   assert.ok(diagnostics.includes(2349), "An intrinsic without elaboration cannot be called as a function.");
   assert.ok(diagnostics.includes(2304), "No source diagnostics are suppressed by identity lookup.");
@@ -109,9 +113,9 @@ test("intrinsic identities survive authored re-exports and exclude same-spelled 
   const queries = source.getSourceFileQueries(file);
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 2);
-  const first = queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[0]));
-  const second = queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[1]));
-  assert.equal(first?.declaration.exportId, "Native.Emit");
+  const first = queries.checker.getProviderReferenceInfo(Node_Expression(calls[0]));
+  const second = queries.checker.getProviderReferenceInfo(Node_Expression(calls[1]));
+  assert.equal(first?.intrinsic?.exportId, "Native.Emit");
   assert.equal(second, undefined);
   assert.equal(queries.checker.getResolvedCallInfo(calls[1])?.outcome, "applicable");
   assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), [2349]);
@@ -131,7 +135,7 @@ test("intrinsic identity cannot be supplied by a foreign source epoch", () => {
   assert.ok(secondFile);
   const call = findNodes(firstFile, firstSource.ast.children, firstSource.ast.is.IsCallExpression)[0];
   assert.ok(call);
-  assert.throws(() => secondSource.getSourceFileQueries(secondFile).checker.getIntrinsicDeclarationInfo(
+  assert.throws(() => secondSource.getSourceFileQueries(secondFile).checker.getProviderReferenceInfo(
     Node_Expression(call),
   ), /owning compiler program/u);
 });
@@ -152,11 +156,12 @@ test("intrinsic lookup follows immutable reference aliases without checking thei
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   const expression = Node_Expression(calls[0]);
   assert.ok(expression);
-  const info = queries.checker.getIntrinsicDeclarationInfo(expression);
+  const info = queries.checker.getProviderReferenceInfo(expression);
   assert.ok(info);
+  assert.ok(info.intrinsic);
   assert.equal(info.expression, expression);
-  assert.equal(info.declaration.exportId, "Native.Emit");
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(
+  assert.equal(info.intrinsic.exportId, "Native.Emit");
+  assert.equal(queries.checker.getProviderReferenceInfo(
     findNodes(file, source.ast.children, source.ast.is.IsElementAccessExpression)[0],
   )?.symbol, info.symbol);
   const codes = session.getDiagnostics("semantic").map(Diagnostic_Code);
@@ -188,8 +193,8 @@ test("intrinsic const aliases cross authored modules and retain lexical shadowin
   const queries = source.getSourceFileQueries(file);
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 2);
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[0]))?.declaration.exportId, "Native.Emit");
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls[1])), undefined);
+  assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(calls[0]))?.intrinsic?.exportId, "Native.Emit");
+  assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(calls[1])), undefined);
   assert.equal(queries.checker.getResolvedCallInfo(calls[1])?.outcome, "applicable");
   assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), [2349]);
 });
@@ -219,7 +224,7 @@ test("runtime selection, mutable bindings and asserted types cannot manufacture 
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 8);
   for (const call of calls) {
-    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
   }
 });
 
@@ -231,7 +236,7 @@ test("cyclic immutable aliases terminate without a fabricated intrinsic result",
   assert.ok(file);
   const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
   assert.ok(call);
-  assert.equal(source.getSourceFileQueries(file).checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+  assert.equal(source.getSourceFileQueries(file).checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
   assert.ok(session.getDiagnostics("semantic").length > 0);
 });
 
@@ -255,9 +260,9 @@ test("an exact namespace result type does not authorize executing its receiver o
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 6);
   for (const call of calls.slice(0, -1)) {
-    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
   }
-  assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(calls.at(-1)))?.declaration.exportId, "Native.Emit");
+  assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(calls.at(-1)))?.intrinsic?.exportId, "Native.Emit");
 });
 
 test("optional namespace references cannot erase conditional source access", () => {
@@ -283,10 +288,10 @@ test("optional namespace references cannot erase conditional source access", () 
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 7);
   for (const call of calls.slice(0, 5)) {
-    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call)), undefined);
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call)), undefined);
   }
   for (const call of calls.slice(5)) {
-    assert.equal(queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call))?.declaration.exportId, "Native.Emit");
+    assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(call))?.intrinsic?.exportId, "Native.Emit");
   }
   assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), Array(7).fill(2349));
 });

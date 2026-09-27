@@ -12,36 +12,40 @@ import { providerIntrinsicDeclarationFactKey, providerTypeFamilyFactKey, provide
 import type { Checker } from "./state.js";
 import { Checker_GetAliasedSymbol, Checker_GetSymbolAtLocation } from "./symbols.js";
 
-export interface SourceIntrinsicDeclarationInfo {
+export type SourceProviderOrdinaryFacet =
+  | { readonly kind: "declaration"; readonly declaration: ProviderVirtualDeclarationFact }
+  | { readonly kind: "type-family"; readonly family: ProviderTypeFamilyFact };
+
+export type SourceProviderReferenceInfo = {
   readonly expression: Node;
   readonly symbol: Symbol;
-  readonly declaration: ProviderVirtualDeclarationFact;
-  readonly ordinary?:
-    | { readonly kind: "declaration"; readonly declaration: ProviderVirtualDeclarationFact }
-    | { readonly kind: "type-family"; readonly family: ProviderTypeFamilyFact };
-}
+} & (
+  | { readonly intrinsic: ProviderVirtualDeclarationFact; readonly ordinary?: SourceProviderOrdinaryFacet }
+  | { readonly intrinsic?: never; readonly ordinary: SourceProviderOrdinaryFacet }
+);
 
-export function resolveSourceIntrinsicDeclaration(
+export function resolveSourceProviderReference(
   checker: GoPtr<Checker>,
   expression: GoPtr<Node>,
-): SourceIntrinsicDeclarationInfo | undefined {
+): SourceProviderReferenceInfo | undefined {
   if (checker === undefined || expression === undefined) return undefined;
   const sourceFile = GetSourceFileOfNode(expression);
   if (sourceFile === undefined || !checker.fileIndexMap.has(sourceFile)) {
-    throw new Error("Intrinsic identity requires an expression from the owning compiler program.");
+    throw new Error("Provider identity requires an expression from the owning compiler program.");
   }
   const host = getExtensionHost(checker.program);
   if (host === undefined) return undefined;
   const symbol = resolveStaticReferenceSymbol(checker, expression, new Set());
-  const declaration = host.facts.get(symbol, providerIntrinsicDeclarationFactKey);
-  if (symbol === undefined || declaration === undefined) return undefined;
+  if (symbol === undefined) return undefined;
+  const intrinsic = host.facts.get(symbol, providerIntrinsicDeclarationFactKey);
   const family = host.facts.get(symbol, providerTypeFamilyFactKey);
   const ordinary = host.facts.get(symbol, providerVirtualDeclarationFactKey);
-  const facet: SourceIntrinsicDeclarationInfo["ordinary"] = family !== undefined
+  const facet: SourceProviderOrdinaryFacet | undefined = family !== undefined
     ? Object.freeze({ kind: "type-family", family })
-    : ordinary !== undefined && ordinary.exportId !== declaration.exportId
+    : ordinary !== undefined && (intrinsic === undefined || !providerVirtualDeclarationFactKey.equals(ordinary, intrinsic))
       ? Object.freeze({ kind: "declaration", declaration: ordinary }) : undefined;
-  return Object.freeze({ expression, symbol, declaration, ...(facet === undefined ? {} : { ordinary: facet }) });
+  if (intrinsic === undefined) return facet === undefined ? undefined : Object.freeze({ expression, symbol, ordinary: facet });
+  return Object.freeze({ expression, symbol, intrinsic, ...(facet === undefined ? {} : { ordinary: facet }) });
 }
 
 function resolveStaticReferenceSymbol(
@@ -70,8 +74,8 @@ function resolveStaticReferenceSymbol(
       ? Checker_GetAliasedSymbol(checker, binding)
       : binding;
     if (symbol === undefined) return undefined;
-    if (receiver !== undefined && !isExactIntrinsicMember(receiver,
-        host?.facts.get(symbol, providerIntrinsicDeclarationFactKey))) return undefined;
+    if (receiver !== undefined && !isExactProviderMember(receiver,
+        host?.facts.get(symbol, providerVirtualDeclarationFactKey))) return undefined;
     const variable = symbol.ValueDeclaration;
     if (variable === undefined || !IsVariableDeclaration(variable) || !IsVarConst(variable)) return symbol;
     const initializer = Node_Initializer(variable);
@@ -83,7 +87,7 @@ function resolveStaticReferenceSymbol(
   return undefined;
 }
 
-function isExactIntrinsicMember(
+function isExactProviderMember(
   owner: ProviderVirtualDeclarationFact,
   member: ProviderVirtualDeclarationFact | undefined,
 ): boolean {

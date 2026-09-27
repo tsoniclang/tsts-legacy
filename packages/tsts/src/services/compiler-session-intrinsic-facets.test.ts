@@ -41,10 +41,11 @@ for (const mode of ["intrinsic", "declaration", "type-family"] as const) {
           assert.ok(file);
           const initializer = Node_Initializer(query.node);
           assert.ok(initializer);
-          const info = query.source.getSourceFileQueries(file).checker.getIntrinsicDeclarationInfo(initializer);
+          const info = query.source.getSourceFileQueries(file).checker.getProviderReferenceInfo(initializer);
           assert.ok(info);
+          assert.ok(info.intrinsic);
           previous.push({ source: query.source, node: initializer });
-          assert.equal(info.declaration.exportId, intrinsic);
+          assert.equal(info.intrinsic.exportId, intrinsic);
           if (mode === "intrinsic") {
             assert.equal(info.ordinary, undefined);
             return [intrinsic];

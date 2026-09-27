@@ -51,9 +51,10 @@ test("ordinary and intrinsic facets preserve distinct identities through aliases
   const calls = findNodes(file, checked.ast.children, checked.ast.is.IsCallExpression);
   assert.equal(calls.length, 2);
   for (const call of calls) {
-    const info = queries.checker.getIntrinsicDeclarationInfo(Node_Expression(call));
+    const info = queries.checker.getProviderReferenceInfo(Node_Expression(call));
     assert.ok(info);
-    assert.equal(info.declaration.exportId, identity);
+    assert.ok(info.intrinsic);
+    assert.equal(info.intrinsic.exportId, identity);
     assert.equal(info.ordinary?.kind, "declaration");
     assert.equal(info.ordinary?.kind === "declaration" && info.ordinary.declaration.exportId, functionDeclaration.id);
     assert.equal(Object.isFrozen(info), true);
@@ -86,9 +87,10 @@ test("an intrinsic-only export has no manufactured ordinary declaration facet", 
   const variables = findNodes(file, checked.ast.children, checked.ast.is.IsVariableDeclaration);
   assert.equal(variables.length, 3);
   for (const variable of variables) {
-    const info = queries.checker.getIntrinsicDeclarationInfo(Node_Initializer(variable));
+    const info = queries.checker.getProviderReferenceInfo(Node_Initializer(variable));
     assert.ok(info);
-    assert.equal(info.declaration.exportId, identity);
+    assert.ok(info.intrinsic);
+    assert.equal(info.intrinsic.exportId, identity);
     assert.equal(info.ordinary, undefined);
     assert.equal("ordinary" in info, false);
   }
@@ -116,15 +118,16 @@ for (const kind of ["type", "interface", "class", "enum", "value", "namespace"] 
     const queries = checked.getSourceFileQueries(file);
     const expression = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
     assert.ok(expression);
-    const info = queries.checker.getIntrinsicDeclarationInfo(expression);
+    const info = queries.checker.getProviderReferenceInfo(expression);
     assert.ok(info);
-    assert.equal(info.declaration.exportId, identity);
+    assert.ok(info.intrinsic);
+    assert.equal(info.intrinsic.exportId, identity);
     assert.equal(info.ordinary?.kind, "declaration");
     assert.equal(info.ordinary?.kind === "declaration" && info.ordinary.declaration.exportId, declaration.id);
     assert.equal(checked.sourceFacts.getFact(info.symbol, providerVirtualDeclarationFactKey)?.exportId, declaration.id);
     if (kind === "type" || kind === "interface") {
       assert.deepEqual(queries.checker.getCallSignaturesOfType(queries.checker.getTypeAtLocation(expression)), []);
-      const document = checked.sourceFacts.getVirtualDeclarationDocument(info.declaration.artifactFileName);
+      const document = checked.sourceFacts.getVirtualDeclarationDocument(info.intrinsic.artifactFileName);
       assert.ok(document);
       assert.match(document.sourceText, /:\s*unique symbol;/u);
     }
@@ -156,6 +159,30 @@ function familyDeclarations(intrinsicId: string | undefined = identity): readonl
   }));
 }
 
+test("ordinary type families retain exact arities without inventing an intrinsic or value facet", () => {
+  const declarations = familyDeclarations().map(({ intrinsicId: _intrinsic, ...declaration }) => declaration);
+  const checked = check(declarations, [
+    `import { Shared } from "${moduleSpecifier}";`,
+    "export const first: Shared = {};",
+    "export const second: Shared<number> = {};",
+  ].join("\n"));
+  assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const queries = checked.getSourceFileQueries(file);
+  const types = findNodes(file, checked.ast.children, checked.ast.is.IsTypeReferenceNode);
+  assert.equal(types.length, 2);
+  for (const type of types) {
+    const reference = queries.checker.getProviderReferenceInfo(checked.ast.as.AsTypeReferenceNode(type)!.TypeName);
+    assert.ok(reference);
+    assert.equal(reference.intrinsic, undefined);
+    assert.equal("intrinsic" in reference, false);
+    assert.equal(reference.ordinary?.kind, "type-family");
+    if (reference.ordinary?.kind !== "type-family") assert.fail("The exact ordinary family is required.");
+    assert.deepEqual(reference.ordinary.family.variants.map(variant => variant.sourceTypeArgumentCount), [0, 1]);
+  }
+});
+
 test("type families expose one intrinsic identity alongside every exact type arity", () => {
   const checked = check(familyDeclarations(), [
     `import { Shared } from "${moduleSpecifier}";`,
@@ -171,8 +198,8 @@ test("type families expose one intrinsic identity alongside every exact type ari
   const expression = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
   assert.ok(expression);
   const queries = checked.getSourceFileQueries(file);
-  const info = queries.checker.getIntrinsicDeclarationInfo(expression);
-  assert.equal(info?.declaration.exportId, identity);
+  const info = queries.checker.getProviderReferenceInfo(expression);
+  assert.equal(info?.intrinsic?.exportId, identity);
   assert.equal(info?.ordinary?.kind, "type-family");
   if (info?.ordinary?.kind !== "type-family") assert.fail("The exact type-family facet is required.");
   assert.deepEqual(info.ordinary.family.variants.map(variant => [variant.sourceTypeArgumentCount, variant.declaration.exportId]),
