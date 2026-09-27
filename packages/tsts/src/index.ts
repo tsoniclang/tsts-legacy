@@ -10,6 +10,7 @@ export {
   canonicalIdentityFactKey,
   constGenericFactKey,
   createSourceSemanticsExtension,
+  defaultSourceElaborationLimits,
   defaultValueFactKey,
   defineExtensionFactKey,
   fieldFactKey,
@@ -109,6 +110,11 @@ export type {
   SourceCallMarkerKind,
   SourceDeclarationProvider,
   SourceDeclarationMaterializationMode,
+  SourceElaborationContext,
+  SourceElaborationLimits,
+  SourceElaborationNodeReference,
+  SourceElaborationResolver,
+  SourceElaborationResolverContext,
   SourceFileQueries,
   SourcePointerMutability,
   SourceMarkerFact,
@@ -132,6 +138,7 @@ export { barebonesLibContent, formatDiagnostics, transpile, transpileDeclaration
 export type { TranspileCompilerOptions, TranspileCompilerOptionValue, TranspileOptions, TranspileOutput } from "./services/transpile.js";
 export type {
   ResolvedSourceCallInfo,
+  SourceIntrinsicDeclarationInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,
   ResolvedSourceIterationInfo,

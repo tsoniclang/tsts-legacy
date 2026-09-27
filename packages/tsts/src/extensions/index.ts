@@ -21,6 +21,14 @@ export {
   SourceFactQueries,
   createSourceFactQueries,
 } from "./consumer.js";
+export { defaultSourceElaborationLimits } from "./source-elaboration-model.js";
+export type {
+  SourceElaborationContext,
+  SourceElaborationLimits,
+  SourceElaborationNodeReference,
+  SourceElaborationResolver,
+  SourceElaborationResolverContext,
+} from "./source-elaboration-model.js";
 export {
   argumentPassingFactKey,
   associatedTypeFactKey,
@@ -35,6 +43,7 @@ export {
   pointerOperationFactKey,
   rawPointerFactKey,
   rawPointerOperationFactKey,
+  providerIntrinsicDeclarationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
