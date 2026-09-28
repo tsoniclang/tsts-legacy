@@ -40,7 +40,6 @@ import {
   KindTypeKeyword,
   KindTypeReference,
   KindTypeQuery,
-  KindTupleType,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import {
@@ -75,10 +74,7 @@ import type {
   ExtensionImportKind,
   FieldFact,
   FlowStateFact,
-  FunctionPointerFact,
-  PointerFact,
   PointerOperationFact,
-  RawPointerFact,
   RawPointerOperationFact,
   SourceCallMarkerKind,
   SourceMarkerFact,
@@ -101,6 +97,8 @@ import type {
 } from "./host.js";
 import { defineExtensionFactKey } from "./fact-key.js";
 import { encodeIdentityTuple } from "./identity-tuple.js";
+import { createSourceTypeMarkerReferenceFact } from "./source-semantics-type-markers.js";
+import type { SourceTypeMarkerReferenceFact } from "./source-semantics-type-markers.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
 type SourceSemanticsFactAccess = Pick<SourceAnalysisFactAccess, "get" | "set">;
@@ -237,6 +235,18 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
         resolveSourcePrimitiveFact(subject, resolverContext, modules));
       context.registerFactResolver(attributeFactKey, (subject, resolverContext) =>
         resolveAttributeMarker(subject, resolverContext, modules));
+      context.registerFactResolver(pointerFactKey, (subject, resolverContext) =>
+        resolveSourceTypeMarkerFact(subject, resolverContext, modules,
+          fact => fact.kind === "pointer" ? fact.value : undefined));
+      context.registerFactResolver(rawPointerFactKey, (subject, resolverContext) =>
+        resolveSourceTypeMarkerFact(subject, resolverContext, modules,
+          fact => fact.kind === "raw-pointer" ? fact.value : undefined));
+      context.registerFactResolver(functionPointerFactKey, (subject, resolverContext) =>
+        resolveSourceTypeMarkerFact(subject, resolverContext, modules,
+          fact => fact.kind === "function-pointer" ? fact.value : undefined));
+      context.registerFactResolver(sourceMarkerFactKey, (subject, resolverContext) =>
+        resolveSourceTypeMarkerFact(subject, resolverContext, modules,
+          fact => fact.kind === "marker" ? fact.value : undefined));
     },
     analyzeSource(context): void {
       const sourceFiles = context.source.getSourceFiles().filter(
@@ -1271,9 +1281,9 @@ function recordSourceSemanticsTypeReferences(
     if (typeName === undefined) {
       return;
     }
-    const marker = resolveSourceSemanticsTypeMarkerReference(facts, typeName);
+    const marker = resolveMarkerFromCheckedReference(facts, checker, typeName, modules, "type-marker");
     if (marker !== undefined) {
-      recordSourceSemanticsTypeMarker(facts, node, typeName, marker);
+      recordSourceSemanticsTypeMarker(facts, node, typeName, marker, factResolver);
     }
     const primitive = resolvePrimitiveFromCheckedReference(
       facts,
@@ -1315,80 +1325,40 @@ function recordSourceSemanticsTypeMarker(
   typeReference: Node,
   typeName: Node,
   marker: SourceTypeMarkerDeclaration,
+  factResolver: SourceFactResolver,
 ): void {
-  const typeArguments = Node_TypeArguments(typeReference) ?? [];
   const evidence = createMarkerEvidence(marker.exportName);
-  if (marker.marker === "raw-pointer") {
-    if (typeArguments.length !== 0) {
-      return;
-    }
-    const fact = { representation: "opaque-identity" } satisfies RawPointerFact;
-    facts.set(typeReference, rawPointerFactKey, fact, evidence);
-    facts.set(typeName, rawPointerFactKey, fact, evidence);
-    return;
+  const publish = <T>(key: ExtensionFactKey<T>): void => {
+    const fact = factResolver.resolve(typeReference, key);
+    if (fact !== undefined) facts.set(typeName, key, fact, evidence);
+  };
+  switch (marker.marker) {
+    case "raw-pointer": return publish(rawPointerFactKey);
+    case "pointer": return publish(pointerFactKey);
+    case "function-pointer": return publish(functionPointerFactKey);
+    case "fixed-array":
+    case "js-string": return publish(sourceMarkerFactKey);
   }
-  if (marker.marker === "pointer") {
-    if (typeArguments.length !== 1) {
-      return;
-    }
-    const pointee = typeArguments[0];
-    if (pointee === undefined) {
-      return;
-    }
-    const fact = {
-      pointee,
-      mutability: "readwrite",
-    } satisfies PointerFact;
-    facts.set(typeReference, pointerFactKey, fact, evidence);
-    facts.set(typeName, pointerFactKey, fact, evidence);
-    return;
-  }
-  if (marker.marker === "fixed-array") {
-    const fact = {
-      kind: "type-marker",
-      marker: marker.marker,
-    } satisfies SourceMarkerFact;
-    facts.set(typeReference, sourceMarkerFactKey, fact, evidence);
-    facts.set(typeName, sourceMarkerFactKey, fact, evidence);
-    return;
-  }
-  if (marker.marker === "js-string") {
-    if (typeArguments.length !== 0) {
-      return;
-    }
-    const fact = {
-      kind: "type-marker",
-      marker: marker.marker,
-    } satisfies SourceMarkerFact;
-    facts.set(typeReference, sourceMarkerFactKey, fact, evidence);
-    facts.set(typeName, sourceMarkerFactKey, fact, evidence);
-    return;
-  }
-  if (typeArguments.length !== 2) {
-    return;
-  }
-  const result = typeArguments[1];
-  if (result === undefined) {
-    return;
-  }
-  const parameters = getFunctionPointerParameters(typeArguments[0]);
-  const fact = {
-    parameters,
-    result,
-    abi: ["target-default"],
-  } satisfies FunctionPointerFact;
-  facts.set(typeReference, functionPointerFactKey, fact, evidence);
-  facts.set(typeName, functionPointerFactKey, fact, evidence);
 }
 
-function getFunctionPointerParameters(parameterList: GoPtr<Node>): readonly Node[] {
-  if (parameterList === undefined) {
-    return [];
-  }
-  if (parameterList.Kind === KindTupleType) {
-    return definedNodes(Node_Elements(parameterList) ?? []);
-  }
-  return [parameterList];
+function resolveSourceTypeMarkerFact<Fact>(
+  subject: ExtensionFactSubject,
+  context: ExtensionFactResolverContext,
+  modules: readonly SourceSemanticsModuleRuntime[],
+  select: (fact: SourceTypeMarkerReferenceFact) => Fact | undefined,
+): { readonly value: Fact; readonly evidence: readonly ExtensionEvidence[] } | undefined {
+  if (subject === null || subject === undefined || typeof subject !== "object") return undefined;
+  const node = subject as GoPtr<Node>;
+  if (node?.Kind !== KindTypeReference) return undefined;
+  const typeName = AsTypeReferenceNode(node)?.TypeName;
+  const file = GetSourceFileOfNode(node);
+  if (typeName === undefined || file === undefined) return undefined;
+  const marker = resolveMarkerFromCheckedReference(context.facts,
+    context.source.getSourceFileQueries(file).checker, typeName, modules, "type-marker");
+  if (marker === undefined) return undefined;
+  const fact = createSourceTypeMarkerReferenceFact(node, marker.marker);
+  const value = fact === undefined ? undefined : select(fact);
+  return value === undefined ? undefined : { value, evidence: createMarkerEvidence(marker.exportName) };
 }
 
 function resolveSelectedSourceSemanticsCallMarker(
@@ -1591,18 +1561,6 @@ function resolveMarkerFromSelectedSymbol(
     (candidate) => candidate.moduleSpecifier === parentIdentity.id,
   );
   return getModuleMarker(module, capability, symbol.Name);
-}
-
-function resolveSourceSemanticsTypeMarkerReference(
-  facts: SourceSemanticsFactAccess,
-  node: GoPtr<Node>,
-): SourceTypeMarkerDeclaration | undefined {
-  if (node === undefined) {
-    return undefined;
-  }
-  const selected = facts.get(node, selectedSourceMarkerDeclarationFactKey)
-    ?? facts.get(Node_Symbol(node), selectedSourceMarkerDeclarationFactKey);
-  return selected?.kind === "type-marker" ? selected : undefined;
 }
 
 function resolvePrimitiveFromCheckedReference(
