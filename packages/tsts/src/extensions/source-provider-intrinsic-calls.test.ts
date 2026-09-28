@@ -115,5 +115,6 @@ test("intrinsic call selection rejects a node from a different source epoch", ()
   const second = sessionFor(text);
   const call = findNodes(first.file, first.sourceProgram.ast.children, first.sourceProgram.ast.is.IsCallExpression)[0];
   assert.ok(call);
-  assert.throws(() => second.queries.checker.getResolvedCallInfo(call), /owning compiler program/u);
+  assert.throws(() => second.queries.checker.getResolvedCallInfo(call),
+    /Source semantic queries cannot use a source file from a different compiler program or epoch\./u);
 });

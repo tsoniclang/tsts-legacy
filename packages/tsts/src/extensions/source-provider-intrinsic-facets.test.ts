@@ -149,6 +149,24 @@ for (const kind of ["interface", "type"] as const) {
   });
 }
 
+test("default type exports without an intrinsic retain only their type facet", () => {
+  const declaration: ProviderExportDeclaration = {
+    id: "Native.Default.Type", name: "Local", kind: "type", exportKind: "default",
+    typeParameters: [{ name: "T" }], type: { kind: "type-parameter", name: "T" },
+  };
+  const checked = check([declaration], [
+    `import Selected from "${moduleSpecifier}";`,
+    "export const value: Selected<number> = 3;",
+  ].join("\n"));
+  assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
+  assert.deepEqual(checked.extensionDiagnostics, []);
+  const invalid = check([declaration], [
+    `import Selected from "${moduleSpecifier}";`,
+    "export const value = Selected;",
+  ].join("\n"));
+  assert.deepEqual(invalid.diagnostics.map(Diagnostic_Code), [2693]);
+});
+
 function familyDeclarations(intrinsicId: string | undefined = identity): readonly ProviderExportDeclaration[] {
   return [0, 1].map((typeArgumentCount) => ({
     id: `Native.Shared.Type${typeArgumentCount}`,

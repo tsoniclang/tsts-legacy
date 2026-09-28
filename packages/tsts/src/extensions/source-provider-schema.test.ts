@@ -316,6 +316,15 @@ test("declaration kinds reject fields that their rendered schema cannot represen
   }
 });
 
+test("enum entries cannot silently reclassify a different member kind", () => {
+  for (const kind of ["method", "constructor", "field", "indexer", "intrinsic"] as const) {
+    assertInvalidModel(`enum ${kind}`, [{
+      id: "Mode", name: "Mode", kind: "enum",
+      members: [{ id: "Mode.Entry", name: "Entry", kind }],
+    }]);
+  }
+});
+
 test("member kinds reject incomplete and unrendered field combinations", () => {
   const cases: readonly {
     readonly name: string;

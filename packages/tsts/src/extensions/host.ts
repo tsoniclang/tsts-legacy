@@ -7784,7 +7784,7 @@ function isValidProviderExportName(value: ProviderExportDeclaration): boolean {
   if (exportName !== "default" && !isIdentifierText(exportName)) {
     return false;
   }
-  return exportName !== "default" || value.kind !== "type" && value.kind !== "namespace";
+  return exportName !== "default" || value.kind !== "namespace";
 }
 
 function isValidProviderHeritageDeclaration(value: ProviderHeritageDeclaration): boolean {
@@ -7823,6 +7823,7 @@ function isValidProviderMemberDeclaration(value: ProviderMemberDeclaration): boo
 
 function isValidProviderEnumMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
+    && value.kind === "property"
     && isValidProviderPropertyName(value.name)
     && value.static !== true
     && value.readonly !== true

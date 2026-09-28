@@ -137,7 +137,7 @@ test("intrinsic identity cannot be supplied by a foreign source epoch", () => {
   assert.ok(call);
   assert.throws(() => secondSource.getSourceFileQueries(secondFile).checker.getProviderReferenceInfo(
     Node_Expression(call),
-  ), /owning compiler program/u);
+  ), /Source semantic queries cannot use a source file from a different compiler program or epoch\./u);
 });
 
 test("intrinsic lookup follows immutable reference aliases without checking their invocations", () => {
@@ -194,7 +194,11 @@ test("intrinsic const aliases cross authored modules and retain lexical shadowin
   const calls = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
   assert.equal(calls.length, 2);
   assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(calls[0]))?.intrinsic?.exportId, "Native.Emit");
-  assert.equal(queries.checker.getProviderReferenceInfo(Node_Expression(calls[1])), undefined);
+  const ordinaryReference = queries.checker.getProviderReferenceInfo(Node_Expression(calls[1]));
+  assert.equal(ordinaryReference?.intrinsic, undefined);
+  assert.equal(ordinaryReference?.ordinary?.kind, "declaration");
+  assert.equal(ordinaryReference?.ordinary?.kind === "declaration"
+    && ordinaryReference.ordinary.declaration.exportId, "Native.Ordinary");
   assert.equal(queries.checker.getResolvedCallInfo(calls[1])?.outcome, "applicable");
   assert.deepEqual(session.getDiagnostics("semantic").map(Diagnostic_Code), [2349]);
 });
