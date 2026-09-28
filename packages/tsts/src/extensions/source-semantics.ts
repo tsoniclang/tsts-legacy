@@ -2,6 +2,7 @@ import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
+import { SymbolFlagsAlias } from "../internal/ast/symbolflags.js";
 import {
   Node_Arguments,
   Node_Expression,
@@ -408,6 +409,7 @@ function recordSourceSemanticsFacts(
     sourceFile,
     checker,
     modules,
+    factResolver,
   );
 }
 
@@ -1237,9 +1239,11 @@ function resolveSourcePrimitiveFact(
     return undefined;
   }
   const typeName = AsTypeReferenceNode(node)?.TypeName;
-  const primitive = resolveRecordedPrimitiveTypeReference(
+  const file = GetSourceFileOfNode(node);
+  if (file === undefined) return undefined;
+  const primitive = resolvePrimitiveFromCheckedReference(
     context.facts,
-    node,
+    context.source.getSourceFileQueries(file).checker,
     typeName,
     modules,
   );
@@ -1257,6 +1261,7 @@ function recordSourceSemanticsTypeReferences(
   sourceFile: GoPtr<SourceFile>,
   checker: TypeCheckerQueries,
   modules: readonly SourceSemanticsModuleRuntime[],
+  factResolver: SourceFactResolver,
 ): void {
   visitSourceSemanticsNode(sourceFile, (node) => {
     if (node?.Kind !== KindTypeReference) {
@@ -1279,6 +1284,10 @@ function recordSourceSemanticsTypeReferences(
     if (primitive === undefined) {
       return;
     }
+    const primitiveFact = factResolver.resolve(node, sourcePrimitiveFactKey);
+    if (primitiveFact === undefined) {
+      throw new Error("A selected source primitive requires its owning type-reference fact.");
+    }
     const evidence = createPrimitiveEvidence(primitive.moduleIdentity, primitive.exportName);
     const selection = createSourcePrimitiveSelection(
       primitive.moduleIdentity,
@@ -1286,10 +1295,9 @@ function recordSourceSemanticsTypeReferences(
     );
     facts.set(node, selectedSourcePrimitiveDeclarationFactKey, selection, evidence);
     facts.set(node, canonicalIdentityFactKey, primitive.identity, evidence);
-    facts.set(node, sourcePrimitiveFactKey, stripExportName(primitive.primitiveFact), evidence);
     facts.set(typeName, selectedSourcePrimitiveDeclarationFactKey, selection, evidence);
     facts.set(typeName, canonicalIdentityFactKey, primitive.identity, evidence);
-    facts.set(typeName, sourcePrimitiveFactKey, stripExportName(primitive.primitiveFact), evidence);
+    facts.set(typeName, sourcePrimitiveFactKey, primitiveFact, evidence);
     if (typeName.Kind === KindQualifiedName) {
       const right = AsQualifiedName(typeName)!.Right;
       if (right === undefined) {
@@ -1297,7 +1305,7 @@ function recordSourceSemanticsTypeReferences(
       }
       facts.set(right, selectedSourcePrimitiveDeclarationFactKey, selection, evidence);
       facts.set(right, canonicalIdentityFactKey, primitive.identity, evidence);
-      facts.set(right, sourcePrimitiveFactKey, stripExportName(primitive.primitiveFact), evidence);
+      facts.set(right, sourcePrimitiveFactKey, primitiveFact, evidence);
     }
   });
 }
@@ -1606,6 +1614,16 @@ function resolvePrimitiveFromCheckedReference(
   if (typeName === undefined) {
     return undefined;
   }
+  const symbol = checker.getSymbolAtLocation(typeName);
+  if (symbol === undefined) return undefined;
+  const direct = resolvePrimitiveFromSelectedSymbol(facts, symbol, modules);
+  if (direct !== undefined) return direct;
+  const selectedSymbol = (symbol.Flags & SymbolFlagsAlias) !== 0
+    ? checker.getAliasedSymbol(symbol)
+    : symbol;
+  if (selectedSymbol === undefined) return undefined;
+  const selected = resolvePrimitiveFromSelectedSymbol(facts, selectedSymbol, modules);
+  if (selected !== undefined) return selected;
   const receiver = typeName.Kind === KindQualifiedName
     ? AsQualifiedName(typeName)?.Left
     : undefined;
@@ -1615,13 +1633,6 @@ function resolvePrimitiveFromCheckedReference(
       ? undefined
       : facts.get(receiverSymbol, canonicalIdentityFactKey);
     if (receiverIdentity?.kind !== "module") {
-      return undefined;
-    }
-    const selectedMember = AsQualifiedName(typeName)?.Right;
-    const selectedSymbol = checker.getResolvedSymbolOrNil(typeName)
-      ?? checker.getResolvedSymbolOrNil(selectedMember)
-      ?? checker.getSymbolAtLocation(selectedMember);
-    if (selectedSymbol === undefined) {
       return undefined;
     }
     const moduleIdentity = modules.find(
@@ -1634,17 +1645,7 @@ function resolvePrimitiveFromCheckedReference(
     );
   }
 
-  const localSymbol = checker.getSymbolAtLocation(typeName);
-  const direct = resolvePrimitiveFromSelectedSymbol(facts, localSymbol, modules);
-  if (direct !== undefined) {
-    return direct;
-  }
-
-  return resolvePrimitiveFromSelectedSymbol(
-    facts,
-    checker.getResolvedSymbolOrNil(typeName),
-    modules,
-  );
+  return undefined;
 }
 
 function resolvePrimitiveFromSelectedSymbol(
@@ -1689,45 +1690,10 @@ function resolvePrimitiveFromSelectedSymbol(
   );
 }
 
-function resolveRecordedPrimitiveTypeReference(
-  facts: SourceSemanticsFactReader,
-  typeReference: Node,
-  typeName: GoPtr<Node>,
-  modules: readonly SourceSemanticsModuleRuntime[],
-): ResolvedSourcePrimitive | undefined {
-  if (typeName === undefined) {
-    return undefined;
-  }
-  const subjects = typeName.Kind === KindQualifiedName
-    ? [typeReference, typeName, AsQualifiedName(typeName)?.Right]
-    : [typeReference, typeName];
-  for (const subject of subjects) {
-    if (subject === undefined) {
-      continue;
-    }
-    const selection = facts.get(
-      subject,
-      selectedSourcePrimitiveDeclarationFactKey,
-    );
-    if (selection === undefined) {
-      continue;
-    }
-    const identity = facts.get(subject, canonicalIdentityFactKey);
-    if (identity === undefined) {
-      throw new Error(
-        `Selected source primitive '${selection.moduleSpecifier}::${selection.exportName}' has no canonical identity.`,
-      );
-    }
-    return resolvePrimitiveSelection(selection, modules, undefined, identity);
-  }
-  return undefined;
-}
-
 function resolvePrimitiveSelection(
   selection: SelectedSourcePrimitiveDeclaration,
   modules: readonly SourceSemanticsModuleRuntime[],
-  symbol?: Symbol,
-  identity?: ExtensionCanonicalIdentity,
+  symbol: Symbol,
 ): ResolvedSourcePrimitive {
   const moduleIdentity = modules.find(
     (candidate) => candidate.moduleSpecifier === selection.moduleSpecifier,
@@ -1742,13 +1708,11 @@ function resolvePrimitiveSelection(
     moduleIdentity,
     exportName: selection.exportName,
     primitiveFact: primitive,
-    identity: identity ?? createExportIdentity(
+    identity: createExportIdentity(
       moduleIdentity,
       selection.exportName,
       "type",
-      symbol === undefined
-        ? `${selection.moduleSpecifier}::${selection.exportName}`
-        : getSymbolFactId(symbol),
+      getSymbolFactId(symbol),
     ),
   };
 }
