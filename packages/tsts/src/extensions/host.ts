@@ -662,6 +662,7 @@ export const extensionHostRetireCompilerProgram: unique symbol = Symbol("tsts.ex
 export const extensionHostAttachElaboration: unique symbol = Symbol("tsts.extensionHost.attachElaboration");
 export const extensionHostRunElaboration: unique symbol = Symbol("tsts.extensionHost.runElaboration");
 export const extensionHostRequireElaboration: unique symbol = Symbol("tsts.extensionHost.requireElaboration");
+export const extensionHostResolveElaborationReference: unique symbol = Symbol("tsts.extensionHost.resolveElaborationReference");
 
 export interface AttachExtensionHostToProgramOptions {
   readonly bindCompilerProgram?: boolean;
@@ -3876,6 +3877,14 @@ export class ExtensionHost {
     }
     this.#requireSourceElaborator(key);
     return this.#elaboration.require(node, key);
+  }
+
+  [extensionHostResolveElaborationReference](reference: SourceElaborationNodeReference): Node {
+    this.assertCompilerProgramActive();
+    if (this.#elaboration === undefined) {
+      throw new Error("Source reference resolution requires an owning elaboration session.");
+    }
+    return this.#elaboration.resolveReference(reference);
   }
 
   [extensionHostRunElaboration](): void {

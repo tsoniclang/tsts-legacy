@@ -16,6 +16,8 @@ import { createTypeCheckerQueries, type TypeCheckerQueries } from "../services/t
 import { createTypeShapeQueries, type TypeShapeQueries } from "../services/type-shape.js";
 import { assertSemanticProgramActive, assertSemanticSourceFileOwned } from "../services/semantic-query-ownership.js";
 import type { ExtensionDiagnostic } from "./host.js";
+import { extensionHostResolveElaborationReference, getExtensionHost } from "./host.js";
+import type { SourceElaborationNodeReference } from "./source-elaboration-model.js";
 import type { ReadonlySourceFactResolver } from "./consumer.js";
 
 export interface SourceFileQueries {
@@ -31,6 +33,7 @@ export interface SourceProgramQueries {
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
   readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
+  readonly resolveElaborationReference: (reference: SourceElaborationNodeReference) => Node;
 }
 
 export interface CheckedSourceProgram extends SourceProgramQueries {
@@ -138,5 +141,19 @@ export function createSourceProgramQueries(
     getSourceFile,
     getSourceFileQueries,
     resolveModuleSourceFile,
+    resolveElaborationReference(reference: SourceElaborationNodeReference): Node {
+      assertSemanticProgramActive(program);
+      const host = getExtensionHost(program);
+      if (host === undefined) {
+        throw new Error("Source reference resolution requires an owning elaboration session.");
+      }
+      const node = host[extensionHostResolveElaborationReference](reference);
+      const file = ast.getSourceFile(node);
+      if (file === undefined || !included(file)) {
+        throw new Error("Source reference resolution requires an included source file.");
+      }
+      assertSemanticSourceFileOwned(program, file);
+      return node;
+    },
   });
 }

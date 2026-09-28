@@ -4,6 +4,7 @@ import {
   defineExtensionFactKey,
   type CompilerExtension,
   type SourceElaborationNodeReference,
+  type SourceProgramQueries,
 } from "../index.js";
 import { createCompilerSessionFromFiles } from "./compiler-session.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
@@ -33,10 +34,13 @@ test("elaboration references preserve same-spelled generic binder identities acr
     extensionId, name: "binders", snapshot: value => Object.freeze(value.map(reference => Object.freeze({ ...reference }))),
   });
   const verificationKey = defineExtensionFactKey<boolean>({ extensionId, name: "verified", snapshot: value => value });
+  let retiredSource: SourceProgramQueries | undefined;
+  let analyzedBinders = 0;
   const compiler = session([{
     identity: { id: extensionId, version: "1.0.0" },
     initialize(context) {
       context.registerSourceElaborator(referencesKey, context => {
+        retiredSource = context.source;
         return ["/src/left.ts", "/src/right.ts"].map(fileName => {
           const sourceFile = context.source.getSourceFile(fileName)!;
           const parameter = findNodes(sourceFile, context.source.ast.children, context.source.ast.is.IsTypeParameterDeclaration)[0];
@@ -64,12 +68,70 @@ test("elaboration references preserve same-spelled generic binder identities acr
       });
     },
     elaborateSource: context => context.request(context.source.getSourceFile("/src/left.ts")!, verificationKey),
+    analyzeSource(context) {
+      const references = context.facts.get(context.source.getSourceFile("/src/left.ts"), referencesKey);
+      assert.ok(references);
+      for (const reference of references) {
+        const node = context.source.resolveElaborationReference(reference);
+        assert.equal(context.source.ast.is.IsTypeParameterDeclaration(node), true);
+        analyzedBinders += 1;
+      }
+    },
   }]);
   const checked = compiler.checkSource();
   assert.deepEqual(checked.diagnostics, []);
   assert.deepEqual(checked.extensionDiagnostics, []);
   assert.equal(checked.sourceFacts.getFact(checked.getSourceFile("/src/left.ts"), verificationKey), true);
+  assert.equal(analyzedBinders, 2);
+  const references = checked.sourceFacts.getFact(checked.getSourceFile("/src/left.ts"), referencesKey)!;
+  for (const [index, fileName] of ["/src/left.ts", "/src/right.ts"].entries()) {
+    const expected = findNodes(checked.getSourceFile(fileName)!, checked.ast.children,
+      checked.ast.is.IsTypeParameterDeclaration)[0];
+    assert.equal(checked.resolveElaborationReference(references[index]!), expected);
+    assert.equal(checked.resolveElaborationReference({ ...references[index]! }), expected);
+  }
+  const retired = retiredSource;
+  assert.ok(retired);
+  assert.throws(() => retired.resolveElaborationReference(references[0]!), /retired/);
+  const filtered = createSourceProgramQueries(compiler.program, {
+    includeSourceFile: file => checked.ast.getFileName(file) !== "/src/right.ts",
+  });
+  assert.equal(filtered.resolveElaborationReference(references[0]!), checked.resolveElaborationReference(references[0]!));
+  assert.throws(() => filtered.resolveElaborationReference(references[1]!), /included source file/);
 });
+
+test("reference resolution does not introduce elaboration for an ordinary checked program", () => {
+  const checked = session().checkSource();
+  assert.throws(() => checked.resolveElaborationReference({ session: 1, revision: 0, id: 0 }), /owning elaboration session/);
+  assert.deepEqual(checked.diagnostics, []);
+});
+
+test("a sealed reference owner remains readable but cannot issue further references", () => {
+  const current = round();
+  const file = current.source.getSourceFile("/src/left.ts")!;
+  const reference = current.value.reference(file);
+  current.coordinator.seal(current.value);
+  assert.equal(current.value.resolveReference(reference), file);
+  assert.throws(() => current.value.reference(file), /sealed/);
+});
+
+test("finished reference owners cannot be read after replay retires their epoch", () => {
+  const current = round();
+  const reference = current.value.reference(current.source.getSourceFile("/src/left.ts")!);
+  current.coordinator.finishRound(current.value, true);
+  assert.throws(() => current.value.resolveReference(reference), /finished/);
+});
+
+for (const field of ["session", "revision", "id"] as const) {
+  test(`sealed references still validate their exact ${field}`, () => {
+    const current = round();
+    const reference = current.value.reference(current.source.getSourceFile("/src/left.ts")!);
+    current.coordinator.seal(current.value);
+    assert.throws(() => current.value.resolveReference({ ...reference, [field]: reference[field] + 1 }),
+      /different session or input revision|not issued/);
+    assert.throws(() => current.value.resolveReference(reference), /failed/);
+  });
+}
 
 function round() {
   const compiler = session();
