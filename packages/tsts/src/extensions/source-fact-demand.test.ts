@@ -189,14 +189,15 @@ test("early resolver reads, source queries, diagnostics and nested resolution ar
   assert.ok(early);
   const resolver = retained;
   const elaboration = early;
-  assert.throws(() => resolver.source, /callback scope/);
-  assert.throws(() => resolver.facts.get(file, selected), /callback scope/);
-  assert.throws(() => resolver.factResolver.resolve(file, selected), /callback scope/);
-  assert.throws(() => resolver.factResolver.getVirtualDeclarationDocument("/src/index.ts"), /callback scope/);
+  const expired = { message: "Extension callback capabilities cannot be used outside their host-owned callback." };
+  assert.throws(() => resolver.source, expired);
+  assert.throws(() => resolver.facts.get(file, selected), expired);
+  assert.throws(() => resolver.factResolver.resolve(file, selected), expired);
+  assert.throws(() => resolver.factResolver.getVirtualDeclarationDocument("/src/index.ts"), expired);
   assert.throws(() => resolver.diagnostics.append({ extensionId: selected.extensionId,
-    extensionCode: "LATE", numericCode: 9999000, category: "error", message: "late" }), /callback scope/);
-  assert.throws(() => elaboration.facts.get(file, selected), /callback scope/);
-  assert.throws(() => elaboration.factResolver.resolve(file, selected), /callback scope/);
+    extensionCode: "LATE", numericCode: 9999000, category: "error", message: "late" }), expired);
+  assert.throws(() => elaboration.facts.get(file, selected), expired);
+  assert.throws(() => elaboration.factResolver.resolve(file, selected), expired);
   assert.equal(checked.sourceFacts.getFact(file, selected), 42);
 });
 
