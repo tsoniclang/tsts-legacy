@@ -11,7 +11,7 @@ import {
   type ProviderModuleContext,
   type ProviderModuleResolution,
   type SourceDeclarationProvider,
-  type SourceAnalysisFactResolver,
+  type SourceFactResolver,
   type ProviderVirtualDeclarationDocument,
 } from "./index.js";
 import {
@@ -350,7 +350,7 @@ test("canonical provider owner files remain hidden from public source traversal"
     kind: "class",
   }]);
   let analyzedDocument: ProviderVirtualDeclarationDocument | undefined;
-  let retainedResolver: SourceAnalysisFactResolver | undefined;
+  let retainedResolver: SourceFactResolver | undefined;
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",
     rootFiles: ["/src/core.d.ts", "/src/index.ts"],

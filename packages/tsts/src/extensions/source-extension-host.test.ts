@@ -213,7 +213,7 @@ test("source extensions receive frozen least-authority capability views", () => 
       assert.equal(Object.isFrozen(context), true);
       assert.deepEqual(
         Object.keys(context).sort(),
-        ["diagnostics", "registerFactResolver", "registerSourceDeclarationProvider"],
+        ["diagnostics", "registerFactResolver", "registerSourceDeclarationProvider", "registerSourceElaborator"],
       );
       assert.equal(Object.isFrozen(context.diagnostics), true);
       assert.deepEqual(Object.keys(context.diagnostics), ["append"]);
@@ -226,6 +226,8 @@ test("source extensions receive frozen least-authority capability views", () => 
       });
       context.registerFactResolver(factKey, (candidate, resolverContext) => {
         assert.equal(Object.isFrozen(resolverContext), true);
+        assert.equal(Object.isFrozen(resolverContext.source), true);
+        assert.equal(Object.isFrozen(resolverContext.factResolver), true);
         assert.equal(Object.isFrozen(resolverContext.facts), true);
         assert.equal(Object.isFrozen(resolverContext.diagnostics), true);
         assert.deepEqual(Object.keys(resolverContext.facts).sort(), ["get", "getEntry", "has"]);

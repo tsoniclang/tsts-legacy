@@ -108,7 +108,7 @@ export type {
   RequiredProviderModuleSpec,
   SourceAnalysisContext,
   SourceAnalysisFactAccess,
-  SourceAnalysisFactResolver,
+  SourceFactResolver,
   SourceDeclarationProvider,
   SourceDeclarationMaterializationMode,
 } from "./host.js";

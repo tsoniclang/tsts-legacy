@@ -106,7 +106,7 @@ export type {
   ReadonlySourceFactResolver,
   SourceAnalysisContext,
   SourceAnalysisFactAccess,
-  SourceAnalysisFactResolver,
+  SourceFactResolver,
   SourceCallMarkerDeclaration,
   SourceCallMarkerKind,
   SourceDeclarationProvider,
