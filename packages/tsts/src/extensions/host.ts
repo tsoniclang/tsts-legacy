@@ -159,6 +159,7 @@ const factStoreApplyDelta: unique symbol = Symbol("tsts.extensionFactStore.apply
 const factStoreTransactionActive: unique symbol = Symbol("tsts.extensionFactStore.transactionActive");
 const factStoreInvalidate: unique symbol = Symbol("tsts.extensionFactStore.invalidate");
 const factStoreForOwner: unique symbol = Symbol("tsts.extensionFactStore.forOwner");
+const factStoreHasMatchingFact: unique symbol = Symbol("tsts.extensionFactStore.hasMatchingFact");
 const factStoreSetForHost: unique symbol = Symbol("tsts.extensionFactStore.setForHost");
 const factStoreSetSourceAnalyzerAccessGuard: unique symbol = Symbol("tsts.extensionFactStore.setSourceAnalyzerAccessGuard");
 const diagnosticStoreCreateSavepoint: unique symbol = Symbol("tsts.extensionDiagnosticStore.createSavepoint");
@@ -330,6 +331,7 @@ export interface SourceAnalysisFactAccess extends ExtensionFactReader {
 
 export interface SourceFactResolver {
   readonly getVirtualDeclarationDocument: (uriOrFileName: string) => ProviderVirtualDeclarationDocument | undefined;
+  readonly hasFacts: (subject: ExtensionFactSubject | undefined) => boolean;
   readonly resolve: <T>(
     subject: ExtensionFactSubject,
     key: ExtensionFactKey<T>,
@@ -1268,6 +1270,17 @@ export class ExtensionFactStore {
     return Object.freeze(Array.from(this.#getSubjectFacts(subject)?.values() ?? []));
   }
 
+  [factStoreHasMatchingFact](
+    subject: ExtensionFactSubject | undefined,
+    accepts: (key: ExtensionFactKey<unknown>) => boolean,
+  ): boolean {
+    if (subject === undefined) return false;
+    for (const entry of this.#getSubjectFacts(subject)?.values() ?? []) {
+      if (accepts(entry.key)) return true;
+    }
+    return false;
+  }
+
   seal(): void {
     if (this.#ownerId !== undefined || this.#effectiveOwnerId() !== undefined) {
       throw new Error("Extension-owned fact capabilities cannot seal the host fact store.");
@@ -1617,6 +1630,7 @@ interface ExtensionFactResolverState {
 interface ExtensionFactResolverServices {
   readonly source: () => SourceProgramQueries;
   readonly assertReadable: <T>(ownerId: string, key: ExtensionFactKey<T>) => void;
+  readonly isReadable: (ownerId: string, key: ExtensionFactKey<unknown>) => boolean;
   readonly getVirtualDeclarationDocument: SourceFactResolver["getVirtualDeclarationDocument"];
 }
 
@@ -1707,10 +1721,7 @@ export class ExtensionFactResolver {
   }
 
   resolve<T>(subject: ExtensionFactSubject, key: ExtensionFactKey<T>): T | undefined {
-    if (this.#ownerId !== undefined
-      && this.#state.ownerAuthority.stack[this.#state.ownerAuthority.stack.length - 1] !== this.#ownerId) {
-      throw new Error(`Extension fact resolver capability '${this.#ownerId}' was used outside its host-owned callback scope.`);
-    }
+    this.#assertActiveOwner();
     const ownerId = this.#effectiveOwnerId();
     if (ownerId !== undefined) this.#services.assertReadable(ownerId, key);
     const explicit = this.#facts.getEntry(subject, key);
@@ -1743,6 +1754,21 @@ export class ExtensionFactResolver {
     } finally {
       resolving.delete(subject);
       if (resolving.size === 0) this.#state.resolving.delete(keyIdentity);
+    }
+  }
+
+  hasFacts(subject: ExtensionFactSubject | undefined): boolean {
+    this.#assertActiveOwner();
+    this.#services.source();
+    const ownerId = this.#effectiveOwnerId();
+    return this.#facts[factStoreHasMatchingFact](subject,
+      key => ownerId === undefined || this.#services.isReadable(ownerId, key));
+  }
+
+  #assertActiveOwner(): void {
+    if (this.#ownerId !== undefined
+      && this.#state.ownerAuthority.stack[this.#state.ownerAuthority.stack.length - 1] !== this.#ownerId) {
+      throw new Error(`Extension fact resolver capability '${this.#ownerId}' was used outside its host-owned callback scope.`);
     }
   }
 
@@ -3787,6 +3813,7 @@ export class ExtensionHost {
     this.factResolver = new ExtensionFactResolver(this.facts, this.diagnostics, {
       source: () => this.getCompilerQueryContext(),
       assertReadable: (ownerId, key) => this.#assertSourceAnalyzerFactReadable(ownerId, key),
+      isReadable: (ownerId, key) => this.#sourceAnalyzerFactReadable(ownerId, key),
       getVirtualDeclarationDocument: name => this.providers.getVirtualDeclarationDocument(name),
     });
     this.providers = new ProviderRegistry(
@@ -4405,19 +4432,19 @@ export class ExtensionHost {
 
   #assertSourceAnalyzerFactReadable<T>(extensionId: string, key: ExtensionFactKey<T>): void {
     getExtensionFactKeyIdentity(key);
-    if (isHostSourceReadableFactKey(key)) {
-      return;
-    }
+    if (this.#sourceAnalyzerFactReadable(extensionId, key)) return;
+    throw new Error(
+      `Source extension '${extensionId}' cannot read or resolve fact key '${formatExtensionFactKeyForDisplay(key)}'; source analyzers may read only host source facts, their own facts, and facts from explicitly declared source dependencies.`,
+    );
+  }
+
+  #sourceAnalyzerFactReadable<T>(extensionId: string, key: ExtensionFactKey<T>): boolean {
+    if (isHostSourceReadableFactKey(key)) return true;
     const producer = this.#extensionsById.get(extensionId);
     const ownsKey = key.extensionId === extensionId;
     const declaresSourceDependency = producer?.dependencies?.dependsOn?.includes(key.extensionId) === true
       && this.#extensionsById.has(key.extensionId);
-    if (ownsKey || declaresSourceDependency) {
-      return;
-    }
-    throw new Error(
-      `Source extension '${extensionId}' cannot read or resolve fact key '${formatExtensionFactKeyForDisplay(key)}'; source analyzers may read only host source facts, their own facts, and facts from explicitly declared source dependencies.`,
-    );
+    return ownsKey || declaresSourceDependency;
   }
 
   #assertRegistrationOwner(extensionId: string, registrationKind: string): void {
@@ -4537,6 +4564,10 @@ function createSourceFactResolver(
   getVirtualDeclarationDocument: SourceFactResolver["getVirtualDeclarationDocument"],
 ): SourceFactResolver {
   const resolver: SourceFactResolver = {
+    hasFacts(subject) {
+      assertExtensionCapabilityActive(scope);
+      return factResolver.hasFacts(subject);
+    },
     getVirtualDeclarationDocument(name) {
       assertExtensionCapabilityActive(scope);
       return getVirtualDeclarationDocument(name);

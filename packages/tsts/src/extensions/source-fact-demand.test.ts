@@ -193,11 +193,13 @@ test("early resolver reads, source queries, diagnostics and nested resolution ar
   assert.throws(() => resolver.source, expired);
   assert.throws(() => resolver.facts.get(file, selected), expired);
   assert.throws(() => resolver.factResolver.resolve(file, selected), expired);
+  assert.throws(() => resolver.factResolver.hasFacts(file), expired);
   assert.throws(() => resolver.factResolver.getVirtualDeclarationDocument("/src/index.ts"), expired);
   assert.throws(() => resolver.diagnostics.append({ extensionId: selected.extensionId,
     extensionCode: "LATE", numericCode: 9999000, category: "error", message: "late" }), expired);
   assert.throws(() => elaboration.facts.get(file, selected), expired);
   assert.throws(() => elaboration.factResolver.resolve(file, selected), expired);
+  assert.throws(() => elaboration.factResolver.hasFacts(file), expired);
   assert.equal(checked.sourceFacts.getFact(file, selected), 42);
 });
 
@@ -233,4 +235,77 @@ test("suspended source elaboration does not carry provisional fact objects into 
   assert.ok(observations.length >= 2);
   assert.notEqual(observations[0]!.node, observations[1]!.node);
   assert.throws(() => observations[0]!.source.getSourceFiles(), /retired compiler program or epoch/);
+});
+
+test("fact existence exposes only currently published metadata from readable owners", () => {
+  const hidden = key<number>(value => value);
+  const visible = key<number>(value => value);
+  let resolutions = 0;
+  const observations: boolean[] = [];
+  const compiler = session([{
+    identity: { id: hidden.extensionId, version: "1" },
+    initialize: context => context.registerFactResolver(hidden, () => {
+      resolutions += 1;
+      return { value: 42 };
+    }),
+    elaborateSource(context) {
+      const file = context.source.getSourceFile("/src/index.ts")!;
+      assert.equal(context.factResolver.hasFacts(undefined), false);
+      assert.equal(context.factResolver.hasFacts(file), false);
+      assert.equal(resolutions, 0);
+      assert.equal(context.factResolver.resolve(file, hidden), 42);
+      assert.equal(context.factResolver.hasFacts(file), true);
+    },
+  }, {
+    identity: { id: visible.extensionId, version: "1" },
+    dependencies: { runsAfter: [hidden.extensionId] },
+    initialize: context => context.registerFactResolver(visible, () => ({ value: 7 })),
+    elaborateSource(context) {
+      const file = context.source.getSourceFile("/src/index.ts")!;
+      observations.push(context.factResolver.hasFacts(file));
+      assert.throws(() => context.factResolver.resolve(file, hidden), /explicitly declared source dependencies/);
+      assert.equal(context.factResolver.resolve(file, visible), 7);
+      observations.push(context.factResolver.hasFacts(file));
+    },
+  }, {
+    identity: { id: "test.fact-existence-dependent", version: "1" },
+    dependencies: { dependsOn: [hidden.extensionId], runsAfter: [visible.extensionId] },
+    elaborateSource(context) {
+      const file = context.source.getSourceFile("/src/index.ts")!;
+      observations.push(context.factResolver.hasFacts(file));
+      assert.throws(() => context.factResolver.resolve(file, visible), /explicitly declared source dependencies/);
+      assert.throws(() => getExtensionHost(compiler.program!)!.facts.entries(file), /cannot enumerate the global/);
+    },
+  }]);
+  const checked = compiler.checkSource();
+  assert.deepEqual(observations, [false, true, true]);
+  assert.equal(resolutions, 1);
+  assert.deepEqual(checked.diagnostics, []);
+  assert.deepEqual(checked.extensionDiagnostics, []);
+});
+
+test("an outer fact-existence capability cannot borrow a nested owner's permissions", () => {
+  const hidden = key<number>(value => value);
+  const outer = key<number>(value => value);
+  let outerRead: (() => boolean) | undefined;
+  const checked = session([{
+    identity: { id: hidden.extensionId, version: "1" },
+    initialize: context => context.registerFactResolver(hidden, () => {
+      assert.ok(outerRead);
+      assert.throws(outerRead, /outside its host-owned callback scope/);
+      return { value: 42 };
+    }),
+  }, {
+    identity: { id: outer.extensionId, version: "1" },
+    dependencies: { dependsOn: [hidden.extensionId] },
+    elaborateSource(context) {
+      const file = context.source.getSourceFile("/src/index.ts")!;
+      outerRead = () => context.factResolver.hasFacts(file);
+      assert.equal(outerRead(), false);
+      assert.equal(context.factResolver.resolve(file, hidden), 42);
+      assert.equal(outerRead(), true);
+    },
+  }]).checkSource();
+  assert.deepEqual(checked.diagnostics, []);
+  assert.deepEqual(checked.extensionDiagnostics, []);
 });
