@@ -134,20 +134,56 @@ for (const kind of ["type", "interface", "class", "enum", "value", "namespace"] 
   });
 }
 
-for (const kind of ["interface", "type"] as const) {
+for (const kind of ["interface", "type", "class", "enum", "function", "value", "namespace"] as const) {
   test(`default ${kind} exports retain both facets without duplicate default declarations`, () => {
-    const checked = check([{
+    const declaration: ProviderExportDeclaration = {
       id: "Native.Default.Type", intrinsicId: identity, name: "Local", kind, exportKind: "default",
-      ...(kind === "type" ? { type: { kind: "number" as const } } : {}),
-    }], [
+      ...(kind === "type" || kind === "value" ? { type: { kind: "number" as const } } : {}),
+      ...(kind === "function" ? { signatures: [{ id: "Native.Default.Call", parameters: [],
+        returnType: { kind: "number" as const } }] } : {}),
+      ...(kind === "enum" ? { members: [{ id: "Native.Default.Entry", name: "Entry", kind: "property" as const }] } : {}),
+    };
+    const checked = check([declaration], [
       `import Selected from "${moduleSpecifier}";`,
-      "export const token: typeof Selected = Selected;",
-      kind === "type" ? "export const value: Selected = 3;" : "export const value: Selected = {};",
+      `import * as native from "${moduleSpecifier}";`,
+      "export const token: typeof Selected = native.default;",
+      ...(kind === "type" ? ["export const value: Selected = 3;"] : []),
+      ...(kind === "interface" ? ["export const value: Selected = {};"] : []),
+      ...(kind === "class" ? ["export const value: Selected = new Selected();"] : []),
+      ...(kind === "enum" ? ["export const value: Selected = Selected.Entry;"] : []),
+      ...(kind === "function" ? ["export const value: number = Selected();"] : []),
+      ...(kind === "value" ? ["export const value: number = Selected;"] : []),
     ].join("\n"));
     assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
     assert.deepEqual(checked.extensionDiagnostics, []);
+    const file = checked.getSourceFile("/src/index.ts");
+    assert.ok(file);
+    const expression = findNodes(file, checked.ast.children, checked.ast.is.IsPropertyAccessExpression)[0];
+    assert.ok(expression);
+    const reference = checked.getSourceFileQueries(file).checker.getProviderReferenceInfo(expression);
+    assert.equal(reference?.intrinsic?.exportId, identity);
+    assert.equal(reference?.ordinary?.kind, "declaration");
+    assert.equal(reference?.ordinary?.kind === "declaration" && reference.ordinary.declaration.exportId, declaration.id);
   });
 }
+
+test("intrinsic-only default exports retain exact identity through authored re-exports", () => {
+  const checked = check([{ id: identity, name: "Local", kind: "intrinsic", exportKind: "default" }], [
+    'import { forwarded } from "./bridge.js";',
+    `import * as native from "${moduleSpecifier}";`,
+    "export const selected: typeof forwarded = native.default;",
+    "forwarded();",
+  ].join("\n"), { "/src/bridge.ts": `export { default as forwarded } from "${moduleSpecifier}";` });
+  assert.deepEqual(checked.diagnostics.map(Diagnostic_Code), [2349]);
+  assert.deepEqual(checked.extensionDiagnostics, []);
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const call = findNodes(file, checked.ast.children, checked.ast.is.IsCallExpression)[0];
+  assert.ok(call);
+  const reference = checked.getSourceFileQueries(file).checker.getProviderReferenceInfo(Node_Expression(call));
+  assert.equal(reference?.intrinsic?.exportId, identity);
+  assert.equal(reference?.ordinary, undefined);
+});
 
 test("default type exports without an intrinsic retain only their type facet", () => {
   const declaration: ProviderExportDeclaration = {
