@@ -139,6 +139,7 @@ export { barebonesLibContent, formatDiagnostics, transpile, transpileDeclaration
 export type { TranspileCompilerOptions, TranspileCompilerOptionValue, TranspileOptions, TranspileOutput } from "./services/transpile.js";
 export type {
   ResolvedSourceCallInfo,
+  ResolvedSourceSignatureCallInfo,
   SourceProviderReferenceInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,

@@ -56,10 +56,14 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   const sourceFile = checked.getSourceFile("/src/index.ts");
   const source = checked.getSourceFileQueries(sourceFile);
   const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
-  const facts = calls.map(call => checked.sourceFacts?.getFact(
-    source.checker.getSignatureDeclaration(source.checker.getResolvedCallInfo(call)?.selectedSignature),
-    providerVirtualDeclarationFactKey,
-  ));
+  const facts = calls.map(call => {
+    const selected = source.checker.getResolvedCallInfo(call);
+    assert.equal(selected?.outcome, "applicable");
+    return checked.sourceFacts?.getFact(
+      source.checker.getSignatureDeclaration(selected.selectedSignature),
+      providerVirtualDeclarationFactKey,
+    );
+  });
   assert.deepEqual(facts.map(fact => [fact?.memberId, fact?.signatureId]), [
     ["factory::default", "default(number)"], ["factory::default", "default(string)"],
     ["factory::collision", "collision()"], ["factory::constructor", "constructor()"], [undefined, undefined],

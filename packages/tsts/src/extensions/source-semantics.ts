@@ -86,7 +86,7 @@ import type {
   SourceTypeMarkerKind,
   StructFact,
 } from "./facts.js";
-import type { ResolvedSourceCallInfo, TypeCheckerQueries } from "../services/type-checker.js";
+import type { ResolvedSourceSignatureCallInfo, TypeCheckerQueries } from "../services/type-checker.js";
 import type {
   CompilerExtension,
   ExtensionDiagnosticWriter,
@@ -572,8 +572,9 @@ function recordSourceSemanticsCallMarkers(
       return;
     }
     const callInfo = checker.getResolvedCallInfo(node);
+    if (callInfo === undefined || callInfo.outcome === "intrinsic") return;
     const marker = resolveSelectedSourceSemanticsCallMarker(facts, callInfo);
-    if (marker === undefined || callInfo === undefined) {
+    if (marker === undefined) {
       return;
     }
     recordSourceSemanticsCallMarker(facts, diagnostics, extensionId, checker, node, callInfo, marker);
@@ -586,7 +587,7 @@ function recordSourceSemanticsCallMarker(
   extensionId: string,
   checker: TypeCheckerQueries,
   callExpression: Node,
-  callInfo: ResolvedSourceCallInfo,
+  callInfo: ResolvedSourceSignatureCallInfo,
   marker: SourceCallMarkerDeclaration,
 ): void {
   const evidence = createMarkerEvidence(marker.exportName);
@@ -716,7 +717,7 @@ function recordPointerOperation(
   extensionId: string,
   checker: TypeCheckerQueries,
   callExpression: Node,
-  callInfo: ResolvedSourceCallInfo,
+  callInfo: ResolvedSourceSignatureCallInfo,
   marker: SourceCallMarkerDeclaration,
   evidence: readonly ExtensionEvidence[],
 ): void {
@@ -947,10 +948,10 @@ function recordPointerOperation(
 }
 
 function exactSourceCallArgument(
-  callInfo: ResolvedSourceCallInfo,
+  callInfo: ResolvedSourceSignatureCallInfo,
   index: number,
   expectedCount: number,
-): ResolvedSourceCallInfo["sourceArguments"][number] | undefined {
+): ResolvedSourceSignatureCallInfo["sourceArguments"][number] | undefined {
   return callInfo.sourceArguments.length === expectedCount
     ? callInfo.sourceArguments[index]
     : undefined;
@@ -959,7 +960,7 @@ function exactSourceCallArgument(
 function recordRawPointerOperation(
   facts: SourceSemanticsFactAccess,
   callExpression: Node,
-  callInfo: ResolvedSourceCallInfo,
+  callInfo: ResolvedSourceSignatureCallInfo,
   marker: SourceCallMarkerDeclaration,
   evidence: readonly ExtensionEvidence[],
 ): void {
@@ -1370,7 +1371,7 @@ function getFunctionPointerParameters(parameterList: GoPtr<Node>): readonly Node
 
 function resolveSelectedSourceSemanticsCallMarker(
   facts: SourceSemanticsFactAccess,
-  callInfo: GoPtr<ResolvedSourceCallInfo>,
+  callInfo: GoPtr<ResolvedSourceSignatureCallInfo>,
 ): SourceCallMarkerDeclaration | undefined {
   if (callInfo === undefined) {
     return undefined;

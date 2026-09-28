@@ -165,8 +165,10 @@ test("source provider facts distinguish same-spelling static and instance member
     checked.ast.is.IsCallExpression,
   ).map((node) => source.checker.getResolvedCallInfo(node));
   assert.equal(calls.length, 2);
-  const facts = calls.map((call) =>
-    checked.sourceFacts?.getFact(call?.sourceCalleeAccess?.selectedDeclaration, providerVirtualDeclarationFactKey));
+  const facts = calls.map((call) => {
+    assert.equal(call?.outcome, "applicable");
+    return checked.sourceFacts?.getFact(call.sourceCalleeAccess?.selectedDeclaration, providerVirtualDeclarationFactKey);
+  });
   assert.deepEqual(
     facts.map((fact) => [fact?.memberId, fact?.memberStatic]),
     [
@@ -494,6 +496,7 @@ test("provider parameter modes remain declaration facts keyed by exact signature
     checked.ast.is.IsCallExpression,
   )[0];
   const call = source.checker.getResolvedCallInfo(callNode);
+  assert.equal(call?.outcome, "applicable");
   const parameter = call?.sourceSelectedSignatureParameters[0];
   assert.equal(parameter?.parameterName, "value");
   assert.equal(
@@ -545,7 +548,9 @@ test("source-file queries retain checker ownership for instantiated provider sig
     checked.ast.children,
     checked.ast.is.IsCallExpression,
   )[0];
-  const calleeType = source.checker.getResolvedCallInfo(call)?.sourceCallee.type;
+  const selected = source.checker.getResolvedCallInfo(call);
+  assert.equal(selected?.outcome, "applicable");
+  const calleeType = selected.sourceCallee.type;
   const signature = source.checker.getCallSignaturesOfType(calleeType)[0];
   const parameter = source.checker.getSignatureParameters(signature)[0];
 

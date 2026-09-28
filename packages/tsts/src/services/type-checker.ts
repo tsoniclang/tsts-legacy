@@ -11,7 +11,7 @@ import {
   assertSemanticTypeOwned,
 } from "./semantic-query-ownership.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Text } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import {
@@ -129,7 +129,15 @@ export interface CreateTypeCheckerQueriesOptions {
   readonly context?: Context;
 }
 
-export type ResolvedSourceCallInfo = ResolvedCallEvidence;
+export type ResolvedSourceSignatureCallInfo = ResolvedCallEvidence;
+
+export type ResolvedSourceCallInfo = ResolvedSourceSignatureCallInfo | {
+  readonly outcome: "intrinsic";
+  readonly reference: Pick<SourceProviderReferenceInfo, "expression" | "symbol"> & {
+    readonly intrinsic: NonNullable<SourceProviderReferenceInfo["intrinsic"]>;
+    readonly ordinary?: never;
+  };
+};
 export interface ResolvedSourceReceiverValueEvidence {
   readonly valueSymbol?: Symbol;
   readonly valueDeclaration?: Node;
@@ -291,6 +299,14 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         withCheckerForNode(program, node, defaultOptions, (checker) => {
           if (!IsCallOrNewExpression(node)) {
             return undefined;
+          }
+          const reference = resolveSourceProviderReference(checker, Node_Expression(node));
+          if (reference?.intrinsic !== undefined && reference.ordinary === undefined) {
+            return Object.freeze({ outcome: "intrinsic" as const, reference: Object.freeze({
+              expression: reference.expression,
+              symbol: reference.symbol,
+              intrinsic: reference.intrinsic,
+            }) });
           }
           Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal);
           const sourceResultType = Checker_GetTypeAtLocation(checker, node);

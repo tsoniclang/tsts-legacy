@@ -314,6 +314,7 @@ test("public AST reader exposes exact authored type nodes", () => {
   );
   const selected = checked.getSourceFileQueries(sourceFile).checker
     .getResolvedCallInfo(call);
+  assert.equal(selected?.outcome, "applicable");
   assert.equal(selected?.sourceSelectedSignatureKind, "resolved");
   const declaration = checked.getSourceFileQueries(sourceFile).checker
     .getSignatureDeclaration(selected?.selectedSignature);
