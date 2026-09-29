@@ -9,7 +9,6 @@ export function getProviderMemberSurfaceKey(member: ProviderMemberDeclaration): 
     case "method":
     case "property":
     case "field":
-    case "intrinsic":
       return JSON.stringify([member.static === true, propertyKey(member.name)]);
   }
 }

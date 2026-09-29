@@ -4,9 +4,6 @@ export type ExtensionFactSubject = object;
 
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
-import type { Node } from "../internal/ast/ast.js";
-import type { SourceElaborationContext, SourceElaborationNodeReference, SourceElaborationResolver, SourceElaborationResolverContext } from "./source-elaboration-model.js";
-import type { SourceElaborationRound } from "./source-elaboration.js";
 import { SourceFile_FileName, type SourceFile } from "../internal/ast/ast.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
@@ -63,7 +60,6 @@ import {
   assertProviderAncillaryAggregateScalarCodeUnits,
   assertProviderBoundaryString,
   formatProviderBoundarySnapshotFailure,
-  snapshotProviderBoundaryData,
   snapshotProviderEvidenceArray,
 } from "./provider-boundary-data.js";
 import {
@@ -159,7 +155,6 @@ const factStoreApplyDelta: unique symbol = Symbol("tsts.extensionFactStore.apply
 const factStoreTransactionActive: unique symbol = Symbol("tsts.extensionFactStore.transactionActive");
 const factStoreInvalidate: unique symbol = Symbol("tsts.extensionFactStore.invalidate");
 const factStoreForOwner: unique symbol = Symbol("tsts.extensionFactStore.forOwner");
-const factStoreHasMatchingFact: unique symbol = Symbol("tsts.extensionFactStore.hasMatchingFact");
 const factStoreSetForHost: unique symbol = Symbol("tsts.extensionFactStore.setForHost");
 const factStoreSetSourceAnalyzerAccessGuard: unique symbol = Symbol("tsts.extensionFactStore.setSourceAnalyzerAccessGuard");
 const diagnosticStoreCreateSavepoint: unique symbol = Symbol("tsts.extensionDiagnosticStore.createSavepoint");
@@ -297,7 +292,6 @@ export interface CompilerExtension {
   readonly identity: CompilerExtensionIdentity;
   readonly dependencies?: ExtensionDependencySpec;
   readonly initialize?: (context: ExtensionInitializeContext) => void;
-  readonly elaborateSource?: (context: SourceElaborationContext) => void;
   readonly analyzeSource?: (context: SourceAnalysisContext) => void;
 }
 
@@ -329,9 +323,8 @@ export interface SourceAnalysisFactAccess extends ExtensionFactReader {
   ) => ExtensionFactWriteResult;
 }
 
-export interface SourceFactResolver {
+export interface SourceAnalysisFactResolver {
   readonly getVirtualDeclarationDocument: (uriOrFileName: string) => ProviderVirtualDeclarationDocument | undefined;
-  readonly hasFacts: (subject: ExtensionFactSubject | undefined) => boolean;
   readonly resolve: <T>(
     subject: ExtensionFactSubject,
     key: ExtensionFactKey<T>,
@@ -341,13 +334,12 @@ export interface SourceFactResolver {
 export interface SourceAnalysisContext {
   readonly source: SourceProgramQueries;
   readonly facts: SourceAnalysisFactAccess;
-  readonly factResolver: SourceFactResolver;
+  readonly factResolver: SourceAnalysisFactResolver;
   readonly diagnostics: ExtensionDiagnosticWriter;
 }
 
 export interface ExtensionInitializeContext {
   readonly diagnostics: ExtensionDiagnosticWriter;
-  readonly registerSourceElaborator: <T>(key: ExtensionFactKey<T>, resolver: SourceElaborationResolver<T>) => void;
   readonly registerFactResolver: <T>(
     key: ExtensionFactKey<T>,
     resolver: ExtensionFactResolverCallback<T>,
@@ -375,9 +367,7 @@ export interface ExtensionFactResolution<T> {
 export type ExtensionFactResolverCallback<T> = (subject: ExtensionFactSubject, context: ExtensionFactResolverContext) => ExtensionFactResolution<T> | undefined;
 
 export interface ExtensionFactResolverContext {
-  readonly source: SourceProgramQueries;
   readonly facts: ExtensionFactReader;
-  readonly factResolver: SourceFactResolver;
   readonly diagnostics: ExtensionDiagnosticWriter;
 }
 
@@ -461,7 +451,7 @@ export interface ProviderModuleResolution {
   readonly evidence?: readonly ExtensionEvidence[];
 }
 
-export type ProviderDeclarationKind = "type" | "value" | "namespace" | "function" | "class" | "interface" | "enum" | "intrinsic";
+export type ProviderDeclarationKind = "type" | "value" | "namespace" | "function" | "class" | "interface" | "enum";
 
 export type ProviderExportKind = "named" | "default";
 
@@ -549,7 +539,7 @@ export interface ProviderSignatureDeclaration {
 export interface ProviderMemberDeclaration {
   readonly id: string;
   readonly name: ProviderPropertyName;
-  readonly kind: "method" | "constructor" | "property" | "field" | "indexer" | "intrinsic";
+  readonly kind: "method" | "constructor" | "property" | "field" | "indexer";
   readonly static?: boolean;
   readonly readonly?: boolean;
   readonly optional?: boolean;
@@ -560,7 +550,6 @@ export interface ProviderMemberDeclaration {
 
 export interface ProviderExportDeclaration {
   readonly id: string;
-  readonly intrinsicId?: string;
   readonly name: string;
   readonly exportName?: string;
   readonly exportKind?: ProviderExportKind;
@@ -662,11 +651,6 @@ export interface ExtendedProgram<TProgram extends object = object> {
 
 export const extensionHostSetFact: unique symbol = Symbol("tsts.extensionHost.setFact");
 export const extensionHostRunSourceAnalysis: unique symbol = Symbol("tsts.extensionHost.runSourceAnalysis");
-export const extensionHostRetireCompilerProgram: unique symbol = Symbol("tsts.extensionHost.retireCompilerProgram");
-export const extensionHostAttachElaboration: unique symbol = Symbol("tsts.extensionHost.attachElaboration");
-export const extensionHostRunElaboration: unique symbol = Symbol("tsts.extensionHost.runElaboration");
-export const extensionHostRequireElaboration: unique symbol = Symbol("tsts.extensionHost.requireElaboration");
-export const extensionHostResolveElaborationReference: unique symbol = Symbol("tsts.extensionHost.resolveElaborationReference");
 
 export interface AttachExtensionHostToProgramOptions {
   readonly bindCompilerProgram?: boolean;
@@ -1078,7 +1062,6 @@ interface ExtensionFactStoreState {
     subject: ExtensionFactSubject | undefined,
     key: ExtensionFactKey<unknown>,
     access: "read" | "write",
-    ownerId: string | undefined,
   ) => void) | undefined;
   sourceAnalyzerEnumerationGuard: (() => void) | undefined;
   activeTransaction: ExtensionFactTransaction | undefined;
@@ -1136,7 +1119,6 @@ export class ExtensionFactStore {
       subject: ExtensionFactSubject | undefined,
       key: ExtensionFactKey<unknown>,
       access: "read" | "write",
-      ownerId: string | undefined,
     ) => void) | undefined,
     enumerationGuard: (() => void) | undefined,
   ): void {
@@ -1145,7 +1127,7 @@ export class ExtensionFactStore {
   }
 
   set<T>(subject: ExtensionFactSubject, key: ExtensionFactKey<T>, value: T, evidence: readonly ExtensionEvidence[] = []): ExtensionFactWriteResult {
-    this.#state.sourceAnalyzerAccessGuard?.(subject, key as ExtensionFactKey<unknown>, "write", this.#effectiveOwnerId());
+    this.#state.sourceAnalyzerAccessGuard?.(subject, key as ExtensionFactKey<unknown>, "write");
     getExtensionFactKeyIdentity(key);
     const ownerId = this.#effectiveOwnerId();
     if (this.#state.hostWriteDepth === 0 && (!this.#boundWriterIsActive() || ownerId === undefined)) {
@@ -1250,7 +1232,7 @@ export class ExtensionFactStore {
   }
 
   getEntry<T>(subject: ExtensionFactSubject | undefined, key: ExtensionFactKey<T>): ExtensionFactEntry<T> | undefined {
-    this.#state.sourceAnalyzerAccessGuard?.(subject, key as ExtensionFactKey<unknown>, "read", this.#effectiveOwnerId());
+    this.#state.sourceAnalyzerAccessGuard?.(subject, key as ExtensionFactKey<unknown>, "read");
     if (subject === undefined) {
       return undefined;
     }
@@ -1268,17 +1250,6 @@ export class ExtensionFactStore {
       return Object.freeze([]);
     }
     return Object.freeze(Array.from(this.#getSubjectFacts(subject)?.values() ?? []));
-  }
-
-  [factStoreHasMatchingFact](
-    subject: ExtensionFactSubject | undefined,
-    accepts: (key: ExtensionFactKey<unknown>) => boolean,
-  ): boolean {
-    if (subject === undefined) return false;
-    for (const entry of this.#getSubjectFacts(subject)?.values() ?? []) {
-      if (accepts(entry.key)) return true;
-    }
-    return false;
   }
 
   seal(): void {
@@ -1623,15 +1594,7 @@ interface ExtensionFactResolverState {
   readonly savepoints: ExtensionFactResolverSavepoint[];
   readonly savepointStates: WeakMap<ExtensionFactResolverSavepoint, ExtensionFactResolverSavepointState>;
   readonly ownerAuthority: ExtensionOwnerAuthority;
-  readonly resolving: Map<object, Set<ExtensionFactSubject>>;
   registrationsSealed: boolean;
-}
-
-interface ExtensionFactResolverServices {
-  readonly source: () => SourceProgramQueries;
-  readonly assertReadable: <T>(ownerId: string, key: ExtensionFactKey<T>) => void;
-  readonly isReadable: (ownerId: string, key: ExtensionFactKey<unknown>) => boolean;
-  readonly getVirtualDeclarationDocument: SourceFactResolver["getVirtualDeclarationDocument"];
 }
 
 export class ExtensionFactResolver {
@@ -1639,17 +1602,14 @@ export class ExtensionFactResolver {
   readonly #diagnostics: ExtensionDiagnosticStore;
   readonly #state: ExtensionFactResolverState;
   readonly #ownerId: string | undefined;
-  readonly #services: ExtensionFactResolverServices;
 
   constructor(
     facts: ExtensionFactStore,
     diagnostics: ExtensionDiagnosticStore,
-    services: ExtensionFactResolverServices,
     options?: ExtensionStoreViewOptions<ExtensionFactResolverState>,
   ) {
     this.#facts = facts;
     this.#diagnostics = diagnostics;
-    this.#services = services;
     if (options === undefined) {
       this.#state = {
         resolvers: new Map(),
@@ -1657,7 +1617,6 @@ export class ExtensionFactResolver {
         savepoints: [],
         savepointStates: new WeakMap(),
         ownerAuthority: getDiagnosticStoreOwnerAuthority(diagnostics),
-        resolving: new Map(),
         registrationsSealed: false,
       };
       this.#ownerId = undefined;
@@ -1675,7 +1634,7 @@ export class ExtensionFactResolver {
     facts: ExtensionFactStore,
     diagnostics: ExtensionDiagnosticStore,
   ): ExtensionFactResolver {
-    return new ExtensionFactResolver(facts, diagnostics, this.#services, {
+    return new ExtensionFactResolver(facts, diagnostics, {
       state: this.#state,
       ownerId: extensionId,
       token: extensionStoreViewToken,
@@ -1721,9 +1680,10 @@ export class ExtensionFactResolver {
   }
 
   resolve<T>(subject: ExtensionFactSubject, key: ExtensionFactKey<T>): T | undefined {
-    this.#assertActiveOwner();
-    const ownerId = this.#effectiveOwnerId();
-    if (ownerId !== undefined) this.#services.assertReadable(ownerId, key);
+    if (this.#ownerId !== undefined
+      && this.#state.ownerAuthority.stack[this.#state.ownerAuthority.stack.length - 1] !== this.#ownerId) {
+      throw new Error(`Extension fact resolver capability '${this.#ownerId}' was used outside its host-owned callback scope.`);
+    }
     const explicit = this.#facts.getEntry(subject, key);
     if (explicit !== undefined) {
       return explicit.value;
@@ -1732,71 +1692,27 @@ export class ExtensionFactResolver {
     if (this.#facts.sealed) {
       return undefined;
     }
-    const keyIdentity = getExtensionFactKeyIdentity(key);
-    const resolvers = this.#state.resolvers.get(keyIdentity);
+    const resolvers = this.#state.resolvers.get(getExtensionFactKeyIdentity(key));
     if (resolvers === undefined) {
       return undefined;
     }
     if (!this.#facts[factStoreTransactionActive]()) {
       throw new Error("Extension fact resolver callbacks require a host-owned mutation transaction.");
     }
-    let resolving = this.#state.resolving.get(keyIdentity);
-    if (resolving?.has(subject)) {
-      throw new Error(`Cyclic source fact resolution for '${formatExtensionFactKeyForDisplay(key)}'.`);
-    }
-    if (resolving === undefined) {
-      resolving = new Set();
-      this.#state.resolving.set(keyIdentity, resolving);
-    }
-    resolving.add(subject);
-    try {
-      return this.#resolveRegistered(subject, key, resolvers);
-    } finally {
-      resolving.delete(subject);
-      if (resolving.size === 0) this.#state.resolving.delete(keyIdentity);
-    }
-  }
 
-  hasFacts(subject: ExtensionFactSubject | undefined): boolean {
-    this.#assertActiveOwner();
-    this.#services.source();
-    const ownerId = this.#effectiveOwnerId();
-    return this.#facts[factStoreHasMatchingFact](subject,
-      key => ownerId === undefined || this.#services.isReadable(ownerId, key));
-  }
-
-  #assertActiveOwner(): void {
-    if (this.#ownerId !== undefined
-      && this.#state.ownerAuthority.stack[this.#state.ownerAuthority.stack.length - 1] !== this.#ownerId) {
-      throw new Error(`Extension fact resolver capability '${this.#ownerId}' was used outside its host-owned callback scope.`);
-    }
-  }
-
-  #resolveRegistered<T>(
-    subject: ExtensionFactSubject,
-    key: ExtensionFactKey<T>,
-    resolvers: readonly RegisteredExtensionFactResolver[],
-  ): T | undefined {
     for (const registration of resolvers) {
       const diagnostics = this.#diagnostics[diagnosticStoreForOwner](registration.ownerId);
       const facts = this.#facts[factStoreForOwner](registration.ownerId, diagnostics);
-      const resolver = this[factResolverForOwner](registration.ownerId, facts, diagnostics);
       let writeResult: ExtensionFactWriteResult | undefined;
       const resolved = runWithFactResolverOwnerAuthority(
         this.#state.ownerAuthority,
         registration.ownerId,
         () => {
           const scope = createExtensionCapabilityScope();
-          const services = this.#services;
           let resolution: ExtensionFactResolution<unknown> | undefined;
           try {
             resolution = registration.callback(subject, Object.freeze({
-              get source() {
-                assertExtensionCapabilityActive(scope);
-                return services.source();
-              },
               facts: createExtensionFactReader(facts, scope),
-              factResolver: createSourceFactResolver(resolver, scope, services.getVirtualDeclarationDocument),
               diagnostics: createExtensionDiagnosticWriter(diagnostics, scope),
             }));
           } finally {
@@ -3768,12 +3684,6 @@ export class ProviderRegistry {
   }
 }
 
-interface ExtensionOwnerCapabilities {
-  readonly facts: ExtensionFactStore;
-  readonly factResolver: ExtensionFactResolver;
-  readonly diagnostics: ExtensionDiagnosticStore;
-}
-
 export class ExtensionHost {
   readonly diagnostics: ExtensionDiagnosticStore;
   readonly facts: ExtensionFactStore;
@@ -3785,13 +3695,6 @@ export class ExtensionHost {
   readonly #mutationAttemptStack: HostMutationAttempt[] = [];
   readonly #ownerAuthority: ExtensionOwnerAuthority;
   #program: object;
-  #compilerProgramRetired = false;
-  #elaboration: SourceElaborationRound | undefined;
-  #elaborationRun = false;
-  readonly #sourceElaborators = new Map<string, {
-    readonly key: ExtensionFactKey<unknown>;
-    readonly resolve: SourceElaborationResolver<unknown>;
-  }>();
   #compilerContext: SourceProgramQueries | undefined;
   #sourceAnalysisState: "pending" | "running" | "completed" | "failed" = "pending";
   #semanticFinalizationState: "open" | "finalized" | "failed" = "open";
@@ -3810,12 +3713,7 @@ export class ExtensionHost {
     this.diagnostics = new ExtensionDiagnosticStore();
     this.#ownerAuthority = getDiagnosticStoreOwnerAuthority(this.diagnostics);
     this.facts = new ExtensionFactStore(this.diagnostics);
-    this.factResolver = new ExtensionFactResolver(this.facts, this.diagnostics, {
-      source: () => this.getCompilerQueryContext(),
-      assertReadable: (ownerId, key) => this.#assertSourceAnalyzerFactReadable(ownerId, key),
-      isReadable: (ownerId, key) => this.#sourceAnalyzerFactReadable(ownerId, key),
-      getVirtualDeclarationDocument: name => this.providers.getVirtualDeclarationDocument(name),
-    });
+    this.factResolver = new ExtensionFactResolver(this.facts, this.diagnostics);
     this.providers = new ProviderRegistry(
       this.diagnostics,
       options.requiredProviderModules ?? [],
@@ -3843,8 +3741,6 @@ export class ExtensionHost {
         continue;
       }
       const attempt = this.#beginFactAttempt();
-      const elaborators = new Map<string, { readonly key: ExtensionFactKey<unknown>; readonly resolve: SourceElaborationResolver<unknown> }>();
-      let elaboratorRegistrationFailed = false;
       try {
         const capabilities = this.#getOwnerCapabilities(extension.identity.id);
         let rangeRegistered = false;
@@ -3860,22 +3756,6 @@ export class ExtensionHost {
           try {
             extension.initialize?.(Object.freeze({
               diagnostics: createExtensionDiagnosticWriter(capabilities.diagnostics, scope),
-              registerSourceElaborator: <T>(key: ExtensionFactKey<T>, resolve: SourceElaborationResolver<T>): void => {
-                assertExtensionCapabilityActive(scope);
-                try {
-                  getExtensionFactKeyIdentity(key);
-                  if (key.extensionId !== extension.identity.id || typeof resolve !== "function") {
-                    throw new Error("A source elaborator requires its exact owning extension and a resolver.");
-                  }
-                  if (elaborators.has(key.id) || this.#sourceElaborators.has(key.id)) {
-                    throw new Error(`Source elaborator '${key.id}' is already registered.`);
-                  }
-                  elaborators.set(key.id, Object.freeze({ key: key as ExtensionFactKey<unknown>, resolve }));
-                } catch (error) {
-                  elaboratorRegistrationFailed = true;
-                  throw error;
-                }
-              },
               registerFactResolver: <T>(
                 key: ExtensionFactKey<T>,
                 resolver: ExtensionFactResolverCallback<T>,
@@ -3896,9 +3776,7 @@ export class ExtensionHost {
           this.#discardFactAttemptPreservingDiagnostics(attempt);
           continue;
         }
-        if (elaboratorRegistrationFailed) throw new Error("Source elaborator registration failed during initialization.");
         this.#commitFactAttempt(attempt);
-        for (const [id, elaborator] of elaborators) this.#sourceElaborators.set(id, elaborator);
         this.#extensionsById.set(extension.identity.id, extension);
         this.#extensions.push(extension);
       } catch (error) {
@@ -3923,143 +3801,7 @@ export class ExtensionHost {
     return this.#program;
   }
 
-  get hasSourceElaboration(): boolean {
-    return this.#sourceElaborators.size !== 0 || this.#extensions.some(extension => extension.elaborateSource !== undefined);
-  }
-
-  assertCompilerProgramActive(): void {
-    if (this.#compilerProgramRetired) {
-      throw new Error("Source semantic queries cannot use a retired compiler program or epoch.");
-    }
-    this.#elaboration?.assertNotSuspended();
-  }
-
-  [extensionHostAttachElaboration](round: SourceElaborationRound): void {
-    this.assertCompilerProgramActive();
-    if (this.#elaboration !== undefined || this.#ownerAuthority.stack.length !== 0) {
-      throw new Error("Only the compiler session can attach one elaboration round to a program.");
-    }
-    this.#elaboration = round;
-    for (const answer of round.accepted()) {
-      this.#requireSourceElaborator(answer.key);
-      const result = this[extensionHostSetFact](answer.node, answer.key, answer.value);
-      if (result !== "inserted" && result !== "idempotent") {
-        throw new Error("Source elaboration answer conflicts with current source facts.");
-      }
-      const installed = snapshotProviderBoundaryData(this.facts.get(answer.node, answer.key), "sourceElaboration.installed");
-      if (installed.kind === "invalid" || !providerBoundaryDataEquals(installed.value, answer.value)) {
-        throw new Error("Source elaboration answer changed while installing its exact fact snapshot.");
-      }
-    }
-  }
-
-  [extensionHostRequireElaboration]<T>(node: Node, key: ExtensionFactKey<T>): T {
-    this.assertCompilerProgramActive();
-    if (this.#elaboration === undefined) {
-      throw new Error("Source elaboration requires a compiler session with an elaborating source extension.");
-    }
-    this.#requireSourceElaborator(key);
-    return this.#elaboration.require(node, key);
-  }
-
-  [extensionHostResolveElaborationReference](reference: SourceElaborationNodeReference): Node {
-    this.assertCompilerProgramActive();
-    if (this.#elaboration === undefined) {
-      throw new Error("Source reference resolution requires an owning elaboration session.");
-    }
-    return this.#elaboration.resolveReference(reference);
-  }
-
-  [extensionHostRunElaboration](): void {
-    this.assertCompilerProgramActive();
-    const round = this.#elaboration;
-    if (round === undefined) {
-      if (this.hasSourceElaboration) {
-        throw new Error("Source elaboration requires a replay-capable compiler session.");
-      }
-      return;
-    }
-    if (this.#ownerAuthority.stack.length !== 0) throw new Error("Source elaboration cannot nest extension callbacks.");
-    if (this.#elaborationRun) return;
-    this.#elaborationRun = true;
-    const source = this.getCompilerQueryContext();
-    for (const extension of this.#extensions) {
-      if (extension.elaborateSource === undefined) continue;
-      this.#withSourceFacts(extension.identity.id, (capabilities, scope) => {
-        extension.elaborateSource!(Object.freeze({
-          source,
-          facts: createExtensionFactReader(capabilities.facts, scope),
-          factResolver: createSourceFactResolver(capabilities.factResolver, scope,
-            name => this.providers.getVirtualDeclarationDocument(name)),
-          request: <T>(node: Node, key: ExtensionFactKey<T>): void => {
-            assertExtensionCapabilityActive(scope);
-            this.#assertSourceAnalyzerFactReadable(extension.identity.id, key);
-            this.#requireSourceElaborator(key);
-            round.request(node, key);
-          },
-        }));
-      });
-    }
-    for (const request of round.ready()) {
-      const elaborator = this.#requireSourceElaborator(request.key);
-      this.#withSourceFacts(request.key.extensionId, (capabilities, scope) => {
-        const assertReadable = <T>(key: ExtensionFactKey<T>): void => {
-          assertExtensionCapabilityActive(scope);
-          this.#assertSourceAnalyzerFactReadable(request.key.extensionId, key);
-          this.#requireSourceElaborator(key);
-        };
-        const resolverContext: SourceElaborationResolverContext = Object.freeze({
-          source,
-          facts: createExtensionFactReader(capabilities.facts, scope),
-          factResolver: createSourceFactResolver(capabilities.factResolver, scope,
-            name => this.providers.getVirtualDeclarationDocument(name)),
-          node: request.node,
-          reference: (node: Node) => {
-            assertExtensionCapabilityActive(scope);
-            return round.reference(node);
-          },
-          resolve: (reference: SourceElaborationNodeReference) => {
-            assertExtensionCapabilityActive(scope);
-            return round.resolveReference(reference);
-          },
-          request: <T>(node: Node, key: ExtensionFactKey<T>): void => {
-            assertReadable(key);
-            round.request(node, key);
-          },
-          require: <T>(node: Node, key: ExtensionFactKey<T>): T => {
-            assertReadable(key);
-            return round.require(node, key);
-          },
-        });
-        round.resolve(request, () => elaborator.resolve(resolverContext));
-      });
-    }
-  }
-
-  #requireSourceElaborator<T>(key: ExtensionFactKey<T>) {
-    getExtensionFactKeyIdentity(key);
-    const elaborator = this.#sourceElaborators.get(key.id);
-    if (elaborator === undefined || elaborator.key !== key) {
-      throw new Error(`Source elaboration '${key.id}' has no exact registered owner.`);
-    }
-    return elaborator;
-  }
-
-  [extensionHostRetireCompilerProgram](): void {
-    const activeOwner = this.#ownerAuthority.stack[this.#ownerAuthority.stack.length - 1];
-    if (activeOwner !== undefined || this.#mutationAttemptStack.length !== 0) {
-      throw new Error("Only the compiler session can retire a program outside extension callbacks.");
-    }
-    if (this.#compilerProgramRetired) {
-      return;
-    }
-    this.#compilerProgramRetired = true;
-    this.#compilerContext = undefined;
-    this.facts[factStoreInvalidate]();
-  }
-
   bindCompilerProgram(program: object): void {
-    this.assertCompilerProgramActive();
     const activeOwner = this.#ownerAuthority.stack[this.#ownerAuthority.stack.length - 1];
     if (activeOwner !== undefined) {
       throw new Error(`Extension '${activeOwner}' cannot replace the host compiler program.`);
@@ -4313,25 +4055,48 @@ export class ExtensionHost {
         if (analyzeSource === undefined) {
           continue;
         }
+        const attempt = this.#beginFactAttempt();
         try {
-          this.#withSourceFacts(extension.identity.id, (capabilities, scope) => {
-            analyzeSource(Object.freeze({
-              source: compiler,
-              facts: createSourceAnalysisFactAccess(capabilities.facts, scope),
-              factResolver: createSourceFactResolver(capabilities.factResolver, scope,
-                name => this.providers.getVirtualDeclarationDocument(name)),
-              diagnostics: createExtensionDiagnosticWriter(capabilities.diagnostics, scope),
-            }));
-          });
+          const capabilities = this.#getOwnerCapabilities(extension.identity.id);
+          this.facts[factStoreSetSourceAnalyzerAccessGuard](
+            (_subject, key, access) => {
+              if (access === "read") {
+                this.#assertSourceAnalyzerFactReadable(extension.identity.id, key);
+              }
+            },
+            () => {
+              throw new Error("Source analyzers cannot enumerate the global extension fact store.");
+            },
+          );
+          try {
+            runWithExtensionOwnerAuthority(this.#ownerAuthority, extension.identity.id, () => {
+              const scope = createExtensionCapabilityScope();
+              try {
+                analyzeSource(Object.freeze({
+                  source: compiler,
+                  facts: createSourceAnalysisFactAccess(capabilities.facts, scope),
+                  factResolver: createSourceAnalysisFactResolver(capabilities.factResolver, scope,
+                    name => this.providers.getVirtualDeclarationDocument(name)),
+                  diagnostics: createExtensionDiagnosticWriter(capabilities.diagnostics, scope),
+                }));
+              } finally {
+                revokeExtensionCapabilityScope(scope);
+              }
+            });
+          } finally {
+            this.facts[factStoreSetSourceAnalyzerAccessGuard](undefined, undefined);
+          }
+          this.#commitFactAttempt(attempt);
         } catch (error) {
+          const settledError = this.#rollbackFactAttemptsAfterFailure(error, attempt);
           this.diagnostics.append(createHostDiagnostic({
             extensionCode: "SOURCE_ANALYSIS_FAILED",
             numericCode: ExtensionHostDiagnosticCode.sourceAnalysisFailed,
             message: `Extension '${extension.identity.id}' failed while analyzing checked source.`,
-            evidence: [{ message: "Thrown value", details: error }],
+            evidence: [{ message: "Thrown value", details: settledError }],
             identity: encodeIdentityTuple(["source-analysis-failed", extension.identity.id]),
           }));
-          throw error;
+          throw settledError;
         }
       }
       this.#sourceAnalysisState = "completed";
@@ -4343,7 +4108,6 @@ export class ExtensionHost {
   }
 
   finalizeSemantics(): void {
-    this.assertCompilerProgramActive();
     if (this.#semanticFinalizationState === "finalized") {
       return;
     }
@@ -4379,7 +4143,6 @@ export class ExtensionHost {
   }
 
   getCompilerQueryContext(context?: Context): SourceProgramQueries {
-    this.assertCompilerProgramActive();
     if (this.#compilerContext !== undefined) {
       return this.#compilerContext;
     }
@@ -4393,58 +4156,32 @@ export class ExtensionHost {
     return this.#compilerContext;
   }
 
-  #getOwnerCapabilities(extensionId: string): ExtensionOwnerCapabilities {
+  #getOwnerCapabilities(extensionId: string): {
+    readonly facts: ExtensionFactStore;
+    readonly factResolver: ExtensionFactResolver;
+    readonly diagnostics: ExtensionDiagnosticStore;
+  } {
     const diagnostics = this.diagnostics[diagnosticStoreForOwner](extensionId);
     const facts = this.facts[factStoreForOwner](extensionId, diagnostics);
     const factResolver = this.factResolver[factResolverForOwner](extensionId, facts, diagnostics);
     return Object.freeze({ facts, factResolver, diagnostics });
   }
 
-  #withSourceFacts<T>(
-    extensionId: string,
-    callback: (capabilities: ExtensionOwnerCapabilities, scope: ExtensionCapabilityScope) => T,
-  ): T {
-    const attempt = this.#beginFactAttempt();
-    const scope = createExtensionCapabilityScope();
-    try {
-      this.facts[factStoreSetSourceAnalyzerAccessGuard](
-        (_subject, key, access, owner) => {
-          if (access !== "read" || isHostSourceReadableFactKey(key)) return;
-          if (owner === undefined) throw new Error("Source facts require an active source extension owner.");
-          this.#assertSourceAnalyzerFactReadable(owner, key);
-        },
-        () => { throw new Error("Source extensions cannot enumerate the global extension fact store."); },
-      );
-      let result: T;
-      try {
-        result = runWithExtensionOwnerAuthority(this.#ownerAuthority, extensionId,
-          () => callback(this.#getOwnerCapabilities(extensionId), scope));
-      } finally {
-        revokeExtensionCapabilityScope(scope);
-        this.facts[factStoreSetSourceAnalyzerAccessGuard](undefined, undefined);
-      }
-      this.#commitFactAttempt(attempt);
-      return result;
-    } catch (error) {
-      throw this.#rollbackFactAttemptsAfterFailure(error, attempt);
-    }
-  }
-
   #assertSourceAnalyzerFactReadable<T>(extensionId: string, key: ExtensionFactKey<T>): void {
     getExtensionFactKeyIdentity(key);
-    if (this.#sourceAnalyzerFactReadable(extensionId, key)) return;
-    throw new Error(
-      `Source extension '${extensionId}' cannot read or resolve fact key '${formatExtensionFactKeyForDisplay(key)}'; source analyzers may read only host source facts, their own facts, and facts from explicitly declared source dependencies.`,
-    );
-  }
-
-  #sourceAnalyzerFactReadable<T>(extensionId: string, key: ExtensionFactKey<T>): boolean {
-    if (isHostSourceReadableFactKey(key)) return true;
+    if (isHostSourceReadableFactKey(key)) {
+      return;
+    }
     const producer = this.#extensionsById.get(extensionId);
     const ownsKey = key.extensionId === extensionId;
     const declaresSourceDependency = producer?.dependencies?.dependsOn?.includes(key.extensionId) === true
       && this.#extensionsById.has(key.extensionId);
-    return ownsKey || declaresSourceDependency;
+    if (ownsKey || declaresSourceDependency) {
+      return;
+    }
+    throw new Error(
+      `Source extension '${extensionId}' cannot read or resolve fact key '${formatExtensionFactKeyForDisplay(key)}'; source analyzers may read only host source facts, their own facts, and facts from explicitly declared source dependencies.`,
+    );
   }
 
   #assertRegistrationOwner(extensionId: string, registrationKind: string): void {
@@ -4558,16 +4295,12 @@ function createSourceAnalysisFactAccess(
   return Object.freeze(access);
 }
 
-function createSourceFactResolver(
+function createSourceAnalysisFactResolver(
   factResolver: ExtensionFactResolver,
   scope: ExtensionCapabilityScope,
-  getVirtualDeclarationDocument: SourceFactResolver["getVirtualDeclarationDocument"],
-): SourceFactResolver {
-  const resolver: SourceFactResolver = {
-    hasFacts(subject) {
-      assertExtensionCapabilityActive(scope);
-      return factResolver.hasFacts(subject);
-    },
+  getVirtualDeclarationDocument: SourceAnalysisFactResolver["getVirtualDeclarationDocument"],
+): SourceAnalysisFactResolver {
+  const resolver: SourceAnalysisFactResolver = {
     getVirtualDeclarationDocument(name) {
       assertExtensionCapabilityActive(scope);
       return getVirtualDeclarationDocument(name);
@@ -4742,7 +4475,6 @@ function snapshotCompilerExtension(extension: CompilerExtension): CompilerExtens
     identity,
     ...(dependencies === undefined ? {} : { dependencies }),
     ...(extension.initialize === undefined ? {} : { initialize: extension.initialize }),
-    ...(extension.elaborateSource === undefined ? {} : { elaborateSource: extension.elaborateSource }),
     ...(extension.analyzeSource === undefined ? {} : { analyzeSource: extension.analyzeSource }),
   });
 }
@@ -6555,9 +6287,9 @@ function getProviderExportTypeOnlyMap(exports: readonly ProviderExportDeclaratio
     if (result.has(exportName)) {
       continue;
     }
-    const typeOnly = declaration.intrinsicId === undefined && (declaration.sourceTypeFamily === undefined
+    const typeOnly = declaration.sourceTypeFamily === undefined
       ? declaration.kind === "interface" || declaration.kind === "type"
-      : typeFamilies.get(exportName)?.variants.every((variant) => variant.kind === "class") !== true);
+      : typeFamilies.get(exportName)?.variants.every((variant) => variant.kind === "class") !== true;
     result.set(exportName, typeOnly);
   }
   return result;
@@ -6577,8 +6309,6 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
   context.directDeclarations.set(declaration.id, declarationName);
   const exportName = getProviderExportName(declaration);
   const isDefault = exportName === "default" || declaration.exportKind === "default";
-  const needsIntrinsicBinding = declaration.intrinsicId !== undefined
-    && (declaration.kind === "interface" || declaration.kind === "type");
   const directNamedExport = options.localOnly !== true && !isDefault && exportName === declarationName;
   const declarationPrefix = directNamedExport ? "export declare " : "declare ";
   const typePrefix = directNamedExport ? "export " : "";
@@ -6610,17 +6340,9 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
     case "value":
       rendered = `${declarationPrefix}const ${declarationName}: ${renderProviderTypeExpression(declaration.type!, declarationContext)};`;
       break;
-    case "intrinsic":
-      rendered = (declaration.members?.length ?? 0) === 0
-        ? `${declarationPrefix}const ${declarationName}: unique symbol;`
-        : `${declarationPrefix}const ${declarationName}: {\n${renderProviderMembers(declaration.members!, declarationContext)}\n};`;
-      break;
     case "enum":
       rendered = `${declarationPrefix}enum ${declarationName} {\n${(declaration.members ?? []).map((member) => `  ${renderProviderPropertyName(member.name)},`).join("\n")}\n}`;
       break;
-  }
-  if (needsIntrinsicBinding) {
-    rendered += `\n${declarationPrefix}const ${declarationName}: unique symbol;`;
   }
   if (options.localOnly === true || directNamedExport) {
     return rendered;
@@ -6677,9 +6399,7 @@ function renderProviderTypeFamilyLocalVariants(group: ProviderTypeFamilyRenderGr
 
 function renderProviderTypeFamilyValueExport(exportName: string, variants: readonly ProviderExportDeclaration[]): string {
   if (!variants.every((variant) => variant.kind === "class")) {
-    return variants[0]?.intrinsicId === undefined
-      ? ""
-      : `\nexport declare const ${exportName}: unique symbol;`;
+    return "";
   }
   const valueType = variants
     .map((variant) => `typeof ${getProviderTypeFamilyVariantLocalName(variant)}`)
@@ -6767,8 +6487,6 @@ function renderProviderMember(member: ProviderMemberDeclaration, context: Provid
   const optionalSuffix = member.optional === true ? "?" : "";
   const name = renderProviderPropertyName(member.name);
   switch (member.kind) {
-    case "intrinsic":
-      return `readonly ${name}: unique symbol;`;
     case "constructor":
       return renderProviderSignatures("constructor", member.signatures ?? [{ id: member.id, parameters: [] }], memberContext, true).join("\n  ");
     case "method":
@@ -7564,8 +7282,6 @@ function isValidProviderRequestedExport(value: ProviderRequestedExport): boolean
 
 function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boolean {
   return value.id.length > 0
-    && (value.intrinsicId === undefined || (value.kind !== "intrinsic"
-      && value.intrinsicId.length > 0 && value.intrinsicId !== value.id))
     && isIdentifierText(value.name)
     && isValidProviderExportName(value)
     && isValidProviderTypeFamilyDeclaration(value)
@@ -7578,8 +7294,6 @@ function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boo
     && (value.signatures ?? []).every(isValidProviderSignatureDeclaration)
     && (value.kind === "enum"
       ? (value.members ?? []).every(isValidProviderEnumMemberDeclaration)
-      : value.kind === "intrinsic"
-        ? (value.members ?? []).every(member => member.kind === "intrinsic" && isValidProviderNamespaceMemberDeclaration(member))
       : value.kind === "namespace" || value.kind === "function"
         ? (value.members ?? []).every(isValidProviderNamespaceMemberDeclaration)
         : (value.members ?? []).every(isValidProviderMemberDeclaration));
@@ -7601,8 +7315,6 @@ function hasNoUnrenderedProviderExportShape(value: ProviderExportDeclaration): b
       return noHeritage && noMembers && noSignatures;
     case "value":
       return noTypeParameters && noHeritage && noMembers && noSignatures;
-    case "intrinsic":
-      return noType && noTypeParameters && noHeritage && noSignatures;
     case "namespace":
     case "enum":
       return noType && noTypeParameters && noHeritage && noSignatures;
@@ -7699,9 +7411,6 @@ function isValidProviderTypeFamilyDeclarations(
       return false;
     }
     publicExports.add(familyName);
-    if (variants.some((variant) => variant.intrinsicId !== variants[0]!.intrinsicId)) {
-      return false;
-    }
     if (variants.some((variant) => variant.kind === "class") && !variants.every((variant) => variant.kind === "class")) {
       return false;
     }
@@ -7792,14 +7501,11 @@ function hasRequiredProviderExportShape(value: ProviderExportDeclaration): boole
     case "namespace":
     case "enum":
       return true;
-    case "intrinsic":
-      return true;
   }
 }
 
 function isValidProviderMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
-    && value.kind !== "intrinsic"
     && (value.kind === "constructor" || isValidProviderPropertyName(value.name))
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderMemberShape(value)
@@ -7809,7 +7515,7 @@ function isValidProviderMemberDeclaration(value: ProviderMemberDeclaration): boo
 
 function isValidProviderEnumMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
-    && value.kind === "property"
+    && (value.kind === "property" || value.kind === "field")
     && isValidProviderPropertyName(value.name)
     && value.static !== true
     && value.readonly !== true
@@ -7821,7 +7527,7 @@ function isValidProviderEnumMemberDeclaration(value: ProviderMemberDeclaration):
 function isValidProviderNamespaceMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
     && isValidProviderNamespaceMemberName(value.name)
-    && (value.kind === "method" || value.kind === "property" || value.kind === "field" || value.kind === "intrinsic")
+    && (value.kind === "method" || value.kind === "property" || value.kind === "field")
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderNamespaceMemberShape(value)
     && (value.type === undefined || isValidProviderTypeExpression(value.type))
@@ -7830,12 +7536,6 @@ function isValidProviderNamespaceMemberDeclaration(value: ProviderMemberDeclarat
 
 function hasNoUnrenderedProviderMemberShape(value: ProviderMemberDeclaration): boolean {
   switch (value.kind) {
-    case "intrinsic":
-      return value.static === undefined
-        && value.readonly === undefined
-        && value.optional === undefined
-        && value.type === undefined
-        && value.signatures === undefined;
     case "constructor":
       return value.static !== true
         && value.readonly !== true
@@ -7856,7 +7556,6 @@ function hasNoUnrenderedProviderMemberShape(value: ProviderMemberDeclaration): b
 }
 
 function hasNoUnrenderedProviderNamespaceMemberShape(value: ProviderMemberDeclaration): boolean {
-  if (value.kind === "intrinsic") return hasNoUnrenderedProviderMemberShape(value);
   return value.static !== true
     && value.readonly !== true
     && value.optional !== true
@@ -7865,8 +7564,6 @@ function hasNoUnrenderedProviderNamespaceMemberShape(value: ProviderMemberDeclar
 
 function hasRequiredProviderMemberShape(value: ProviderMemberDeclaration): boolean {
   switch (value.kind) {
-    case "intrinsic":
-      return true;
     case "method":
       return value.signatures !== undefined
         && value.signatures.length > 0

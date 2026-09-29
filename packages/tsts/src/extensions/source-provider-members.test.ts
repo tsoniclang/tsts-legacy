@@ -42,24 +42,20 @@ test("provider overloads retain the exact checker-selected signature identity", 
   const source = checked.getSourceFileQueries(sourceFile);
   const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
   assert.deepEqual(
-    calls.map((call) => {
-      const selected = source.checker.getResolvedCallInfo(call);
-      assert.equal(selected?.outcome, "applicable");
-      return checked.sourceFacts?.getFact(
+    calls.map((call) =>
+      checked.sourceFacts?.getFact(
         source.checker.getSignatureDeclaration(
-          selected.selectedSignature,
+          source.checker.getResolvedCallInfo(call)?.selectedSignature,
         ),
         providerVirtualDeclarationFactKey,
-      )?.signatureId;
-    }),
+      )?.signatureId),
     ["choose(number)", "choose(string)"],
   );
   assert.deepEqual(
-    calls.map((call) => {
-      const selected = source.checker.getResolvedCallInfo(call);
-      assert.equal(selected?.outcome, "applicable");
-      return source.checker.typeToString(selected.sourceResultType);
-    }),
+    calls.map((call) =>
+      source.checker.typeToString(
+        source.checker.getResolvedCallInfo(call)?.sourceResultType,
+      )),
     ["number", "string"],
   );
 });
@@ -134,9 +130,7 @@ test("provider enum and namespace members retain exact declaration identities", 
     source.ast.children,
     source.ast.is.IsCallExpression,
   )[0];
-  const selected = source.checker.getResolvedCallInfo(call);
-  assert.equal(selected?.outcome, "applicable");
-  const signature = selected.selectedSignature;
+  const signature = source.checker.getResolvedCallInfo(call)?.selectedSignature;
   assert.equal(
     checked.sourceFacts?.getFact(
       source.checker.getSignatureDeclaration(signature),
@@ -188,7 +182,6 @@ test("provider rest parameters retain one declared parameter across effective ar
     source.ast.is.IsCallExpression,
   )[0];
   const call = source.checker.getResolvedCallInfo(callNode);
-  assert.equal(call?.outcome, "applicable");
   assert.equal(call?.sourceSelectedSignatureParameters.length, 1);
   assert.equal(call?.sourceSelectedSignatureParameters[0]?.parameterName, "actions");
   assert.equal(call?.sourceSelectedSignatureParameters[0]?.rest, true);

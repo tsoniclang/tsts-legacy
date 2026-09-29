@@ -356,12 +356,8 @@ test("resolved call info preserves exact optional-chain result semantics", () =>
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const calls = findNodesByKind(index, KindCallExpression);
   assert.equal(calls.length, 2);
-  const plain = queries.getResolvedCallInfo(calls[0]);
-  const optional = queries.getResolvedCallInfo(calls[1]);
-  assert.equal(plain?.outcome, "applicable");
-  assert.equal(optional?.outcome, "applicable");
-  assert.equal(plain.optionalChain, false);
-  assert.equal(optional.optionalChain, true);
+  assert.equal(queries.getResolvedCallInfo(calls[0])?.optionalChain, false);
+  assert.equal(queries.getResolvedCallInfo(calls[1])?.optionalChain, true);
   assertCleanSemanticDiagnostics(program, index);
 });
 

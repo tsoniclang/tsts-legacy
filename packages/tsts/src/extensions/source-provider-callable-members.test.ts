@@ -68,14 +68,10 @@ for (const exportForm of ["named", "renamed", "default"] as const) {
     const sourceFile = checked.getSourceFile("/src/index.ts");
     const source = checked.getSourceFileQueries(sourceFile);
     const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
-    const facts = calls.map(call => {
-      const selected = source.checker.getResolvedCallInfo(call);
-      assert.equal(selected?.outcome, "applicable");
-      return checked.sourceFacts?.getFact(
-        source.checker.getSignatureDeclaration(selected.selectedSignature),
-        providerVirtualDeclarationFactKey,
-      );
-    });
+    const facts = calls.map(call => checked.sourceFacts?.getFact(
+      source.checker.getSignatureDeclaration(source.checker.getResolvedCallInfo(call)?.selectedSignature),
+      providerVirtualDeclarationFactKey,
+    ));
     assert.deepEqual(facts.map(fact => [fact?.exportId, fact?.memberId, fact?.signatureId]), [
       ["select", undefined, "select(number)"],
       ["select", undefined, "select(string)"],

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getProviderMemberSurfaceKey, type ProviderMemberDeclaration } from "../index.js";
 
-test("provider member source identity unifies ordinary and intrinsic property surfaces", () => {
+test("provider member source identity unifies ordinary property surfaces", () => {
   const expected = JSON.stringify([false, ["property-key", "select"]]);
-  for (const kind of ["method", "property", "field", "intrinsic"] as const) {
+  for (const kind of ["method", "property", "field"] as const) {
     for (const name of ["select", { kind: "identifier", text: "select" }, { kind: "string-literal", text: "select" }] as const) {
       assert.equal(getProviderMemberSurfaceKey({ id: `member.${kind}`, name, kind }), expected);
     }

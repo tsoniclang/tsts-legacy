@@ -1,3 +1,4 @@
+export { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
 export {
   ExtensionDiagnosticStore,
   ExtensionFactResolver,
@@ -21,15 +22,6 @@ export {
   SourceFactQueries,
   createSourceFactQueries,
 } from "./consumer.js";
-export { defaultSourceElaborationLimits } from "./source-elaboration-model.js";
-export { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
-export type {
-  SourceElaborationContext,
-  SourceElaborationLimits,
-  SourceElaborationNodeReference,
-  SourceElaborationResolver,
-  SourceElaborationResolverContext,
-} from "./source-elaboration-model.js";
 export {
   argumentPassingFactKey,
   associatedTypeFactKey,
@@ -44,7 +36,6 @@ export {
   pointerOperationFactKey,
   rawPointerFactKey,
   rawPointerOperationFactKey,
-  providerIntrinsicDeclarationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
   sourcePrimitiveFactKey,
@@ -108,7 +99,7 @@ export type {
   RequiredProviderModuleSpec,
   SourceAnalysisContext,
   SourceAnalysisFactAccess,
-  SourceFactResolver,
+  SourceAnalysisFactResolver,
   SourceDeclarationProvider,
   SourceDeclarationMaterializationMode,
 } from "./host.js";

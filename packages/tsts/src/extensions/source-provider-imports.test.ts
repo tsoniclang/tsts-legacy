@@ -61,7 +61,6 @@ test("provider modules preserve default, renamed, and namespace import identitie
   assert.deepEqual(
     constructions.map((construction) => {
       const selected = source.checker.getResolvedCallInfo(construction);
-      assert.equal(selected?.outcome, "applicable");
       return checked.sourceFacts?.getFact(
         selected?.sourceCallee.selectedDeclaration,
         providerVirtualDeclarationFactKey,
@@ -245,16 +244,13 @@ test("source-global provider references bind the active checked globals without 
   const source = checked.getSourceFileQueries(sourceFile);
   const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
   assert.deepEqual(
-    calls.map((call) => {
-      const selected = source.checker.getResolvedCallInfo(call);
-      assert.equal(selected?.outcome, "applicable");
-      return checked.sourceFacts?.getFact(
+    calls.map((call) =>
+      checked.sourceFacts?.getFact(
         source.checker.getSignatureDeclaration(
-          selected.selectedSignature,
+          source.checker.getResolvedCallInfo(call)?.selectedSignature,
         ),
         providerVirtualDeclarationFactKey,
-      )?.signatureId;
-    }),
+      )?.signatureId),
     ["useDate(Date)", "promiseOf()"],
   );
 });

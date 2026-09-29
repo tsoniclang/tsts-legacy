@@ -14,10 +14,7 @@ import { ResolvedModule_IsResolved } from "../internal/module/types.js";
 import { createAstReader, type AstReader } from "../services/ast-reader.js";
 import { createTypeCheckerQueries, type TypeCheckerQueries } from "../services/type-checker.js";
 import { createTypeShapeQueries, type TypeShapeQueries } from "../services/type-shape.js";
-import { assertSemanticProgramActive, assertSemanticSourceFileOwned } from "../services/semantic-query-ownership.js";
 import type { ExtensionDiagnostic } from "./host.js";
-import { extensionHostResolveElaborationReference, getExtensionHost } from "./host.js";
-import type { SourceElaborationNodeReference } from "./source-elaboration-model.js";
 import type { ReadonlySourceFactResolver } from "./consumer.js";
 
 export interface SourceFileQueries {
@@ -33,7 +30,6 @@ export interface SourceProgramQueries {
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
   readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
-  readonly resolveElaborationReference: (reference: SourceElaborationNodeReference) => Node;
 }
 
 export interface CheckedSourceProgram extends SourceProgramQueries {
@@ -61,24 +57,19 @@ export function createSourceProgramQueries(
   const sourceFileQueries = new WeakMap<SourceFile, SourceFileQueries>();
   const moduleSourceFiles = new WeakMap<Node, SourceFile | null>();
   const included = (sourceFile: SourceFile): boolean => options.includeSourceFile?.(sourceFile) !== false;
-  const getSourceFiles = (): readonly GoPtr<SourceFile>[] => {
-    assertSemanticProgramActive(program);
-    return (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
+  const getSourceFiles = (): readonly GoPtr<SourceFile>[] =>
+    (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
       sourceFile !== undefined && included(sourceFile));
-  };
   const getSourceFile = (fileName: string): GoPtr<SourceFile> => {
-    assertSemanticProgramActive(program);
     const sourceFile = Program_GetSourceFile(program, fileName);
     return sourceFile !== undefined && included(sourceFile)
       ? sourceFile
       : undefined;
   };
   const getSourceFileQueries = (sourceFile: GoPtr<SourceFile>): SourceFileQueries => {
-    assertSemanticProgramActive(program);
     if (sourceFile === undefined || !included(sourceFile)) {
       throw new Error("Source-file queries require an included source file from the checked program.");
     }
-    assertSemanticSourceFileOwned(program, sourceFile);
     const existing = sourceFileQueries.get(sourceFile);
     if (existing !== undefined) {
       return existing;
@@ -101,7 +92,6 @@ export function createSourceProgramQueries(
     return created;
   };
   const resolveModuleSourceFile = (moduleSpecifier: GoPtr<Node>): GoPtr<SourceFile> => {
-    assertSemanticProgramActive(program);
     if (moduleSpecifier === undefined) {
       return undefined;
     }
@@ -111,7 +101,6 @@ export function createSourceProgramQueries(
       containingSourceFile === undefined || !included(containingSourceFile)) {
       return undefined;
     }
-    assertSemanticSourceFileOwned(program, containingSourceFile);
     const cached = moduleSourceFiles.get(moduleSpecifier);
     if (cached !== undefined) {
       return cached ?? undefined;
@@ -141,19 +130,5 @@ export function createSourceProgramQueries(
     getSourceFile,
     getSourceFileQueries,
     resolveModuleSourceFile,
-    resolveElaborationReference(reference: SourceElaborationNodeReference): Node {
-      assertSemanticProgramActive(program);
-      const host = getExtensionHost(program);
-      if (host === undefined) {
-        throw new Error("Source reference resolution requires an owning elaboration session.");
-      }
-      const node = host[extensionHostResolveElaborationReference](reference);
-      const file = ast.getSourceFile(node);
-      if (file === undefined || !included(file)) {
-        throw new Error("Source reference resolution requires an included source file.");
-      }
-      assertSemanticSourceFileOwned(program, file);
-      return node;
-    },
   });
 }

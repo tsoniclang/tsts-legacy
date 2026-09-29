@@ -21,9 +21,7 @@ import {
   SourceFile_Path,
   SourceFile_Text,
 } from "../internal/ast/ast.js";
-import { Node_End, Node_ForEachChild, Node_Name, Node_Pos, Node_TemplateLiteralLikeData, NodeList_HasTrailingComma } from "../internal/ast/spine.js";
-import type { NodeList } from "../internal/ast/spine.js";
-import { TokenFlagsContainsInvalidEscape, TokenFlagsUnterminated } from "../internal/ast/tokenflags.js";
+import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
 import type { Kind } from "../internal/ast/generated/kinds.js";
 import { KindString } from "../internal/ast/generated/kinds.js";
 import * as casts from "../internal/ast/generated/casts.js";
@@ -43,7 +41,7 @@ import {
   ModifierFlagsReadonly,
   ModifierFlagsStatic,
 } from "../internal/ast/modifierflags.js";
-import { GetCombinedNodeFlags, GetHeritageElements, GetSourceFileOfNode, HasModifier, IsConstAssertion, IsTemplateLiteralKind, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, IsVarAwaitUsing, IsVarConst, IsVarLet, IsVarUsing, NodeIsSynthesized } from "../internal/ast/utilities.js";
+import { GetCombinedNodeFlags, GetHeritageElements, GetSourceFileOfNode, HasModifier, IsConstAssertion, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, IsVarAwaitUsing, IsVarConst, IsVarLet, IsVarUsing, NodeIsSynthesized } from "../internal/ast/utilities.js";
 import { KindExtendsKeyword, KindImplementsKeyword } from "../internal/ast/generated/kinds.js";
 import {
   ComputePositionMap,
@@ -98,8 +96,6 @@ export interface AstReader {
   readonly typeArguments: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
   readonly arguments: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
   readonly elements: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
-  readonly listHasTrailingComma: (list: GoPtr<NodeList>) => boolean;
-  readonly cookedTemplateText: (node: GoPtr<Node>) => string | undefined;
   readonly properties: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
   /** Returns the exact `?` token owned by nodes whose schema permits one. */
   readonly questionToken: (node: GoPtr<Node>) => GoPtr<Node>;
@@ -160,8 +156,6 @@ export function createAstReader(): AstReader {
     typeArguments: (node) => Node_TypeArguments(node) ?? [],
     arguments: (node) => Node_Arguments(node) ?? [],
     elements: (node) => Node_Elements(node) ?? [],
-    listHasTrailingComma: (list) => list !== undefined && NodeList_HasTrailingComma(list) === true,
-    cookedTemplateText,
     properties: (node) => Node_Properties(node) ?? [],
     questionToken: (node) => node === undefined ? undefined : Node_QuestionToken(node),
     operatorKindName,
@@ -209,14 +203,6 @@ export function createAstReader(): AstReader {
     as: casts,
   };
   return Object.freeze(reader);
-}
-
-function cookedTemplateText(node: GoPtr<Node>): string | undefined {
-  if (node === undefined || !IsTemplateLiteralKind(node.Kind)) return undefined;
-  const literal = Node_TemplateLiteralLikeData(node);
-  return literal === undefined || (literal.TemplateFlags & (TokenFlagsContainsInvalidEscape | TokenFlagsUnterminated)) !== 0
-    ? undefined
-    : literal.Text;
 }
 
 function regularExpressionLiteral(

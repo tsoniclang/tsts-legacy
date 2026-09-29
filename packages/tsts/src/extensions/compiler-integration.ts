@@ -31,7 +31,6 @@ import {
 import {
   argumentPassingFactKey,
   canonicalIdentityFactKey,
-  providerIntrinsicDeclarationFactKey,
   providerTypeFamilyFactKey,
   providerVirtualDeclarationFactKey,
 } from "./facts.js";
@@ -133,10 +132,6 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
       canonicalSymbolId: getSymbolFactId(familySymbol),
     }, evidence);
     extensionHost[extensionHostSetFact](familySymbol, providerTypeFamilyFactKey, getProviderTypeFamilyFact(virtualModule, family), evidence);
-    const intrinsicVariant = family.variants[0];
-    if (intrinsicVariant?.intrinsicId !== undefined) {
-      recordProviderIntrinsicSymbolFact(extensionHost, familySymbol, virtualModule, intrinsicVariant, evidence);
-    }
   }
 
   for (const declaration of virtualModule.declarationModel.exports) {
@@ -215,28 +210,6 @@ function recordProviderVirtualExportSymbolFacts(
     canonicalSymbolId: getSymbolFactId(symbol),
   }, evidence);
   extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
-  if (declaration.kind === "intrinsic" || declaration.intrinsicId !== undefined) {
-    recordProviderIntrinsicSymbolFact(extensionHost, symbol, virtualModule, declaration, evidence);
-  }
-}
-
-function recordProviderIntrinsicSymbolFact(
-  extensionHost: ExtensionHost,
-  symbol: Symbol,
-  virtualModule: ProviderVirtualModuleArtifact,
-  declaration: ProviderExportDeclaration,
-  evidence: readonly ExtensionEvidence[],
-  member?: ProviderMemberDeclaration,
-): void {
-  const fact = {
-    ...getProviderVirtualDeclarationFact(virtualModule, declaration, member),
-    exportId: member === undefined ? declaration.intrinsicId ?? declaration.id : declaration.id,
-  };
-  const existing = extensionHost.facts.get(symbol, providerIntrinsicDeclarationFactKey);
-  if (existing !== undefined && !providerIntrinsicDeclarationFactKey.equals(existing, fact)) {
-    throw new Error("A provider intrinsic symbol resolved to conflicting exact declaration identities.");
-  }
-  extensionHost[extensionHostSetFact](symbol, providerIntrinsicDeclarationFactKey, fact, evidence);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(
@@ -400,9 +373,6 @@ function recordProviderVirtualMemberFacts(
         memberFact,
         evidence,
       );
-      if (member.kind === "intrinsic") {
-        recordProviderIntrinsicSymbolFact(extensionHost, memberSymbol, virtualModule, declaration, evidence, member);
-      }
     }
     for (let index = 0; index < matchingMemberNodes.length; index++) {
       const memberNode = matchingMemberNodes[index];
@@ -433,9 +403,6 @@ function recordProviderVirtualMemberFacts(
           memberFact,
           evidence,
         );
-        if (member.kind === "intrinsic") {
-          recordProviderIntrinsicSymbolFact(extensionHost, nodeSymbol, virtualModule, declaration, evidence, member);
-        }
       }
     }
   }
@@ -471,7 +438,6 @@ function providerExportDeclarationMatchesNode(declaration: ProviderExportDeclara
     case "type":
       return node.Kind === KindTypeAliasDeclaration;
     case "value":
-    case "intrinsic":
       return node.Kind === KindVariableDeclaration;
     case "namespace":
       return node.Kind === KindVariableDeclaration;
@@ -488,7 +454,6 @@ function providerMemberDeclarationCount(member: ProviderMemberDeclaration): numb
       return member.signatures?.length ?? 0;
     case "property":
     case "field":
-    case "intrinsic":
       return 1;
   }
 }
@@ -553,7 +518,6 @@ function providerMemberKindMatchesNode(member: ProviderMemberDeclaration, node: 
       return node.Kind === KindMethodDeclaration || node.Kind === KindMethodSignature;
     case "property":
     case "field":
-    case "intrinsic":
       return node.Kind === KindPropertyDeclaration || node.Kind === KindPropertySignature || node.Kind === KindEnumMember || node.Kind === KindVariableDeclaration;
     case "indexer":
       return node.Kind === KindIndexSignature;
