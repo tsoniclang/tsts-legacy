@@ -34,6 +34,7 @@ import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import {
   getBigIntLiteralValue,
   getNumberLiteralValue,
+  getStringLiteralValue,
   signatureHasRestParameter,
 } from "../internal/checker/checker/state.js";
 import { PseudoBigInt_String } from "../internal/jsnum/pseudobigint.js";
@@ -63,6 +64,7 @@ import {
   TypeFlagsNumberLiteral,
   TypeFlagsObject,
   TypeFlagsStringLike,
+  TypeFlagsStringLiteral,
   TypeFlagsSubstitution,
   TypeFlagsUnion,
   TypeFlagsUnknown,
@@ -134,6 +136,7 @@ export interface TypeShapeQueries {
   readonly getTypeAliasApplication: (type: GoPtr<Type>) => TypeAliasApplicationInfo | undefined;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
+  readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
@@ -208,6 +211,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       if (hasFlags(type, TypeFlagsBigIntLiteral)) return BigInt(PseudoBigInt_String(getBigIntLiteralValue(type)));
       return undefined;
     }),
+    getStringLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () =>
+      hasFlags(type, TypeFlagsStringLiteral) ? getStringLiteralValue(type) : undefined),
     isAny: (type) => hasFlags(type, TypeFlagsAny),
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
