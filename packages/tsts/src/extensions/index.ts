@@ -1,3 +1,4 @@
+export { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
 export {
   ExtensionDiagnosticStore,
   ExtensionFactResolver,

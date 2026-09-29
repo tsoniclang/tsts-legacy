@@ -13,6 +13,7 @@ export {
   defaultValueFactKey,
   defineExtensionFactKey,
   fieldFactKey,
+  getProviderMemberSurfaceKey,
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,

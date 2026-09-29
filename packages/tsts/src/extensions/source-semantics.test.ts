@@ -1131,6 +1131,21 @@ test("source-semantics records field markers only for exact class and object fie
   );
 });
 
+test("source-semantics attribute targets preserve authored type queries without text access on type nodes", () => {
+  const { extended, program, index } = createProgram(`
+    import { attribute } from "@example/native/lang.js";
+    function target(): void {}
+    const annotation = attribute<typeof target>();
+  `, new Map([["/src/node_modules/@example/native/lang.d.ts", "export declare function attribute<T>(): unknown;"]]));
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+  const call = getCallExpression(index, "attribute", 0);
+  const fact = extended.extensionHost.facts.get(call, attributeFactKey);
+  assert.equal(fact?.target, (Node_TypeArguments(call) ?? [])[0]);
+  assert.equal(fact?.attributeName, "target");
+  assert.deepEqual(extended.extensionHost.diagnostics.all(), []);
+});
+
 test("source-semantics handles primitive references inside destructured parameters", () => {
   const { extended, program, index } = createProgram(`
     import type { int } from "@example/native/types.js";

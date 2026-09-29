@@ -7,6 +7,7 @@ import type {
   ProviderTypeExpression,
   ProviderTypeParameterDeclaration,
 } from "./host.js";
+import { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
 
 export type ProviderFunctionTypeExpression = Extract<ProviderTypeExpression, { readonly kind: "function" }>;
 
@@ -83,42 +84,13 @@ export function hasUniqueProviderCallableIdentities(model: ProviderDeclarationMo
     const memberSurfaces = new Set<string>();
     for (const member of declaration.members ?? []) {
       if (!addUniqueIdentity(memberIds, member.id)
-        || !addUniqueIdentity(memberSurfaces, providerMemberSurfaceKey(member))
+        || !addUniqueIdentity(memberSurfaces, getProviderMemberSurfaceKey(member))
         || !collectProviderMemberCallableIdentities(member, new Set())) {
         return false;
       }
     }
   }
   return true;
-}
-
-function providerMemberSurfaceKey(member: ProviderMemberDeclaration): string {
-  const staticMember = member.static === true;
-  switch (member.kind) {
-    case "constructor":
-      return "constructor";
-    case "indexer":
-      return "indexer";
-    case "method":
-    case "property":
-    case "field":
-      return JSON.stringify([
-        staticMember,
-        providerPropertySourceKey(member.name),
-      ]);
-  }
-}
-
-function providerPropertySourceKey(name: ProviderMemberDeclaration["name"]): readonly [string, string] {
-  if (typeof name !== "string" && name.kind === "well-known-symbol") {
-    return ["well-known-symbol", name.name];
-  }
-  const text = typeof name === "string"
-    ? name
-    : name.kind === "number-literal"
-      ? String(name.value)
-      : name.text;
-  return ["property-key", text];
 }
 
 function collectProviderExportCallableIdentities(
