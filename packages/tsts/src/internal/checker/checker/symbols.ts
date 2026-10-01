@@ -6882,6 +6882,7 @@ interface SelectedPropertyAccessCheck {
   sourceDeclaration: GoPtr<Node>;
   selectedSymbol: GoPtr<Symbol>;
   selectedDeclaration: GoPtr<Node>;
+  selectedIndex?: IndexInfo;
 }
 
 interface ResolvedSourcePropertyAccessInfoBase {
@@ -6898,6 +6899,7 @@ interface ResolvedSourcePropertyAccessInfoBase {
   readonly selectedDeclaration?: Node;
   readonly selectedReadDeclaration?: Node;
   readonly selectedWriteDeclaration?: Node;
+  readonly selectedIndex?: IndexInfo;
   readonly writable: boolean;
   readonly optionalChain: boolean;
   readonly callCallee: boolean;
@@ -7000,7 +7002,10 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
     ...(selected.selectedDeclaration === undefined ? {} : { selectedDeclaration: selected.selectedDeclaration }),
     ...(selectedReadDeclaration === undefined ? {} : { selectedReadDeclaration }),
     ...(selectedWriteDeclaration === undefined ? {} : { selectedWriteDeclaration }),
-    writable: selected.selectedSymbol !== undefined
+    ...(selected.selectedIndex === undefined ? {} : { selectedIndex: selected.selectedIndex }),
+    writable: selected.selectedIndex !== undefined
+      ? !selected.selectedIndex.isReadonly
+      : selected.selectedSymbol !== undefined
       && !Checker_isAssignmentToReadonlyEntity(
         receiver,
         node,
@@ -7385,6 +7390,7 @@ function checkPropertyAccessExpressionOrQualifiedNameWithEvidence(
     propType = indexInfo!.valueType;
     if (selected !== undefined) {
       selectedWriteType = indexInfo!.valueType;
+      selected.selectedIndex = indexInfo;
       selectedDeclaration = indexInfo!.declaration
         ?? mappedIndexEvidenceDeclaration(apparentType);
     }

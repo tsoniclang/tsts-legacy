@@ -6,6 +6,8 @@ import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Text } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
+import { readTypeIndexInfo } from "./type-members.js";
+import type { TypeIndexInfo } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
   SymbolFlagsAlias,
@@ -125,7 +127,11 @@ export interface ResolvedSourceReceiverValueEvidence {
   readonly intrinsic?: "global-object";
 }
 
-export type ResolvedSourcePropertyAccessInfo = CheckerResolvedSourcePropertyAccessInfo & {
+type PublicSelectedPropertyAccess<Selection> = Selection extends CheckerResolvedSourcePropertyAccessInfo
+  ? Omit<Selection, "selectedIndex"> & { readonly selectedIndex?: TypeIndexInfo }
+  : never;
+
+export type ResolvedSourcePropertyAccessInfo = PublicSelectedPropertyAccess<CheckerResolvedSourcePropertyAccessInfo> & {
   readonly receiver: CheckerResolvedSourcePropertyAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
 };
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
@@ -272,7 +278,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getResolvedPropertyAccessInfo: (node) =>
       memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
-          withResolvedSourceReceiverValueEvidence(
+          withResolvedPropertyAccessEvidence(
             checker,
             Checker_getResolvedSourcePropertyAccessInfo(checker, node),
           ))),
@@ -582,6 +588,22 @@ function getDiagnosticFreeResolvedSymbol(checker: GoPtr<Checker>, node: GoPtr<No
   return resolved !== undefined && resolved !== checker?.unknownSymbol
     ? resolved
     : undefined;
+}
+
+function withResolvedPropertyAccessEvidence(
+  checker: GoPtr<Checker>,
+  selected: GoPtr<CheckerResolvedSourcePropertyAccessInfo>,
+): GoPtr<ResolvedSourcePropertyAccessInfo> {
+  if (checker === undefined || selected === undefined) return undefined;
+  const { selectedIndex, ...access } = selected;
+  const resolved = withResolvedSourceReceiverValueEvidence(checker, access);
+  if (resolved === undefined) return undefined;
+  return Object.freeze({
+    ...resolved,
+    ...(selectedIndex === undefined ? {} : {
+      selectedIndex: Object.freeze(readTypeIndexInfo(checker, selected.receiver.type, selectedIndex)),
+    }),
+  });
 }
 
 function withResolvedSourceReceiverValueEvidence<

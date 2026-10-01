@@ -267,6 +267,48 @@ test("element access info preserves mapped declarations and proven tuple ordinal
   assert.equal(repeatedTuple?.selectedElementIndex, tuple?.selectedElementIndex);
 });
 
+test("named index access retains the exact index, writability and immutable selection", () => {
+  const { program, index } = createProgram(`
+    type Dictionary<Value> = { [Key in string]: Value };
+    declare const mapped: Dictionary<number>;
+    mapped.answer = 1;
+    mapped.answer++;
+    const value = mapped.answer;
+    declare const indexed: { [key: string]: number; fixed: number };
+    const dynamic = indexed.answer;
+    const fixed = indexed.fixed;
+    declare const readonly: { readonly [key: string]: number };
+    const immutable = readonly.answer;
+    declare const patterned: { [key: \`entry_\${string}\`]: number; [key: string]: string | number };
+    const pattern = patterned.entry_first;
+  `, { noLib: false });
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const accesses = findNodesByKind(index, KindPropertyAccessExpression);
+  const mapped = accesses.slice(0, 3).map(access => queries.getResolvedPropertyAccessInfo(access));
+  assert.deepEqual(mapped.map(selection => selection?.accessMode), ["write", "read-write", "read"]);
+  for (const selection of mapped) {
+    assert.ok(selection?.selectedIndex);
+    assert.equal(selection.selectedIndex.readonly, false);
+    assert.equal(selection.writable, true);
+    assert.equal(selection.selectedIndex.declaration, undefined);
+    assert.ok(Object.isFrozen(selection) && Object.isFrozen(selection.selectedIndex));
+    assert.ok(Object.isFrozen(selection.selectedIndex.components));
+  }
+  const dynamic = queries.getResolvedPropertyAccessInfo(accesses[3]);
+  assert.ok(dynamic?.selectedIndex?.declaration);
+  assert.equal(dynamic.selectedIndex.readonly, false);
+  assert.equal(queries.getResolvedPropertyAccessInfo(accesses[4])?.selectedIndex, undefined);
+  const immutable = queries.getResolvedPropertyAccessInfo(accesses[5]);
+  assert.ok(immutable?.selectedIndex);
+  assert.equal(immutable.selectedIndex.readonly, true);
+  assert.equal(immutable.writable, false);
+  const pattern = queries.getResolvedPropertyAccessInfo(accesses[6]);
+  assert.ok(pattern?.selectedIndex?.valueType);
+  assert.equal(pattern.selectedIndex.valueType.flags & TypeFlagsNumber, TypeFlagsNumber);
+  assert.equal(queries.getResolvedPropertyAccessInfo(accesses[0]), mapped[0]);
+  assertCleanSemanticDiagnostics(program, index);
+});
+
 test("element access exposes no fixed tuple ordinal without one exact checker proof", () => {
   const { program, index } = createProgram(`
     declare const pair: readonly [string, number];
