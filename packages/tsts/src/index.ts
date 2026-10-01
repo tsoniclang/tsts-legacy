@@ -135,6 +135,8 @@ export type {
   ResolvedSourceCallInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,
+  ResolvedSourceFlowCondition,
+  ResolvedSourceFlowConditionInfo,
   ResolvedSourceIterationInfo,
   ResolvedSourceGeneratorInfo,
   ResolvedSourceObjectLiteralElementInfo,

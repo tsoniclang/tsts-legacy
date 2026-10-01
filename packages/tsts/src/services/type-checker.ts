@@ -99,6 +99,9 @@ import {
   resolveSourceWellKnownSymbolInfo,
   resolveSourceYieldInfo,
 } from "./source-control-flow-evidence.js";
+import { resolveSourceFlowConditionInfo } from "./source-flow-conditions.js";
+import type { ResolvedSourceFlowConditionInfo } from "./source-flow-conditions.js";
+export type { ResolvedSourceFlowCondition, ResolvedSourceFlowConditionInfo } from "./source-flow-conditions.js";
 
 export type {
   ResolvedSourceCallableCompletionInfo,
@@ -189,6 +192,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedObjectLiteralElementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceObjectLiteralElementInfo>;
   readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
   readonly getResolvedCallableCompletionInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceCallableCompletionInfo>;
+  readonly getResolvedFlowConditionInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceFlowConditionInfo>;
   readonly getResolvedGeneratorInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceGeneratorInfo>;
   readonly getResolvedYieldInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceYieldInfo>;
   readonly getResolvedWellKnownSymbolInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceWellKnownSymbolInfo>;
@@ -227,6 +231,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
   const callableCompletionInfos = new WeakMap<Node, ResolvedSourceCallableCompletionInfo>();
+  const flowConditionInfos = new WeakMap<Node, ResolvedSourceFlowConditionInfo>();
   const generatorInfos = new WeakMap<Node, ResolvedSourceGeneratorInfo>();
   const yieldInfos = new WeakMap<Node, ResolvedSourceYieldInfo>();
   const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
@@ -305,6 +310,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(callableCompletionInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceCallableCompletionInfo(checker, node))),
+    getResolvedFlowConditionInfo: (node) =>
+      memoizeResolvedNodeQuery(flowConditionInfos, node, () =>
+        withCheckerForNode(program, node, defaultOptions, (checker) =>
+          resolveSourceFlowConditionInfo(checker, node))),
     getResolvedGeneratorInfo: (node) =>
       memoizeResolvedNodeQuery(generatorInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
