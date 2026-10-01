@@ -30,6 +30,7 @@ import {
 import {
   Checker_getTypeOfSymbol,
 } from "../internal/checker/checker/symbols.js";
+import { Checker_getBaseTypeOfLiteralType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import {
   getBigIntLiteralValue,
@@ -179,6 +180,7 @@ export interface TypeShapeQueries {
   readonly selectIndexedAccess: (objectType: GoPtr<Type>, indexType: GoPtr<Type>) => TypeIndexedAccessSelection | undefined;
   readonly getApparentType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getWidenedType: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly getBaseTypeOfLiteralType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly removeMissingOrUndefined: (type: GoPtr<Type>) => GoPtr<Type>;
 }
 
@@ -317,6 +319,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       (Checker_GetIndexInfosOfType(checker, type) ?? []).map((info) => readTypeIndexInfo(checker, type, info))) ?? [],
     getApparentType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetApparentType(checker, type)),
     getWidenedType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetWidenedType(checker, type)),
+    getBaseTypeOfLiteralType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_getBaseTypeOfLiteralType(checker, type)),
     removeMissingOrUndefined: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_RemoveMissingOrUndefinedType(checker, type)),
   };
   return Object.freeze(queries);
