@@ -125,6 +125,13 @@ export interface TypeSignatureThisParameterInfo {
   readonly declaration?: Node;
 }
 
+export interface TypeSignatureInfo {
+  readonly signature: Signature;
+  readonly parameters: readonly TypeSignatureParameterInfo[];
+  readonly thisParameter?: TypeSignatureThisParameterInfo;
+  readonly returnType: Type | undefined;
+}
+
 export interface CreateTypeShapeQueriesOptions {
   readonly sourceFile: GoPtr<SourceFile>;
   readonly context?: Context;
@@ -168,6 +175,7 @@ export interface TypeShapeQueries {
   readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
+  readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
   readonly getSignatureParameterInfos: (
     signature: GoPtr<Signature>,
   ) => readonly TypeSignatureParameterInfo[];
@@ -302,6 +310,19 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     ) ?? [],
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
+    getSignatureInfos: (type, kind) => {
+      if (kind !== "call" && kind !== "construct") throw new Error("Unknown signature kind.");
+      return withCheckerForType(program, type, defaultOptions, checker => Object.freeze(
+        (Checker_GetSignaturesOfType(checker, type, kind === "call" ? SignatureKindCall : SignatureKindConstruct) ?? [])
+          .map(signature => {
+            if (signature === undefined) throw new Error("The checker returned an absent type signature.");
+            const thisParameter = getTypeSignatureThisParameterInfo(checker, signature);
+            return Object.freeze({ signature, parameters: getTypeSignatureParameterInfos(checker, signature),
+              ...(thisParameter === undefined ? {} : { thisParameter }),
+              returnType: Checker_GetReturnTypeOfSignature(checker, signature) });
+          }),
+      )) ?? Object.freeze([]);
+    },
     getSignatureParameterInfos: (signature) => withCheckerForSignature(
       program,
       signature,

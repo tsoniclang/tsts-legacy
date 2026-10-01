@@ -164,6 +164,7 @@ export type {
   TypePropertyInfo,
   TypeReferenceArgumentInfo,
   TypeSignatureParameterInfo,
+  TypeSignatureInfo,
   TypeSignatureThisParameterInfo,
   TypeShapeQueries,
   TypeTupleElementInfo,
