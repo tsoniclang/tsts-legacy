@@ -1,7 +1,7 @@
 import type { Node } from "../internal/ast/ast.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_GetIndexInfosOfType } from "../internal/checker/exports.js";
-import { Type_Types, TypeFlagsUnion, type IndexInfo, type Type } from "../internal/checker/types.js";
+import { Type_Types, TypeFlagsUnion, TypeFlagsIntersection, type IndexInfo, type Type } from "../internal/checker/types.js";
 import type { GoPtr } from "../go/compat.js";
 
 export function typeIndexComponents(
@@ -11,13 +11,17 @@ export function typeIndexComponents(
 ): readonly GoPtr<Node>[] {
   const keyType = index?.keyType;
   if (checker === undefined || sourceType === undefined || keyType === undefined) return Object.freeze([]);
-  if ((sourceType.flags & TypeFlagsUnion) === 0) return Object.freeze([...(index?.components ?? [])]);
+  if ((sourceType.flags & (TypeFlagsUnion | TypeFlagsIntersection)) === 0) return Object.freeze([...(index?.components ?? [])]);
   const visited = new Set<Type>();
   const active = new Set<Type>();
   const declarations = new Set<Node>();
-  const pending: { readonly type: Type; readonly complete: boolean }[] = [{ type: sourceType, complete: false }];
+  const pending: { readonly type: Type; readonly complete: boolean; readonly required: boolean }[] = [
+    { type: sourceType, complete: false, required: true },
+  ];
+  let remaining = 4_096;
   while (pending.length !== 0) {
-    const { type, complete } = pending.pop()!;
+    if (--remaining < 0) return Object.freeze([]);
+    const { type, complete, required } = pending.pop()!;
     if (complete) {
       active.delete(type);
       visited.add(type);
@@ -25,17 +29,20 @@ export function typeIndexComponents(
     }
     if (active.has(type)) return Object.freeze([]);
     if (visited.has(type)) continue;
+    const matches = Checker_GetIndexInfosOfType(checker, type).filter(info => info?.keyType === keyType);
+    if (matches.length === 0 && !required) continue;
+    const info = matches.length === 1 ? matches[0] : undefined;
+    if (info === undefined) return Object.freeze([]);
     active.add(type);
-    pending.push({ type, complete: true });
-    if ((type.flags & TypeFlagsUnion) !== 0) {
+    pending.push({ type, complete: true, required });
+    if ((type.flags & (TypeFlagsUnion | TypeFlagsIntersection)) !== 0) {
       const members = Type_Types(type);
       if (members === undefined || members.length === 0 || members.some(member => member === undefined)) return Object.freeze([]);
-      for (const member of members) pending.push({ type: member!, complete: false });
+      if (pending.length + members.length > remaining) return Object.freeze([]);
+      for (const member of members) pending.push({ type: member!, complete: false, required: (type.flags & TypeFlagsUnion) !== 0 });
       continue;
     }
-    const matches = Checker_GetIndexInfosOfType(checker, type).filter(info => info?.keyType === keyType);
-    const info = matches.length === 1 ? matches[0] : undefined;
-    const components = info?.declaration === undefined ? info?.components : [info.declaration];
+    const components = info.declaration === undefined ? info.components : [info.declaration];
     if (components === undefined || components.length === 0 || components.some(node => node === undefined)) return Object.freeze([]);
     for (const declaration of components) declarations.add(declaration!);
   }
