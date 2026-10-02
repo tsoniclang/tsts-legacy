@@ -7,6 +7,7 @@ import { Node_Text } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
+import { readInvocationReturnType } from "./signature-returns.js";
 import type { TypeIndexInfo } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
@@ -198,6 +199,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedWellKnownSymbolInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceWellKnownSymbolInfo>;
   readonly getResolvedResourceManagementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceResourceManagementInfo>;
   readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
+  readonly getInvocationReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
   readonly getCallSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getPropertyOfType: (type: GoPtr<Type>, name: string) => GoPtr<Symbol>;
@@ -339,6 +341,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
           resolveSourceResourceManagementInfo(checker, node))),
     getReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => Checker_GetReturnTypeOfSignature(checker, signature)),
+    getInvocationReturnTypeOfSignature: (signature) =>
+      withCheckerForSignature(program, signature, defaultOptions, (checker) => readInvocationReturnType(checker, signature)),
     getCallSignaturesOfType: (type) =>
       withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignaturesOfType: (type) =>
