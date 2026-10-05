@@ -57,6 +57,7 @@ import {
   TypeFlagsBigIntLike,
   TypeFlagsBigIntLiteral,
   TypeFlagsBooleanLike,
+  TypeFlagsBooleanLiteral,
   TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
@@ -76,6 +77,8 @@ import {
   Type_TargetTupleType,
   Type_AsSubstitutionType,
   Type_AsInterfaceType,
+  Type_AsLiteralType,
+  LiteralType_Value,
   InterfaceType_TypeParameters,
   Type_Types,
   Signature_ThisParameter,
@@ -145,6 +148,7 @@ export interface TypeShapeQueries {
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
+  readonly getBooleanLiteralTypeValue: (type: GoPtr<Type>) => boolean | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
@@ -223,6 +227,11 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     }),
     getStringLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () =>
       hasFlags(type, TypeFlagsStringLiteral) ? getStringLiteralValue(type) : undefined),
+    getBooleanLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
+      if (!hasFlags(type, TypeFlagsBooleanLiteral)) return undefined;
+      const value = LiteralType_Value(Type_AsLiteralType(type));
+      return typeof value === "boolean" ? value : undefined;
+    }),
     isAny: (type) => hasFlags(type, TypeFlagsAny),
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
