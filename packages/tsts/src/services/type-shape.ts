@@ -4,6 +4,7 @@ import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { GetSourceFileOfNode, IsFunctionLike } from "../internal/ast/utilities.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import {
   CheckFlagsOptionalParameter,
@@ -32,6 +33,7 @@ import {
 } from "../internal/checker/checker/symbols.js";
 import { Checker_getBaseTypeOfLiteralType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
+import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
   getBigIntLiteralValue,
   getNumberLiteralValue,
@@ -39,7 +41,7 @@ import {
   signatureHasRestParameter,
 } from "../internal/checker/checker/state.js";
 import { PseudoBigInt_String } from "../internal/jsnum/pseudobigint.js";
-import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
+import { Checker_getMinArgumentCount, Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import {
   Checker_GetConstantValue,
 } from "../internal/checker/services.js";
@@ -120,6 +122,7 @@ export interface TypeSignatureParameterInfo {
   readonly sourceSymbol: Symbol;
   readonly type: Type;
   readonly parameterKind: "required" | "optional" | "rest";
+  readonly acceptsOmission: boolean;
   readonly declaration?: Node;
 }
 
@@ -182,6 +185,7 @@ export interface TypeShapeQueries {
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
+  readonly getDeclarationSignatureInfo: (declaration: GoPtr<Node>) => TypeSignatureInfo | undefined;
   readonly getSignatureParameterInfos: (
     signature: GoPtr<Signature>,
   ) => readonly TypeSignatureParameterInfo[];
@@ -329,13 +333,16 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
         (Checker_GetSignaturesOfType(checker, type, kind === "call" ? SignatureKindCall : SignatureKindConstruct) ?? [])
           .map(signature => {
             if (signature === undefined) throw new Error("The checker returned an absent type signature.");
-            const thisParameter = getTypeSignatureThisParameterInfo(checker, signature);
-            return Object.freeze({ signature, parameters: getTypeSignatureParameterInfos(checker, signature),
-              ...(thisParameter === undefined ? {} : { thisParameter }),
-              returnType: Checker_GetReturnTypeOfSignature(checker, signature) });
+            return getTypeSignatureInfo(checker, signature);
           }),
       )) ?? Object.freeze([]);
     },
+    getDeclarationSignatureInfo: declaration => !IsFunctionLike(declaration) ? undefined : withCheckerForSourceFile(
+      program, GetSourceFileOfNode(declaration), defaultOptions, checker => {
+        const signature = Checker_getSignatureFromDeclaration(checker, declaration);
+        return signature === undefined ? undefined : getTypeSignatureInfo(checker, signature);
+      },
+    ),
     getSignatureParameterInfos: (signature) => withCheckerForSignature(
       program,
       signature,
@@ -409,6 +416,13 @@ function getTypeTupleElementInfos(
   }));
 }
 
+function getTypeSignatureInfo(checker: GoPtr<Checker>, signature: Signature): TypeSignatureInfo {
+  const thisParameter = getTypeSignatureThisParameterInfo(checker, signature);
+  return Object.freeze({ signature, parameters: getTypeSignatureParameterInfos(checker, signature),
+    ...(thisParameter === undefined ? {} : { thisParameter }),
+    returnType: Checker_GetReturnTypeOfSignature(checker, signature) });
+}
+
 function getTypeSignatureParameterInfos(
   checker: GoPtr<Checker>,
   signature: GoPtr<Signature>,
@@ -440,6 +454,7 @@ function getTypeSignatureParameterInfos(
     : getTypeTupleElementInfos(checker, restType);
   const tupleExpanded = restIndex >= 0 && tupleElements.length > 0 &&
     effectiveParameters.length === restIndex + tupleElements.length;
+  const minimumArgumentCount = Checker_getMinArgumentCount(checker, signature);
   return Object.freeze(effectiveParameters.map((parameter, index) => {
     if (parameter === undefined) {
       throw new Error(
@@ -480,6 +495,7 @@ function getTypeSignatureParameterInfos(
       sourceSymbol,
       type,
       parameterKind,
+      acceptsOmission: index >= minimumArgumentCount,
       ...(declaration === undefined ? {} : { declaration }),
     });
   }));
