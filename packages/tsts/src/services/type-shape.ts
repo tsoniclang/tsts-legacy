@@ -61,6 +61,7 @@ import {
   TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
+  TypeFlagsNonPrimitive,
   TypeFlagsNull,
   TypeFlagsNumberLike,
   TypeFlagsNumberLiteral,
@@ -152,6 +153,7 @@ export interface TypeShapeQueries {
   readonly isAny: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
+  readonly isNonPrimitive: (type: GoPtr<Type>) => boolean;
   readonly isVoidLike: (type: GoPtr<Type>) => boolean;
   readonly isNullish: (type: GoPtr<Type>) => boolean;
   readonly isStringLike: (type: GoPtr<Type>) => boolean;
@@ -236,6 +238,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     isAny: (type) => hasFlags(type, TypeFlagsAny),
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
+    isNonPrimitive: (type) => hasFlags(type, TypeFlagsNonPrimitive),
     isVoidLike: (type) => hasFlags(type, TypeFlagsVoidLike) || hasFlags(type, TypeFlagsVoid),
     isNullish: (type) => hasFlags(type, TypeFlagsNull) || hasFlags(type, TypeFlagsUndefined),
     isStringLike: (type) => hasFlags(type, TypeFlagsStringLike),
