@@ -14,6 +14,7 @@ export {
   defineExtensionFactKey,
   fieldFactKey,
   getProviderMemberSurfaceKey,
+  isProviderWellKnownSymbolName,
   flowStateFactKey,
   functionPointerFactKey,
   pointerFactKey,

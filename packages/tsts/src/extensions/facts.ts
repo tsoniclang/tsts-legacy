@@ -4,8 +4,8 @@ import {
 } from "./fact-key.js";
 import type {
   ExtensionFactSubject,
-  ProviderWellKnownSymbolName,
 } from "./host.js";
+import { isProviderWellKnownSymbolName, type ProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
 import type {
   Node,
 } from "../internal/ast/ast.js";
@@ -892,8 +892,8 @@ function snapshotProviderMemberKey(value: unknown): ProviderMemberKey {
   if (kind === "property-key") {
     return Object.freeze({ kind, name });
   }
-  if (kind === "well-known-symbol" && providerWellKnownSymbolNames.has(name as ProviderWellKnownSymbolName)) {
-    return Object.freeze({ kind, name: name as ProviderWellKnownSymbolName });
+  if (kind === "well-known-symbol" && isProviderWellKnownSymbolName(name)) {
+    return Object.freeze({ kind, name });
   }
   throw new Error(`ProviderMemberKey kind/name '${kind}:${name}' is invalid.`);
 }
@@ -1479,18 +1479,3 @@ const sourceTypeMarkerKinds = new Set<SourceTypeMarkerKind>([
 ]);
 const pointerMutabilities = new Set<SourcePointerMutability>(["readonly", "readwrite", "unspecified"]);
 const flowStates = new Set<FlowStateFact["state"]>(["moved", "borrowed-shared", "borrowed-mut"]);
-const providerWellKnownSymbolNames = new Set<ProviderWellKnownSymbolName>([
-  "asyncIterator",
-  "hasInstance",
-  "isConcatSpreadable",
-  "iterator",
-  "match",
-  "matchAll",
-  "replace",
-  "search",
-  "species",
-  "split",
-  "toPrimitive",
-  "toStringTag",
-  "unscopables",
-]);
