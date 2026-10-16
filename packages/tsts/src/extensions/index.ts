@@ -1,4 +1,5 @@
 export { getProviderMemberSurfaceKey } from "./provider-member-identity.js";
+export { isProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
 export {
   ExtensionDiagnosticStore,
   ExtensionFactResolver,
