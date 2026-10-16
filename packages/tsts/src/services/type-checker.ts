@@ -3,7 +3,7 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Symbol, Node_Text } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
@@ -23,8 +23,12 @@ import {
   IsGetAccessorDeclaration,
   IsIdentifier,
   IsObjectLiteralExpression,
+  IsMethodDeclaration,
+  IsMethodSignatureDeclaration,
   IsPropertyAccessExpression,
   IsPropertyAssignment,
+  IsPropertyDeclaration,
+  IsPropertySignatureDeclaration,
   IsSetAccessorDeclaration,
   IsShorthandPropertyAssignment,
 } from "../internal/ast/generated/predicates.js";
@@ -34,6 +38,7 @@ import {
   IsCallOrNewExpression,
   IsObjectLiteralMethod,
   IsPropertyName,
+  IsDynamicName,
   OEKAssertions,
   OEKParentheses,
   SkipOuterExpressions,
@@ -133,6 +138,7 @@ export type ResolvedSourceCallInfo = ResolvedCallEvidence;
 export interface ResolvedSourcePropertyNameInfo {
   readonly kind: "string" | "numeric" | "unique-symbol";
   readonly name: string;
+  readonly type: Type;
 }
 export interface ResolvedSourceReceiverValueEvidence {
   readonly valueSymbol?: Symbol;
@@ -263,14 +269,23 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       if (cached !== undefined) return cached ?? undefined;
       const selected = withCheckerForNode(program, node, defaultOptions, checker => {
         if (!IsPropertyName(node)) return undefined;
-        const [name, present] = Checker_getEffectivePropertyNameForPropertyNameNode(checker, node);
+        const [literalName, present] = Checker_getEffectivePropertyNameForPropertyNameNode(checker, node);
         if (!present) return undefined;
         const type = Checker_getLiteralTypeFromPropertyName(checker, node);
         if (type === undefined) return undefined;
-        if ((type.flags & TypeFlagsUniqueESSymbol) !== 0) return Object.freeze({ kind: "unique-symbol" as const, name });
+        const declaration = node.Parent;
+        const staticallyBound = declaration !== undefined && !IsDynamicName(node) &&
+          (IsPropertyDeclaration(declaration) || IsPropertySignatureDeclaration(declaration) ||
+            IsMethodDeclaration(declaration) || IsMethodSignatureDeclaration(declaration) ||
+            IsGetAccessorDeclaration(declaration) || IsSetAccessorDeclaration(declaration)) &&
+          !IsObjectLiteralExpression(declaration.Parent);
+        const symbol = staticallyBound ? Node_Symbol(declaration) : undefined;
+        if (staticallyBound && symbol === undefined) return undefined;
+        const name = staticallyBound ? symbol!.Name : literalName;
+        if ((type.flags & TypeFlagsUniqueESSymbol) !== 0) return Object.freeze({ kind: "unique-symbol" as const, name, type });
         if ((type.flags & TypeFlagsNumberLiteral) !== 0) return Object.freeze({ kind: "numeric" as const,
-          name: Number_String(getNumberLiteralValue(type)) });
-        if ((type.flags & TypeFlagsStringLiteral) !== 0) return Object.freeze({ kind: "string" as const, name });
+          name: staticallyBound ? name : Number_String(getNumberLiteralValue(type)), type });
+        if ((type.flags & TypeFlagsStringLiteral) !== 0) return Object.freeze({ kind: "string" as const, name, type });
         return undefined;
       });
       propertyNames.set(node, selected ?? null);

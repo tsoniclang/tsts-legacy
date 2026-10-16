@@ -4,6 +4,7 @@ import { Node_Text } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import {
   KindClassDeclaration,
+  KindComputedPropertyName,
   KindElementAccessExpression,
   KindForOfStatement,
   KindGetAccessor,
@@ -13,7 +14,7 @@ import {
   KindSetAccessor,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
+import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import {
   assertCleanSemanticDiagnostics,
@@ -47,6 +48,49 @@ test("effective property names expose one checked string, numeric or unique-symb
   assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a broad runtime string has no static name");
   assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a completed absence stays absent");
   assert.equal(queries.getEffectivePropertyName(undefined) === undefined, true, "an absent node has no fabricated identity");
+});
+
+test("effective numeric property-name types never depend on a property's value type", () => {
+  const { program, index } = createProgram(`
+    const text: Record<number, string> = { 9007199254740993: "value" };
+    const numeric: Record<number, number> = { 9007199254740993: 7 };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 2, "both actual checked contexts participate");
+  for (const [position, property] of properties.entries()) {
+    const name = Node_Name(property);
+    const selected = queries.getEffectivePropertyName(name);
+    assert.equal(selected?.kind, "numeric", `property ${position} has numeric checked key evidence`);
+    assert.equal((selected?.type.flags ?? 0) & TypeFlagsNumberLiteral, TypeFlagsNumberLiteral,
+      `property ${position} retains its already-computed checked numeric literal type`);
+    assert.equal(queries.getEffectivePropertyName(name)?.type === selected?.type, true,
+      `property ${position} never recomputes its checked key type`);
+  }
+  assert.equal((queries.getTypeAtLocation(Node_Name(properties[0]))?.flags ?? 0) & TypeFlagsString, TypeFlagsString,
+    "the generic location query answers the value-type question and cannot be a key-type substitute");
+});
+
+test("effective names preserve actual bound member identities and completed object-literal names", () => {
+  const { program, index } = createProgram(`
+    class Holder { [+1] = 1; [-0] = 2; }
+    interface Contract { [+1]: number; [-0]: number; }
+    type Shape = { [+1]: number; [-0]: number; };
+    const object = { [-0]: 3 };
+    const { [-0]: value } = object;
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const names = findNodesByKind(index, KindComputedPropertyName);
+  assert.equal(names.length, 8, "all bound, object-literal and binding names are actual checked syntax");
+  for (const [position, expected] of ["+1", "-0", "+1", "-0", "+1", "-0", "0", "0"].entries()) {
+    const selected = queries.getEffectivePropertyName(names[position]);
+    assert.equal(selected?.kind, "numeric", `name ${position} retains its checked numeric literal type`);
+    assert.equal(selected?.name, expected, `name ${position} uses its actual checked identity at the one boundary`);
+    assert.equal(queries.getEffectivePropertyName(names[position]) === selected, true,
+      `name ${position} never reparses a signed token on a consumer path`);
+  }
 });
 
 test("object element evidence selects completed canonical symbols by exact declaration membership", () => {
