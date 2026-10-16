@@ -52,8 +52,8 @@ test("effective property names expose one checked string, numeric or unique-symb
 
 test("effective numeric property-name types never depend on a property's value type", () => {
   const { program, index } = createProgram(`
-    const text: Record<number, string> = { 9007199254740993: "value" };
-    const numeric: Record<number, number> = { 9007199254740993: 7 };
+    const text: { [key: number]: string } = { 9007199254740993: "value" };
+    const numeric: { [key: number]: number } = { 9007199254740993: 7 };
   `);
   assertCleanSemanticDiagnostics(program, index);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
