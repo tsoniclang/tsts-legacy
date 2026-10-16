@@ -4,6 +4,7 @@ import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
@@ -41,6 +42,7 @@ import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
   Checker_GetPropertyOfType,
+  Checker_GetPropertiesOfType,
   Checker_ResolveName,
   Checker_GetReturnTypeOfSignature,
   Checker_GetSignaturesOfType,
@@ -59,7 +61,8 @@ import {
   Checker_getResolvedSourcePropertyAccessInfo,
   Checker_GetSymbolAtLocation,
   Checker_getDeclaredTypeOfSymbol,
-  Checker_getSymbolOfDeclaration,
+  Checker_getLiteralTypeFromPropertyName,
+  Checker_getTypeOfPropertyOfContextualTypeEx,
   Checker_getResolvedSymbolOrNil,
   Checker_getTypeOfSymbol,
   Checker_getWriteTypeOfSymbol,
@@ -73,7 +76,6 @@ import type {
 import {
   Checker_getApparentTypeOfContextualType,
   Checker_getContextualType,
-  Checker_getContextualTypeForObjectLiteralElement,
   Checker_GetTypeAtLocation,
 } from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
@@ -231,6 +233,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
+  const objectLiteralElementSymbols = new WeakMap<Type, ReadonlyMap<Node, Symbol>>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
   const callableCompletionInfos = new WeakMap<Node, ResolvedSourceCallableCompletionInfo>();
   const flowConditionInfos = new WeakMap<Node, ResolvedSourceFlowConditionInfo>();
@@ -303,7 +306,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getResolvedObjectLiteralElementInfo: (node) =>
       memoizeResolvedNodeQuery(objectLiteralElementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
-          getResolvedSourceObjectLiteralElementInfo(checker, node))),
+          getResolvedSourceObjectLiteralElementInfo(checker, node, objectLiteralElementSymbols))),
     getResolvedStorageInfo: (node) =>
       memoizeResolvedNodeQuery(storageInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
@@ -385,6 +388,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
 function getResolvedSourceObjectLiteralElementInfo(
   checker: GoPtr<Checker>,
   element: GoPtr<Node>,
+  symbolsByType: WeakMap<Type, ReadonlyMap<Node, Symbol>>,
 ): GoPtr<ResolvedSourceObjectLiteralElementInfo> {
   const elementKind = resolvedSourceObjectLiteralElementKind(element);
   const objectLiteral = element?.Parent;
@@ -400,11 +404,31 @@ function getResolvedSourceObjectLiteralElementInfo(
     objectLiteral,
     ContextFlagsNone,
   );
-  const sourceElementSymbol = Checker_getSymbolOfDeclaration(checker, element);
-  if (objectLiteralType === undefined || sourceElementType === undefined ||
-    sourceElementSymbol === undefined) {
+  if (objectLiteralType === undefined || sourceElementType === undefined) {
     return undefined;
   }
+  let symbols = symbolsByType.get(objectLiteralType);
+  if (symbols === undefined) {
+    const selected = new Map<Node, Symbol>();
+    const ambiguous = new Set<Node>();
+    for (const symbol of Checker_GetPropertiesOfType(checker, objectLiteralType)) {
+      if (symbol === undefined) continue;
+      for (const declaration of symbol.Declarations ?? []) {
+        if (declaration === undefined || ambiguous.has(declaration)) continue;
+        const prior = selected.get(declaration);
+        if (prior !== undefined && prior !== symbol) {
+          selected.delete(declaration);
+          ambiguous.add(declaration);
+        } else {
+          selected.set(declaration, symbol);
+        }
+      }
+    }
+    symbols = selected;
+    symbolsByType.set(objectLiteralType, symbols);
+  }
+  const sourceElementSymbol = symbols.get(element);
+  if (sourceElementSymbol === undefined) return undefined;
   const selectedOwnerType = contextualType ?? objectLiteralType;
   const sourceSelectedSymbol = Checker_GetPropertyOfType(
     checker,
@@ -415,10 +439,11 @@ function getResolvedSourceObjectLiteralElementInfo(
     ? sourceSelectedSymbol === undefined
       ? sourceElementType
       : Checker_getTypeOfSymbol(checker, sourceSelectedSymbol)
-    : Checker_getContextualTypeForObjectLiteralElement(
+    : Checker_getTypeOfPropertyOfContextualTypeEx(
         checker,
-        element,
-        ContextFlagsNone,
+        contextualType,
+        sourceElementSymbol.Name,
+        Checker_getLiteralTypeFromPropertyName(checker, Node_Name(element)),
       );
   if (sourceSelectedType === undefined) {
     return undefined;

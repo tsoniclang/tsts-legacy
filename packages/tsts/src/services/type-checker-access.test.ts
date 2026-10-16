@@ -7,6 +7,8 @@ import {
   KindElementAccessExpression,
   KindForOfStatement,
   KindGetAccessor,
+  KindMethodDeclaration,
+  KindPropertyAssignment,
   KindPropertyAccessExpression,
   KindSetAccessor,
   KindVariableDeclaration,
@@ -19,6 +21,64 @@ import {
   findNodesByKind,
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
+
+test("object element evidence selects completed canonical symbols by exact declaration membership", () => {
+  const { program, index } = createProgram(`
+    interface Holder { [0]: number; }
+    const ordinary: Holder = { 0: 7 };
+    const computed: Holder = { [-0]: 7 };
+    const inferred = { [-0]: 7 };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 3, "ordinary, contextual negative zero and inferred negative zero");
+  const infos = properties.map(property => queries.getResolvedObjectLiteralElementInfo(property));
+  for (const [position, property] of properties.entries()) {
+    const info = infos[position];
+    assert.equal(info !== undefined, true, `element ${position} has exact completed evidence`);
+    assert.equal(queries.getSymbolName(info?.sourceElementSymbol), "0", `element ${position} uses the canonical checked name`);
+    assert.equal(queries.getSymbolDeclarations(info?.sourceElementSymbol).includes(property), true,
+      `element ${position} belongs to that exact completed source property`);
+    assert.equal(queries.typeToString(info?.sourceSelectedType), "number", `element ${position} keeps the checked property type`);
+    assert.equal(queries.getResolvedObjectLiteralElementInfo(property) === info, true,
+      `element ${position} is memoized by exact identity`);
+    assert.equal(Object.isFrozen(info), true, `element ${position} publishes immutable evidence`);
+  }
+  assert.equal(infos[0]?.sourceSelectedSymbol === infos[1]?.sourceSelectedSymbol, true,
+    "ordinary and negative zero select the same contextual member");
+  assert.equal(infos[2]?.sourceSelectedDeclaration === properties[2], true,
+    "an inferred negative-zero member selects its exact own declaration");
+});
+
+test("canonical object element symbols preserve generic, mapped, union and indexed contextual types", () => {
+  const { program, index } = createProgram(`
+    function generic<T>(input: T): { value: T } { return { value: input }; }
+    type Mapped = { [Key in "value"]: number };
+    const mapped: Mapped = { value: 1 };
+    const union: { kind: "number"; value: number } | { kind: "string"; value: string } = { kind: "number", value: 1 };
+    interface Callbacks { [name: string]: () => number; }
+    const indexed: Callbacks = { run() { return 2; } };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 4, "generic, mapped and both discriminated-union members");
+  const expected = ["T", "number", '"number"', "number"];
+  for (const [position, property] of properties.entries()) {
+    const info = queries.getResolvedObjectLiteralElementInfo(property);
+    assert.equal(info !== undefined, true, `context ${position} retains exact evidence`);
+    assert.equal(queries.typeToString(info?.sourceSelectedType), expected[position], `context ${position} keeps the checker-selected type`);
+    assert.equal(queries.getSymbolDeclarations(info?.sourceElementSymbol).includes(property), true,
+      `context ${position} keeps exact source declaration membership`);
+  }
+  const method = findNodesByKind(index, KindMethodDeclaration)[0];
+  const info = queries.getResolvedObjectLiteralElementInfo(method);
+  assert.equal(info !== undefined, true, "an indexed callback has evidence without a named contextual property");
+  assert.equal(info?.sourceSelectedSymbol === undefined, true, "the contextual index is not a fabricated named symbol");
+  assert.equal(info?.sourceSelectedDeclarations.length, 0, "the contextual index has no named declarations");
+  assert.equal(queries.typeToString(info?.sourceSelectedType), "() => number", "the index signature still supplies the checked function type");
+});
 
 test("property selection uses the selected symbol with distinct read and write types", () => {
   const { program, index } = createProgram(`
