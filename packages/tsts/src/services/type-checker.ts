@@ -33,6 +33,7 @@ import {
   GetContainingFunction,
   IsCallOrNewExpression,
   IsObjectLiteralMethod,
+  IsPropertyName,
   OEKAssertions,
   OEKParentheses,
   SkipOuterExpressions,
@@ -53,7 +54,7 @@ import {
   Checker_finalizeResolvedCallEvidence,
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
-import { CheckModeNormal } from "../internal/checker/checker/state.js";
+import { CheckModeNormal, getNumberLiteralValue } from "../internal/checker/checker/state.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import {
   Checker_GetAliasedSymbol,
@@ -61,6 +62,7 @@ import {
   Checker_getResolvedSourcePropertyAccessInfo,
   Checker_GetSymbolAtLocation,
   Checker_getDeclaredTypeOfSymbol,
+  Checker_getEffectivePropertyNameForPropertyNameNode,
   Checker_getLiteralTypeFromPropertyName,
   Checker_getTypeOfPropertyOfContextualTypeEx,
   Checker_getResolvedSymbolOrNil,
@@ -94,7 +96,8 @@ import type {
   Signature,
   Type,
 } from "../internal/checker/types.js";
-import { ContextFlagsNone, SignatureKindCall, SignatureKindConstruct } from "../internal/checker/types.js";
+import { ContextFlagsNone, SignatureKindCall, SignatureKindConstruct, TypeFlagsNumberLiteral, TypeFlagsStringLiteral, TypeFlagsUniqueESSymbol } from "../internal/checker/types.js";
+import { Number_String } from "../internal/jsnum/string.js";
 import {
   resolveSourceCallableCompletionInfo,
   resolveSourceGeneratorInfo,
@@ -127,6 +130,10 @@ export interface CreateTypeCheckerQueriesOptions {
 }
 
 export type ResolvedSourceCallInfo = ResolvedCallEvidence;
+export interface ResolvedSourcePropertyNameInfo {
+  readonly kind: "string" | "numeric" | "unique-symbol";
+  readonly name: string;
+}
 export interface ResolvedSourceReceiverValueEvidence {
   readonly valueSymbol?: Symbol;
   readonly valueDeclaration?: Node;
@@ -179,6 +186,7 @@ export interface TypeCheckerQueries {
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
+  readonly getEffectivePropertyName: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyNameInfo>;
   readonly getSymbolAtLocation: (node: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getLexicallyResolvedSymbol: (identifier: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getResolvedSymbol: (node: GoPtr<Node>) => GoPtr<Symbol>;
@@ -229,6 +237,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     throw new Error("Type-checker queries require one source file from the compiler program.");
   }
   const callInfos = new WeakMap<Node, ResolvedSourceCallInfo>();
+  const propertyNames = new WeakMap<Node, ResolvedSourcePropertyNameInfo | null>();
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
@@ -248,6 +257,25 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
     getContextualType: (node, contextFlags = ContextFlagsNone) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getContextualType(checker, node, contextFlags)),
+    getEffectivePropertyName(node) {
+      if (node === undefined) return undefined;
+      const cached = propertyNames.get(node);
+      if (cached !== undefined) return cached ?? undefined;
+      const selected = withCheckerForNode(program, node, defaultOptions, checker => {
+        if (!IsPropertyName(node)) return undefined;
+        const [name, present] = Checker_getEffectivePropertyNameForPropertyNameNode(checker, node);
+        if (!present) return undefined;
+        const type = Checker_getLiteralTypeFromPropertyName(checker, node);
+        if (type === undefined) return undefined;
+        if ((type.flags & TypeFlagsUniqueESSymbol) !== 0) return Object.freeze({ kind: "unique-symbol" as const, name });
+        if ((type.flags & TypeFlagsNumberLiteral) !== 0) return Object.freeze({ kind: "numeric" as const,
+          name: Number_String(getNumberLiteralValue(type)) });
+        if ((type.flags & TypeFlagsStringLiteral) !== 0) return Object.freeze({ kind: "string" as const, name });
+        return undefined;
+      });
+      propertyNames.set(node, selected ?? null);
+      return selected;
+    },
     getSymbolAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetSymbolAtLocation(checker, node)),
     getLexicallyResolvedSymbol: (identifier) =>

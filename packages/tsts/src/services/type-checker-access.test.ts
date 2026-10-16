@@ -22,6 +22,33 @@ import {
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
 
+test("effective property names expose one checked string, numeric or unique-symbol identity", () => {
+  const { program, index } = createProgram(`
+    const key = "constant";
+    declare const unique: unique symbol;
+    const value = { plain: 1, ["literal"]: 2, [key]: 3, [0x3635c9adc5dea00000]: 4, [-0]: 5, [unique]: 6 };
+    function dynamic(key: string) { return { [key]: 7 }; }
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 7, "six static properties and one dynamic property");
+  const expected = [["string", "plain"], ["string", "literal"], ["string", "constant"],
+    ["numeric", "1e+21"], ["numeric", "0"], ["unique-symbol", undefined]] as const;
+  for (const [position, [kind, name]] of expected.entries()) {
+    const nameNode = Node_Name(properties[position]);
+    const selected = queries.getEffectivePropertyName(nameNode);
+    assert.equal(selected?.kind, kind, `property ${position} keeps its checked name category`);
+    if (name !== undefined) assert.equal(selected?.name, name, `property ${position} keeps its canonical checked spelling`);
+    else assert.equal(typeof selected?.name, "string", "the unique symbol keeps its actual checked identity, not a string field");
+    assert.equal(selected !== undefined && Object.isFrozen(selected), true, `property ${position} has immutable evidence`);
+    assert.equal(queries.getEffectivePropertyName(nameNode) === selected, true, `property ${position} is computed once at this query boundary`);
+  }
+  assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a broad runtime string has no static name");
+  assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a completed absence stays absent");
+  assert.equal(queries.getEffectivePropertyName(undefined) === undefined, true, "an absent node has no fabricated identity");
+});
+
 test("object element evidence selects completed canonical symbols by exact declaration membership", () => {
   const { program, index } = createProgram(`
     interface Holder { [0]: number; }

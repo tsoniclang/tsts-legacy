@@ -142,6 +142,7 @@ export type {
   ResolvedSourceObjectLiteralElementInfo,
   ResolvedSourceObjectLiteralElementKind,
   ResolvedSourcePropertyAccessInfo,
+  ResolvedSourcePropertyNameInfo,
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceStorageInfo,
   ResolvedSourceWellKnownSymbolInfo,
