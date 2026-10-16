@@ -27,3 +27,11 @@ test("provider member identity preserves native source property and signature na
   assert.notEqual(getProviderMemberSurfaceKey({ ...member, name: "constructor" }), "constructor");
   assert.notEqual(getProviderMemberSurfaceKey({ ...member, name: "indexer" }), "indexer");
 });
+
+test("provider disposer symbols retain their exact source identities", () => {
+  for (const name of ["dispose", "asyncDispose"] as const) {
+    const member: ProviderMemberDeclaration = { id: `Resource.${name}`, kind: "method", name: { kind: "well-known-symbol", name } };
+    assert.equal(getProviderMemberSurfaceKey(member), JSON.stringify([false, ["well-known-symbol", name]]), name);
+    assert.notEqual(getProviderMemberSurfaceKey(member), getProviderMemberSurfaceKey({ ...member, name: `Symbol.${name}` }), name);
+  }
+});

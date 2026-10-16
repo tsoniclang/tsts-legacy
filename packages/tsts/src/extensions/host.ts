@@ -12,6 +12,8 @@ import {
 } from "./source-program.js";
 import type { ArgumentPassingMode } from "./argument-passing.js";
 import { isArgumentPassingMode } from "./argument-passing.js";
+import { isProviderWellKnownSymbolName, type ProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
+export type { ProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
 import type { ProviderVirtualDeclarationFact, SourcePrimitiveKind } from "./facts.js";
 import {
   defineExtensionFactKey,
@@ -466,21 +468,6 @@ export type ProviderPropertyName =
   | { readonly kind: "string-literal"; readonly text: string }
   | { readonly kind: "number-literal"; readonly value: number }
   | { readonly kind: "well-known-symbol"; readonly name: ProviderWellKnownSymbolName };
-
-export type ProviderWellKnownSymbolName =
-  | "asyncIterator"
-  | "hasInstance"
-  | "isConcatSpreadable"
-  | "iterator"
-  | "match"
-  | "matchAll"
-  | "replace"
-  | "search"
-  | "species"
-  | "split"
-  | "toPrimitive"
-  | "toStringTag"
-  | "unscopables";
 
 export interface ProviderTypeParameterDeclaration {
   readonly name: string;
@@ -7976,27 +7963,6 @@ function isValidProviderNamespaceMemberName(name: ProviderPropertyName): boolean
     return isIdentifierText(name);
   }
   return name.kind === "identifier" && isIdentifierText(name.text);
-}
-
-function isProviderWellKnownSymbolName(name: string): name is ProviderWellKnownSymbolName {
-  switch (name) {
-    case "asyncIterator":
-    case "hasInstance":
-    case "isConcatSpreadable":
-    case "iterator":
-    case "match":
-    case "matchAll":
-    case "replace":
-    case "search":
-    case "species":
-    case "split":
-    case "toPrimitive":
-    case "toStringTag":
-    case "unscopables":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function isKnownSourcePrimitive(name: SourcePrimitiveKind): boolean {
