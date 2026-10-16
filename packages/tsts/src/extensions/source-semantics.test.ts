@@ -1146,8 +1146,11 @@ test("source-semantics field facts use checked computed names and exclude unique
     const call = getCallExpression(index, "field", position);
     const field = extended.extensionHost.facts.get(call, fieldFactKey);
     assert.equal(field?.name, name, `field ${position} consumes the canonical checked name`);
-    assert.equal(extended.extensionHost.facts.get(call?.Parent, fieldFactKey) === field, true,
-      `field ${position} has one identical marker/owner fact`);
+    const owner = extended.extensionHost.facts.get(call?.Parent, fieldFactKey);
+    assert.equal(owner?.name, name, `field ${position} owner preserves the same checked name`);
+    assert.equal(owner?.type === field?.type, true, `field ${position} owner preserves exact field type-node identity`);
+    assert.equal(field !== undefined && owner !== undefined && Object.isFrozen(field) && Object.isFrozen(owner), true,
+      `field ${position} facts are independent immutable boundary snapshots`);
   }
   const symbolCall = getCallExpression(index, "field", 4);
   assert.equal(extended.extensionHost.facts.get(symbolCall, fieldFactKey) === undefined, true, "a unique symbol is never a string/numeric FieldFact");
