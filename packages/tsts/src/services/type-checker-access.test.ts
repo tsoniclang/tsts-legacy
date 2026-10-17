@@ -121,6 +121,9 @@ test("awaited queries reject foreign types and admit only the actual same-progra
   const first = createProgram("type Value = number;");
   const second = createProgram("type Value = number;");
   const unrelated = createProgram("type Value = number;");
+  attachExtensionHost(first.program!);
+  attachExtensionHostToProgram(first.program!, second.program!, { bindCompilerProgram: false });
+  attachExtensionHost(unrelated.program!);
   for (const checked of [first, second, unrelated]) assertCleanSemanticDiagnostics(checked.program, checked.index);
   const firstQueries = createTypeCheckerQueries(first.program, { sourceFile: first.index });
   const secondQueries = createTypeCheckerQueries(second.program, { sourceFile: second.index });
@@ -131,15 +134,16 @@ test("awaited queries reject foreign types and admit only the actual same-progra
   const secondType = typeOf(secondQueries, second.index);
   const unrelatedType = typeOf(unrelatedQueries, unrelated.index);
   assert.equal(firstType !== undefined && firstQueries.getAwaitedType(firstType) === firstType, true, "the real source program owns its primitive type");
-  assert.equal(secondType !== undefined && firstQueries.getAwaitedType(secondType) === undefined, true,
+  assert.equal(unrelatedType !== undefined && firstQueries.getAwaitedType(unrelatedType) === undefined, true,
     "a foreign type carrying its own checker is refused before that checker runs");
   const invalidContext = createTypeCheckerQueries(first.program, { sourceFile: second.index });
   assert.equal(invalidContext.getAwaitedType(firstType) === undefined, true, "a foreign consumer context cannot accept an otherwise local type");
-  attachExtensionHost(first.program!);
-  attachExtensionHostToProgram(first.program!, second.program!, { bindCompilerProgram: false });
-  attachExtensionHost(unrelated.program!);
   assert.equal(getExtensionHost(first.program!) === getExtensionHost(second.program!), true, "the existing extension API proves a shared actual host");
   assert.equal(getExtensionHost(first.program!) !== getExtensionHost(unrelated.program!), true, "another extension host is not the same owner");
+  assert.equal(firstType?.checker !== undefined && secondType?.checker !== undefined &&
+    getExtensionHost(firstType.checker.program) !== undefined &&
+    getExtensionHost(firstType.checker.program) === getExtensionHost(secondType.checker.program), true,
+    "the real checker adapters inherited the same host during canonical checker construction");
   assert.equal(firstQueries.getAwaitedType(secondType) === secondType, true, "a checked type from the same actual extension host retains its own checker and identity");
   assert.equal(firstQueries.getAwaitedType(unrelatedType) === undefined, true, "an unrelated attached extension host remains foreign");
   assert.equal(secondQueries.getAwaitedType(firstType) === firstType, true, "the actual shared-host contract is symmetric");

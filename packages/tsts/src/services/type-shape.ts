@@ -4,6 +4,7 @@ import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { SourceFile_FileName } from "../internal/ast/ast.js";
 import { GetSourceFileOfNode, IsFunctionLike } from "../internal/ast/utilities.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import {
@@ -11,7 +12,8 @@ import {
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
+import { getExtensionHost } from "../extensions/host.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import {
@@ -30,6 +32,7 @@ import {
 } from "../internal/checker/exports.js";
 import {
   Checker_getTypeOfSymbol,
+  Checker_getInstantiatedBaseTypes,
 } from "../internal/checker/checker/symbols.js";
 import { Checker_getBaseTypeOfLiteralType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
@@ -178,6 +181,7 @@ export interface TypeShapeQueries {
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
+  readonly getInstantiatedBaseTypes: (type: GoPtr<Type>) => readonly Type[] | undefined;
   readonly getSubstitutionBaseType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTupleElementTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTupleElementInfos: (type: GoPtr<Type>) => readonly TypeTupleElementInfo[];
@@ -278,6 +282,26 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       hasFlags(type, TypeFlagsObject) && type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0
         ? Checker_GetTypeArguments(checker, type)
         : []) ?? [],
+    getInstantiatedBaseTypes(type) {
+      const owner = type?.checker;
+      if (owner === undefined ||
+        Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
+      return withCheckerForSourceFile(program, defaultOptions.sourceFile, defaultOptions, checker => {
+        if (checker === undefined) return undefined;
+        if (checker !== owner && checker.program !== owner.program) {
+          const host = getExtensionHost(checker.program);
+          if (host === undefined || host !== getExtensionHost(owner.program)) return undefined;
+        }
+        const bases = Checker_getInstantiatedBaseTypes(owner, type);
+        if (bases === undefined) return undefined;
+        const selected: Type[] = [];
+        for (const base of bases) {
+          if (base === undefined || base === owner.errorType) return undefined;
+          selected.push(base);
+        }
+        return Object.freeze(selected);
+      });
+    },
     getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
       if (type === undefined || checker === undefined || !hasFlags(type, TypeFlagsObject)) return undefined;
       const target = Type_Target(type) ?? type;
