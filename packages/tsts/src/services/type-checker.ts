@@ -3,7 +3,7 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
-import { Node_Symbol, Node_Text } from "../internal/ast/ast.js";
+import { Node_Symbol, Node_Text, SourceFile_FileName, SourceFile_Path } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
@@ -44,7 +44,8 @@ import {
   SkipOuterExpressions,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
   Checker_GetPropertyOfType,
@@ -82,6 +83,7 @@ import type {
 } from "../internal/checker/checker/symbols.js";
 import {
   Checker_getApparentTypeOfContextualType,
+  Checker_getAwaitedType,
   Checker_getContextualType,
   Checker_GetTypeAtLocation,
 } from "../internal/checker/checker/types.js";
@@ -189,6 +191,9 @@ export interface ResolvedSourceStorageInfo {
 }
 
 export interface TypeCheckerQueries {
+  readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
+  readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
+  readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
@@ -257,6 +262,32 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
   const resourceManagementInfos = new WeakMap<Node, ResolvedSourceResourceManagementInfo>();
   const queries: TypeCheckerQueries = {
+    getGlobalValueSymbol(name) {
+      if (Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
+      return withChecker(program, defaultOptions.sourceFile, defaultOptions, checker => {
+        const symbol = checker?.globals.get(name);
+        return symbol !== undefined && (symbol.Flags & SymbolFlagsValue) !== 0 ? symbol : undefined;
+      });
+    },
+    isDefaultLibraryDeclaration(node) {
+      if (Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return false;
+      const file = GetSourceFileOfNode(node);
+      return file !== undefined && Program_GetSourceFile(program, SourceFile_FileName(file)) === file &&
+        Program_IsSourceFileDefaultLibrary(program, SourceFile_Path(file));
+    },
+    getAwaitedType(type) {
+      if (type?.checker === undefined ||
+        Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
+      const owner = type.checker;
+      return withChecker(program, defaultOptions.sourceFile, defaultOptions, checker => {
+        if (checker === undefined) return undefined;
+        if (checker !== owner && checker.program !== owner.program) {
+          const extensionHost = getExtensionHost(checker.program);
+          if (extensionHost === undefined || extensionHost !== getExtensionHost(owner.program)) return undefined;
+        }
+        return Checker_getAwaitedType(owner, type);
+      });
+    },
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
     getTypeFromTypeNode: (node) =>
