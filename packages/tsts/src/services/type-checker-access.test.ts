@@ -1,17 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
+import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
 import {
   KindClassDeclaration,
+  KindCallExpression,
   KindComputedPropertyName,
   KindElementAccessExpression,
   KindForOfStatement,
+  KindFunctionDeclaration,
   KindGetAccessor,
   KindMethodDeclaration,
   KindPropertyAssignment,
   KindPropertyAccessExpression,
   KindSetAccessor,
+  KindTypeAliasDeclaration,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
@@ -22,6 +26,124 @@ import {
   findNodesByKind,
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
+
+test("global value lookup retains actual library and alias signature identity through local shadows", () => {
+  const { program, index } = createProgram(`
+    const direct = String(1);
+    const convert = String;
+    const indirect = convert(2);
+    function local(String: (value: number) => string): string { return String(3); }
+    export {};
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const globalString = queries.getGlobalValueSymbol("String");
+  assert.equal(globalString !== undefined, true, "the completed configured library has a global String value");
+  assert.equal(queries.getGlobalValueSymbol("String") === globalString, true, "repeat lookup is the identical checked symbol, not a synthetic symbol store");
+  const calls = findNodesByKind(index, KindCallExpression);
+  assert.equal(calls.length, 3, "direct, aliased and actual local-shadow calls");
+  const callDeclarations = calls.map(call => queries.getSignatureDeclaration(queries.getResolvedCallInfo(call)?.selectedSignature));
+  const globalType = queries.getTypeOfSymbol(globalString);
+  const declarations = queries.getCallSignaturesOfType(globalType).map(signature => queries.getSignatureDeclaration(signature));
+  assert.equal(callDeclarations[0] !== undefined && declarations.includes(callDeclarations[0]), true, "direct String uses the actual global call signature");
+  assert.equal(callDeclarations[1] === callDeclarations[0], true, "a real alias preserves the selected library declaration");
+  assert.equal(callDeclarations[2] !== undefined && !declarations.includes(callDeclarations[2]), true, "a local String parameter is not the global constructor by spelling");
+  assert.equal(queries.isDefaultLibraryDeclaration(callDeclarations[0]), true, "the actual configured library owns the selected String signature");
+  assert.equal(queries.isDefaultLibraryDeclaration(callDeclarations[2]), false, "a real local shadow is not a default-library declaration");
+  assert.equal(queries.isDefaultLibraryDeclaration(undefined), false, "absence has no manufactured library origin");
+  const foreign = createProgram("const value = String(1);", { noLib: false });
+  assertCleanSemanticDiagnostics(foreign.program, foreign.index);
+  const foreignQueries = createTypeCheckerQueries(foreign.program, { sourceFile: foreign.index });
+  const foreignCall = findNodesByKind(foreign.index, KindCallExpression)[0];
+  const foreignDeclaration = foreignQueries.getSignatureDeclaration(foreignQueries.getResolvedCallInfo(foreignCall)?.selectedSignature);
+  assert.equal(foreignQueries.isDefaultLibraryDeclaration(foreignDeclaration), true, "the foreign program owns its genuine library declaration");
+  assert.equal(queries.isDefaultLibraryDeclaration(foreignDeclaration), false, "the same library filename never admits a foreign declaration identity");
+  assert.equal(queries.getGlobalValueSymbol("__P01_unknown_global__") === undefined, true, "unknown global value remains absent");
+});
+
+test("global value lookup distinguishes native user globals, module declarations and foreign source identity", () => {
+  for (const initializer of [
+    'function String(value: number): string { return "custom"; }',
+    'var String = (value: number): string => "custom";',
+  ]) {
+    const { program, index } = createProgram(`${initializer}\ninterface OnlyType { readonly value: number; }`);
+    assertCleanSemanticDiagnostics(program, index);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const declarations = findNodesByKind(index, KindFunctionDeclaration).concat(findNodesByKind(index, KindVariableDeclaration));
+    const declaration = declarations.find(node => Node_Text(Node_Name(node)) === "String");
+    assert.equal(declaration !== undefined, true, "the actual native user global declaration exists");
+    assert.equal(queries.getGlobalValueSymbol("String") === queries.getSymbolAtLocation(Node_Name(declaration)), true,
+      "a real native user global is returned as its actual symbol, not labelled as a builtin");
+    assert.equal(queries.isDefaultLibraryDeclaration(declaration), false, "native user globals never acquire a default-library origin");
+    assert.equal(queries.getGlobalValueSymbol("OnlyType") === undefined, true, "a type-only global is not manufactured into a value");
+    const foreign = createProgram(initializer);
+    const foreignQueries = createTypeCheckerQueries(program, { sourceFile: foreign.index });
+    assert.equal(foreignQueries.getGlobalValueSymbol("String") === undefined, true,
+      "a foreign checked source file is refused even when its filename matches");
+    assert.equal(foreignQueries.isDefaultLibraryDeclaration(declaration), false, "a foreign consumer context cannot query library ownership");
+  }
+  const { program, index } = createProgram('function String(value: number): string { return "custom"; } export {};');
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  assert.equal(queries.getGlobalValueSymbol("String") === undefined, true, "a module-local declaration is not a global");
+});
+
+test("awaited queries use the existing checked Promise and thenable semantics without type-name inference", () => {
+  const { program, index } = createProgram(`
+    type Primitive = number;
+    type Nested = Promise<Promise<number>>;
+    type Thenable = { then(resolve: (value: string) => unknown): unknown };
+    type Optional = Promise<number> | undefined;
+    export {};
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
+  for (const [position, expected] of ["number", "number", "string", "number | undefined"].entries()) {
+    const type = queries.getTypeFromTypeNode(Node_Type(aliases[position]));
+    assert.equal(type !== undefined, true, `awaited input ${position} is an actual checked type`);
+    const awaited = queries.getAwaitedType(type);
+    assert.equal(queries.typeToString(awaited), expected, `awaited input ${position} uses the checker result`);
+    assert.equal(queries.getAwaitedType(type) === awaited, true, `awaited input ${position} retains exact checker result identity`);
+    if (position === 0) assert.equal(awaited === type, true, "an ordinary value remains its identical native type");
+  }
+  assert.equal(queries.getAwaitedType(undefined) === undefined, true, "an absent type has no invented awaited value");
+  const shadow = createProgram("class Promise<Value> { value!: Value; } type Ordinary = Promise<number>; export {};");
+  assertCleanSemanticDiagnostics(shadow.program, shadow.index);
+  const shadowQueries = createTypeCheckerQueries(shadow.program, { sourceFile: shadow.index });
+  const shadowAlias = findNodesByKind(shadow.index, KindTypeAliasDeclaration)[0];
+  const shadowType = shadowQueries.getTypeFromTypeNode(Node_Type(shadowAlias));
+  assert.equal(shadowType !== undefined && shadowQueries.getAwaitedType(shadowType) === shadowType, true,
+    "a user class called Promise is not unwrapped by its name");
+});
+
+test("awaited queries reject foreign types and admit only the actual same-program or shared extension host", () => {
+  const first = createProgram("type Value = number;");
+  const second = createProgram("type Value = number;");
+  const unrelated = createProgram("type Value = number;");
+  for (const checked of [first, second, unrelated]) assertCleanSemanticDiagnostics(checked.program, checked.index);
+  const firstQueries = createTypeCheckerQueries(first.program, { sourceFile: first.index });
+  const secondQueries = createTypeCheckerQueries(second.program, { sourceFile: second.index });
+  const unrelatedQueries = createTypeCheckerQueries(unrelated.program, { sourceFile: unrelated.index });
+  const typeOf = (queries: typeof firstQueries, index: typeof first.index) =>
+    queries.getTypeFromTypeNode(Node_Type(findNodesByKind(index, KindTypeAliasDeclaration)[0]));
+  const firstType = typeOf(firstQueries, first.index);
+  const secondType = typeOf(secondQueries, second.index);
+  const unrelatedType = typeOf(unrelatedQueries, unrelated.index);
+  assert.equal(firstType !== undefined && firstQueries.getAwaitedType(firstType) === firstType, true, "the real source program owns its primitive type");
+  assert.equal(secondType !== undefined && firstQueries.getAwaitedType(secondType) === undefined, true,
+    "a foreign type carrying its own checker is refused before that checker runs");
+  const invalidContext = createTypeCheckerQueries(first.program, { sourceFile: second.index });
+  assert.equal(invalidContext.getAwaitedType(firstType) === undefined, true, "a foreign consumer context cannot accept an otherwise local type");
+  attachExtensionHost(first.program!);
+  attachExtensionHostToProgram(first.program!, second.program!, { bindCompilerProgram: false });
+  attachExtensionHost(unrelated.program!);
+  assert.equal(getExtensionHost(first.program!) === getExtensionHost(second.program!), true, "the existing extension API proves a shared actual host");
+  assert.equal(getExtensionHost(first.program!) !== getExtensionHost(unrelated.program!), true, "another extension host is not the same owner");
+  assert.equal(firstQueries.getAwaitedType(secondType) === secondType, true, "a checked type from the same actual extension host retains its own checker and identity");
+  assert.equal(firstQueries.getAwaitedType(unrelatedType) === undefined, true, "an unrelated attached extension host remains foreign");
+  assert.equal(secondQueries.getAwaitedType(firstType) === firstType, true, "the actual shared-host contract is symmetric");
+});
 
 test("effective property names expose one checked string, numeric or unique-symbol identity", () => {
   const { program, index } = createProgram(`
