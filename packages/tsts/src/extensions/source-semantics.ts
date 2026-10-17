@@ -29,7 +29,6 @@ import {
   KindNamedImports,
   KindNamedExports,
   KindNamespaceImport,
-  KindNumericLiteral,
   KindObjectLiteralExpression,
   KindPropertyAccessExpression,
   KindPropertyAssignment,
@@ -641,7 +640,7 @@ function recordSourceSemanticsCallMarker(
       if (!hasMarkerArgumentCount(callExpression, 0) || !hasMarkerTypeArgumentCount(callExpression, 1)) {
         return;
       }
-      recordFieldMarker(facts, callExpression, evidence);
+      recordFieldMarker(facts, checker, callExpression, evidence);
       return;
     case "struct":
       if (!hasMarkerArgumentCount(callExpression, 1)) {
@@ -1081,6 +1080,7 @@ function getArgumentPassingMode(kind: ArgumentPassingMarkerKind): ArgumentPassin
 
 function recordFieldMarker(
   facts: SourceSemanticsFactAccess,
+  checker: TypeCheckerQueries,
   callExpression: Node,
   evidence: readonly ExtensionEvidence[],
 ): void {
@@ -1098,12 +1098,12 @@ function recordFieldMarker(
     return;
   }
   const nameNode = Node_Name(fieldOwner) ?? Node_PropertyName(fieldOwner);
-  const name = getStaticSourceSemanticsNameText(nameNode);
-  if (name === undefined) {
+  const selected = checker.getEffectivePropertyName(nameNode);
+  if (selected === undefined || selected.kind === "unique-symbol") {
     return;
   }
   const fact = {
-    name,
+    name: selected.name,
     type: fieldType,
   } satisfies FieldFact;
   facts.set(callExpression, fieldFactKey, fact, evidence);
@@ -1762,17 +1762,6 @@ function createSourcePrimitiveSelection(
     moduleSpecifier: moduleIdentity.moduleSpecifier,
     exportName,
   };
-}
-
-function getStaticSourceSemanticsNameText(node: GoPtr<Node>): string | undefined {
-  switch (node?.Kind) {
-    case KindIdentifier:
-    case KindStringLiteral:
-    case KindNumericLiteral:
-      return Node_Text(node);
-    default:
-      return undefined;
-  }
 }
 
 function visitSourceSemanticsNode(node: GoPtr<Node>, visit: (node: GoPtr<Node>) => void): void {

@@ -9,9 +9,59 @@ import {
 } from "../index.js";
 import {
   findNodes,
+  sourceProviderExtension,
   testCoreDeclarations,
   testNoLibCompilerOptions,
+  testProviderModel,
 } from "../extensions/source-provider-test-support.js";
+
+test("checked raw program membership retains excluded canonical native owners and refuses foreign identities", () => {
+  const specifier = "@test/raw-program-owner.js";
+  const model = testProviderModel(specifier, "Test.RawProgramOwner", [{ id: "Native", name: "Native", kind: "class",
+    members: [{ id: "Native::field", name: "field", kind: "property", type: { kind: "number" } }] }]);
+  const create = () => createCompilerSessionFromFiles({ currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: { "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `import type { Native } from "${specifier}"; export declare const value: Native;` },
+    compilerOptions: testNoLibCompilerOptions,
+    extensionHostOptions: { extensions: [sourceProviderExtension(new Map([[specifier, model]]))] },
+  }).checkSource();
+  const checked = create();
+  assert.equal(checked.diagnostics.length, 0, "the actual native provider program checks");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the provider model is admitted");
+  const index = checked.getSourceFile("/src/index.ts")!;
+  const core = checked.getSourceFile("/src/core.d.ts")!;
+  const queries = checked.getSourceFileQueries(index);
+  const variable = findNodes(index, checked.ast.children, checked.ast.is.IsVariableDeclaration)[0];
+  const type = queries.checker.getTypeFromTypeNode(checked.ast.typeNode(variable));
+  const symbol = queries.checker.getTypeSymbol(type);
+  const declaration = queries.checker.getPrimarySymbolDeclaration(symbol);
+  const nativeFile = checked.ast.getSourceFile(declaration);
+  assert.equal(nativeFile !== undefined, true, "the real checked native type retains its canonical owner file");
+  assert.equal(checked.sourceFiles.includes(nativeFile), false, "the canonical owner is excluded from public source traversal");
+  assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
+    "filtered source lookup does not expose the canonical native owner");
+  assert.throws(() => checked.getSourceFileQueries(nativeFile), /included source file/u,
+    "the excluded native owner cannot be used as an included consumer query context");
+  for (const [label, file] of [["source", index], ["library", core], ["excluded native owner", nativeFile]] as const) {
+    assert.equal(checked.containsSourceFile(file), true, `${label} retains actual raw program identity`);
+    assert.equal(checked.containsSourceFile(file), true, `${label} membership is a stable identity read`);
+  }
+  assert.equal(queries.checker.getSymbolAtLocation(checked.ast.name(declaration)) === symbol, true,
+    "the actual included consumer checker resolves the native declaration without a guessed context");
+  const foreign = create();
+  const foreignIndex = foreign.getSourceFile("/src/index.ts")!;
+  const foreignChecker = foreign.getSourceFileQueries(foreignIndex).checker;
+  const foreignVariable = findNodes(foreignIndex, foreign.ast.children, foreign.ast.is.IsVariableDeclaration)[0];
+  const foreignType = foreignChecker.getTypeFromTypeNode(foreign.ast.typeNode(foreignVariable));
+  const foreignFile = foreign.ast.getSourceFile(foreignChecker.getPrimarySymbolDeclaration(foreignChecker.getTypeSymbol(foreignType)));
+  assert.equal(foreignFile !== undefined, true, "a second checked program has an actual same-spelled owner file");
+  assert.equal(foreign.ast.getFileName(foreignFile), checked.ast.getFileName(nativeFile), "the canonical owner URI is deliberately identical across programs");
+  assert.equal(foreign.containsSourceFile(foreignFile), true, "the other program owns its own exact file");
+  assert.equal(checked.containsSourceFile(foreignFile), false, "matching file names never admit another program's AST");
+  assert.equal(checked.containsSourceFile(foreignIndex), false, "foreign ordinary source identities are also refused");
+  assert.equal(checked.containsSourceFile(undefined), false, "absence is not program membership");
+});
 
 test("checked source program exposes one exact AST and direct checker decision surface", () => {
   const session = createCompilerSessionFromFiles({

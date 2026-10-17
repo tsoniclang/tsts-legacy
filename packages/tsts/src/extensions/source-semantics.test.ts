@@ -1131,6 +1131,34 @@ test("source-semantics records field markers only for exact class and object fie
   );
 });
 
+test("source-semantics field facts use checked computed names and exclude unique-symbol fields", () => {
+  const { extended, program, index } = createProgram(`
+    import type { int } from "@example/native/types.js";
+    import { field, struct } from "@example/native/lang.js";
+    const key = "constant";
+    declare const unique: unique symbol;
+    class Holder { ["class-field"] = field<int>(); }
+    const Shape = struct({ ["literal"]: field<int>(), [key]: field<int>(), [-0]: field<int>(), [unique]: field<int>() });
+  `);
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+  for (const [position, name] of ["class-field", "literal", "constant", "0"].entries()) {
+    const call = getCallExpression(index, "field", position);
+    const field = extended.extensionHost.facts.get(call, fieldFactKey);
+    assert.equal(field?.name, name, `field ${position} consumes the canonical checked name`);
+    const owner = extended.extensionHost.facts.get(call?.Parent, fieldFactKey);
+    assert.equal(owner?.name, name, `field ${position} owner preserves the same checked name`);
+    assert.equal(owner?.type === field?.type, true, `field ${position} owner preserves exact field type-node identity`);
+    assert.equal(field !== undefined && owner !== undefined && Object.isFrozen(field) && Object.isFrozen(owner), true,
+      `field ${position} facts are independent immutable boundary snapshots`);
+  }
+  const symbolCall = getCallExpression(index, "field", 4);
+  assert.equal(extended.extensionHost.facts.get(symbolCall, fieldFactKey) === undefined, true, "a unique symbol is never a string/numeric FieldFact");
+  assert.equal(extended.extensionHost.facts.get(symbolCall?.Parent, fieldFactKey) === undefined, true, "the symbol owner gets no invented field fact");
+  const fields = extended.extensionHost.facts.get(getCallExpression(index, "struct", 0), structFactKey)?.fields;
+  assert.deepEqual(fields?.map(field => field.name), ["literal", "constant", "0"]);
+});
+
 test("source-semantics attribute targets preserve authored type queries without text access on type nodes", () => {
   const { extended, program, index } = createProgram(`
     import { attribute } from "@example/native/lang.js";

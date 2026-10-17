@@ -26,6 +26,7 @@ export interface SourceFileQueries {
 
 export interface SourceProgramQueries {
   readonly ast: AstReader;
+  readonly containsSourceFile: (sourceFile: GoPtr<SourceFile>) => boolean;
   readonly getSourceFiles: () => readonly GoPtr<SourceFile>[];
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
@@ -57,6 +58,8 @@ export function createSourceProgramQueries(
   const sourceFileQueries = new WeakMap<SourceFile, SourceFileQueries>();
   const moduleSourceFiles = new WeakMap<Node, SourceFile | null>();
   const included = (sourceFile: SourceFile): boolean => options.includeSourceFile?.(sourceFile) !== false;
+  const containsSourceFile = (sourceFile: GoPtr<SourceFile>): boolean =>
+    sourceFile !== undefined && Program_GetSourceFile(program, ast.getFileName(sourceFile)) === sourceFile;
   const getSourceFiles = (): readonly GoPtr<SourceFile>[] =>
     (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
       sourceFile !== undefined && included(sourceFile));
@@ -126,6 +129,7 @@ export function createSourceProgramQueries(
   };
   return Object.freeze({
     ast,
+    containsSourceFile,
     getSourceFiles,
     getSourceFile,
     getSourceFileQueries,
