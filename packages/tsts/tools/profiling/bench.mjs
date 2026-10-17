@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "../../../..");
-const tstsCli = join(repoRoot, "packages/tsts/dist/src/cli/index.js");
+const tstsCli = fileURLToPath(new URL("../../dist/src/cli/index.js", import.meta.url));
 const tsgoBin = process.env.TSGO_BIN || "/tmp/tsgo";
 const tscBin = process.env.TSC_BIN || join(repoRoot, "node_modules/.bin/tsc");
 
@@ -185,9 +185,9 @@ function main() {
       const cpuName = `${p.name}.cpuprofile`;
       const heapName = `${p.name}.heapprofile`;
       const cpu = join(profDir, cpuName);
-      spawnSync("node", ["--cpu-prof", `--cpu-prof-dir=${profDir}`, `--cpu-prof-name=${cpuName}`, tstsCli, ...p.args], { cwd: p.cwd, stdio: "ignore", maxBuffer: 256 * 1024 * 1024 });
-      spawnSync("node", ["--heap-prof", `--heap-prof-dir=${profDir}`, `--heap-prof-name=${heapName}`, tstsCli, ...p.args], { cwd: p.cwd, stdio: "ignore", maxBuffer: 256 * 1024 * 1024 });
-      const r = spawnSync("node", [join(here, "attribute.mjs"), "--cpu", cpu, "--heap", join(profDir, heapName), "--label", `TSTS ${p.name}`, "--top", "8"], { encoding: "utf8" });
+      spawnSync("node", ["--cpu-prof", "--cpu-prof-dir", profDir, "--cpu-prof-name", cpuName, tstsCli, ...p.args], { cwd: p.cwd, stdio: "ignore", maxBuffer: 256 * 1024 * 1024 });
+      spawnSync("node", ["--heap-prof", "--heap-prof-dir", profDir, "--heap-prof-name", heapName, tstsCli, ...p.args], { cwd: p.cwd, stdio: "ignore", maxBuffer: 256 * 1024 * 1024 });
+      const r = spawnSync("node", [fileURLToPath(new URL("./attribute.mjs", import.meta.url)), "--cpu", cpu, "--heap", join(profDir, heapName), "--label", `TSTS ${p.name}`, "--top", "8"], { encoding: "utf8" });
       console.log(r.stdout || r.stderr || "");
     }
   }
