@@ -13159,14 +13159,38 @@ export function Checker_resolveClassOrInterfaceMembers(receiver: GoPtr<Checker>,
  * }
  */
 export function Checker_resolveTypeReferenceMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>): void {
-  const source = Type_Target(t);
-  const typeParameters = Type_AsInterfaceType(source)!.allTypeParameters;
-  const typeArguments = Checker_getTypeArguments(receiver, t);
-  let paddedTypeArguments = typeArguments;
-  if (typeArguments.length === typeParameters.length - 1) {
-    paddedTypeArguments = [...typeArguments, t] as GoSlice<GoPtr<Type>>;
-  }
+  const [source, typeParameters, paddedTypeArguments] = referenceMemberArguments(receiver, t);
   Checker_resolveObjectTypeMembers(receiver, t, source, typeParameters, paddedTypeArguments);
+}
+
+function referenceMemberArguments(receiver: GoPtr<Checker>, type: GoPtr<Type>): [GoPtr<Type>, GoSlice<GoPtr<Type>>, GoSlice<GoPtr<Type>>] {
+  const source = Type_Target(type);
+  const parameters = Type_AsInterfaceType(source)!.allTypeParameters;
+  const arguments_ = Checker_getTypeArguments(receiver, type);
+  return [source, parameters, arguments_.length === parameters.length - 1 ? [...arguments_, type] : arguments_];
+}
+
+function objectMemberMapper(parameters: GoSlice<GoPtr<Type>>, arguments_: GoSlice<GoPtr<Type>>): GoPtr<TypeMapper> {
+  return parameters.length === arguments_.length && parameters.every((parameter, index) => parameter === arguments_[index])
+    ? undefined : newTypeMapper(parameters, arguments_);
+}
+
+function instantiateObjectBaseType(receiver: GoPtr<Checker>, base: GoPtr<Type>, mapper: GoPtr<TypeMapper>, arguments_: GoSlice<GoPtr<Type>>): GoPtr<Type> {
+  const thisArgument = LastOrNil(arguments_);
+  return thisArgument === undefined ? base
+    : Checker_getTypeWithThisArgument(receiver, Checker_instantiateType(receiver, base, mapper), thisArgument, false);
+}
+
+export function Checker_getInstantiatedBaseTypes(receiver: GoPtr<Checker>, type: GoPtr<Type>): GoSlice<GoPtr<Type>> | undefined {
+  if (receiver === undefined || type === undefined || (type.flags & TypeFlagsObject) === 0) return undefined;
+  const source = (type.objectFlags & ObjectFlagsReference) !== 0 ? Type_Target(type) : type;
+  if (source === undefined || (source.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
+  let target: GoPtr<Type> = source;
+  let parameters: GoSlice<GoPtr<Type>> = [];
+  let arguments_: GoSlice<GoPtr<Type>> = [];
+  if ((type.objectFlags & ObjectFlagsReference) !== 0) [target, parameters, arguments_] = referenceMemberArguments(receiver, type);
+  const mapper = objectMemberMapper(parameters, arguments_);
+  return Checker_getBaseTypes(receiver, target).map(base => instantiateObjectBaseType(receiver, base, mapper, arguments_));
 }
 
 /**
@@ -13226,22 +13250,18 @@ export function Checker_resolveTypeReferenceMembers(receiver: GoPtr<Checker>, t:
  * }
  */
 export function Checker_resolveObjectTypeMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>, source: GoPtr<Type>, typeParameters: GoSlice<GoPtr<Type>>, typeArguments: GoSlice<GoPtr<Type>>): void {
-  let mapper: GoPtr<TypeMapper>;
   let members: SymbolTable;
   let callSignatures: GoSlice<GoPtr<Signature>>;
   let constructSignatures: GoSlice<GoPtr<Signature>>;
   let indexInfos: GoSlice<GoPtr<IndexInfo>> = [];
-  let instantiated = false;
   const resolved = Checker_resolveDeclaredMembers(receiver, source);
-  const sameTypeArguments = typeParameters.length === typeArguments.length && typeParameters.every((typeParameter, index) => typeParameter === typeArguments[index]);
-  if (sameTypeArguments) {
+  const mapper = objectMemberMapper(typeParameters, typeArguments);
+  if (mapper === undefined) {
     members = resolved!.declaredMembers;
     callSignatures = resolved!.declaredCallSignatures ?? [];
     constructSignatures = resolved!.declaredConstructSignatures ?? [];
     indexInfos = resolved!.declaredIndexInfos ?? [];
   } else {
-    instantiated = true;
-    mapper = newTypeMapper(typeParameters, typeArguments);
     members = Checker_instantiateSymbolTable(receiver, resolved!.declaredMembers, mapper, typeParameters.length === 1);
     callSignatures = Checker_instantiateSignatures(receiver, resolved!.declaredCallSignatures ?? [], mapper);
     constructSignatures = Checker_instantiateSignatures(receiver, resolved!.declaredConstructSignatures ?? [], mapper);
@@ -13249,17 +13269,13 @@ export function Checker_resolveObjectTypeMembers(receiver: GoPtr<Checker>, t: Go
   }
   const baseTypes = Checker_getBaseTypes(receiver, source);
   if (baseTypes.length !== 0) {
-    if (!instantiated) {
+    if (mapper === undefined) {
       members = MapClone(members) ?? new globalThis.Map<string, GoPtr<Symbol>>();
     }
     Checker_setStructuredTypeMembers(receiver, t, members, callSignatures, constructSignatures, indexInfos);
-    const thisArgument = LastOrNil(typeArguments);
     t!.objectFlags |= ObjectFlagsUnresolvedMembers;
     for (const baseType of baseTypes) {
-      let instantiatedBaseType = baseType;
-      if (thisArgument !== undefined) {
-        instantiatedBaseType = Checker_getTypeWithThisArgument(receiver, Checker_instantiateType(receiver, baseType, mapper), thisArgument, false);
-      }
+      const instantiatedBaseType = instantiateObjectBaseType(receiver, baseType, mapper, typeArguments);
       members = Checker_addInheritedMembers(receiver, members, Checker_getPropertiesOfType(receiver, instantiatedBaseType));
       callSignatures = [...callSignatures, ...Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindCall)];
       constructSignatures = [...constructSignatures, ...Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindConstruct)];
