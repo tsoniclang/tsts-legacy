@@ -196,7 +196,7 @@ export interface TypeCheckerQueries {
   readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
   readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
   readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
-  readonly getIterationElementType: (expression: GoPtr<Node>) => GoPtr<Type>;
+  readonly getIterationElementType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
@@ -255,7 +255,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
-  const iterationElementTypes = new WeakMap<Node, Type>();
+  const iterationElementTypes = new WeakMap<Type, Type>();
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
   const objectLiteralElementSymbols = new WeakMap<Type, ReadonlyMap<Node, Symbol>>();
   const storageInfos = new WeakMap<Node, ResolvedSourceStorageInfo>();
@@ -294,17 +294,20 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     },
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
-    getIterationElementType: (node) =>
-      memoizeResolvedNodeQuery(iterationElementTypes, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) => {
-          if (checker === undefined) return undefined;
-          const sourceType = Checker_GetTypeAtLocation(checker, node);
-          if (sourceType === undefined || IsTypeAny(sourceType)) return undefined;
-          const elementType = Checker_getIteratedTypeOrElementType(
-            checker, IterationUseForOf, sourceType, checker.undefinedType, undefined, false,
-          );
-          return elementType === undefined || IsTypeAny(elementType) ? undefined : elementType;
-        })),
+    getIterationElementType(sourceType) {
+      if (sourceType === undefined || IsTypeAny(sourceType)) return undefined;
+      const cached = iterationElementTypes.get(sourceType);
+      if (cached !== undefined) return cached;
+      const elementType = withCheckerForType(program, sourceType, defaultOptions, checker => {
+        if (checker === undefined) return undefined;
+        const elementType = Checker_getIteratedTypeOrElementType(
+          checker, IterationUseForOf, sourceType, checker.undefinedType, undefined, false,
+        );
+        return elementType === undefined || IsTypeAny(elementType) ? undefined : elementType;
+      });
+      if (elementType !== undefined) iterationElementTypes.set(sourceType, elementType);
+      return elementType;
+    },
     getTypeFromTypeNode: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
     getContextualType: (node, contextFlags = ContextFlagsNone) =>

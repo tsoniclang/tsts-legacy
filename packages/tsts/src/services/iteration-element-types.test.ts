@@ -37,7 +37,8 @@ test("iteration element queries retain the checker's protocol types without requ
   ]);
   for (const declaration of declarations) {
     const name = source.ast.text(source.ast.name(declaration));
-    const type = queries.getIterationElementType(declaration);
+    const sourceType = queries.getTypeAtLocation(declaration);
+    const type = queries.getIterationElementType(sourceType);
     const expectedType = expected.get(name);
     if (expectedType === undefined) {
       assert.equal(type === undefined, true, `${name}: an unchecked or non-iterable input stays unresolved`);
@@ -45,9 +46,36 @@ test("iteration element queries retain the checker's protocol types without requ
     }
     assert.equal(type !== undefined, true, `${name}: the actual protocol supplies an element type`);
     assert.equal(queries.typeToString(type), expectedType, `${name}: the element is not guessed from the first type argument`);
-    assert.equal(queries.getIterationElementType(declaration) === type, true, `${name}: repeat queries retain canonical identity`);
+    assert.equal(queries.getIterationElementType(sourceType) === type, true, `${name}: repeat queries retain canonical identity`);
   }
   assert.equal(declarations.length, 8, "all five iterable shapes and three unresolved controls were checked");
   assert.equal(queries.getIterationElementType(undefined) === undefined, true, "absence has no manufactured iteration type");
   assert.equal(session.checkSource().diagnostics.length, 0, "iteration queries add no source diagnostics");
+});
+
+test("iteration contracts use the selected instantiated parameter type rather than a narrower actual argument", () => {
+  const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: { "/src/index.ts": `
+    function consume<Value>(values: Iterable<Value>, sample: Value): void {}
+    const literal = ["key"] as const;
+    consume<string>(literal, "");
+    export {};
+  ` }, compilerOptions: { strict: true, target: "es2022", module: "esnext" } }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "literal elements are valid subtypes of the selected parameter contract");
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.equal(file !== undefined, true, "the checked source file exists");
+  const source = checked.getSourceFileQueries(file!);
+  let visited = 0;
+  const visit = (node: Node): void => {
+    if (source.ast.is.IsCallExpression(node)) {
+      const selected = source.checker.getResolvedCallInfo(node);
+      const binding = selected?.sourceArgumentBindings.find(entry => entry.sourceParameterIndex === 0);
+      assert.equal(binding !== undefined, true, "the actual checked invocation supplies its instantiated parameter binding");
+      const type = source.checker.getIterationElementType(binding?.selectedParameterType);
+      assert.equal(source.checker.typeToString(type), "string", "admission follows Iterable<string>, not the literal key subtype");
+      visited += 1;
+    }
+    source.ast.forEachChild(node, visit);
+  };
+  visit(file!);
+  assert.equal(visited, 1, "the actual generic invocation was inspected");
 });
