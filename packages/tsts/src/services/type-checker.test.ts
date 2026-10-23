@@ -28,6 +28,7 @@ import { TypeFlagsAny, TypeFlagsNumber, TypeFlagsString } from "../internal/chec
 import { Program_GetSemanticDiagnostics, Program_GetSourceFile } from "../internal/compiler/program.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { createCompilerSessionFromFiles } from "./compiler-session.js";
+import { sourceProviderExtension, testCoreDeclarations, testNoLibCompilerOptions, testProviderModel } from "../extensions/source-provider-test-support.js";
 import {
   assertCleanSemanticDiagnostics,
   createProgram,
@@ -116,6 +117,57 @@ test("raw declaration queries retain original source-file ownership across query
   assert.equal(bridge.getPrimarySymbolDeclaration(bridge.getSignatureParameters(transported)[0]) === Node_Parameters(declaration)?.[0], true,
     "cross-file input reads retain the original Parameter node");
   assert.equal(transported?.resolvedReturnType === undefined, true, "transport does not force the owner result");
+  const foreign = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/api.ts": "export function read(value: number) { return value; }",
+    "/src/bridge.ts": "export { read } from './api.js';",
+  }, compilerOptions: { noLib: true, strict: true, module: "esnext", target: "es2022" } });
+  foreign.ensureBound();
+  const foreignFile = Program_GetSourceFile(foreign.program, "/src/api.ts");
+  const foreignDeclaration = findFirstNodeByKind(foreignFile, KindFunctionDeclaration);
+  assert.equal(foreignFile !== undefined && foreignFile !== apiFile, true, "the same file name does not identify the same checked source file");
+  assert.equal(createTypeCheckerQueries(foreign.program, { sourceFile: foreignFile }).getSignatureFromDeclaration(foreignDeclaration) !== undefined, true,
+    "the foreign program owns its own callable definition");
+  assert.equal(bridge.getSignatureFromDeclaration(foreignDeclaration) === undefined, true,
+    "a raw declaration query refuses another program's same-name source file");
+});
+
+test("raw declaration queries admit checked provider owners excluded from traversal and refuse foreign provider identities", () => {
+  const specifier = "@test/raw-callable-owner.js";
+  const model = testProviderModel(specifier, "Test.RawCallableOwner", [{ id: "Native", name: "Native", kind: "class",
+    members: [{ id: "Native::read", name: "read", kind: "method", signatures: [{ id: "Native::read(number)",
+      parameters: [{ name: "value", type: { kind: "number" } }], returnType: { kind: "number" } }] }] }]);
+  const create = () => createCompilerSessionFromFiles({ currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: { "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `import type { Native } from "${specifier}"; declare const value: Native; export const result = value.read(1);` },
+    compilerOptions: testNoLibCompilerOptions,
+    extensionHostOptions: { extensions: [sourceProviderExtension(new Map([[specifier, model]]))] },
+  }).checkSource();
+  const checked = create();
+  assert.equal(checked.diagnostics.length, 0, "the provider callable checks against the exact native declaration");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the actual provider model is admitted");
+  const index = checked.getSourceFile("/src/index.ts");
+  const queries = checked.getSourceFileQueries(index).checker;
+  const call = findFirstNodeByKind(index, KindCallExpression);
+  const declaration = queries.getSignatureDeclaration(queries.getResolvedSignature(call));
+  const owner = checked.ast.getSourceFile(declaration);
+  assert.equal(owner !== undefined && checked.containsSourceFile(owner), true, "the provider declaration is an original node of this checked program");
+  assert.equal(checked.sourceFiles.includes(owner), false, "the canonical provider owner is not an emitted traversal source");
+  const signature = queries.getSignatureFromDeclaration(declaration);
+  assert.equal(signature !== undefined && queries.getSignatureDeclaration(signature) === declaration, true,
+    "the included call-site query retains the excluded provider's original definition");
+  assert.equal(queries.getSignatureParameters(signature).length, 1, "the original native definition retains its value slot");
+  assert.equal(queries.getPrimarySymbolDeclaration(queries.getSignatureParameters(signature)[0]) === Node_Parameters(declaration)?.[0], true,
+    "the provider's actual checked parameter node is retained without parsing or copying");
+  const foreign = create();
+  const foreignIndex = foreign.getSourceFile("/src/index.ts");
+  const foreignQueries = foreign.getSourceFileQueries(foreignIndex).checker;
+  const foreignDeclaration = foreignQueries.getSignatureDeclaration(foreignQueries.getResolvedSignature(findFirstNodeByKind(foreignIndex, KindCallExpression)));
+  const foreignOwner = foreign.ast.getSourceFile(foreignDeclaration);
+  assert.equal(foreignOwner !== undefined && foreign.containsSourceFile(foreignOwner), true, "the other program owns its provider declaration");
+  assert.equal(foreign.ast.getFileName(foreignOwner), checked.ast.getFileName(owner), "the foreign provider deliberately has the same canonical URI");
+  assert.equal(checked.containsSourceFile(foreignOwner), false, "matching provider URIs do not prove program membership");
+  assert.equal(queries.getSignatureFromDeclaration(foreignDeclaration) === undefined, true, "a foreign same-URI provider AST is refused");
 });
 
 test("public type-checker queries expose TS-Go checker facts without emitter re-analysis", () => {
