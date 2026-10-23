@@ -18,7 +18,9 @@ import {
 test("checked raw program membership retains excluded canonical native owners and refuses foreign identities", () => {
   const specifier = "@test/raw-program-owner.js";
   const model = testProviderModel(specifier, "Test.RawProgramOwner", [{ id: "Native", name: "Native", kind: "class",
-    members: [{ id: "Native::field", name: "field", kind: "property", type: { kind: "number" } }] }]);
+    members: [{ id: "Native::field", name: "field", kind: "property", type: { kind: "number" } },
+      { id: "Native::read", name: "read", kind: "method", signatures: [{ id: "Native::read(number)",
+        parameters: [{ name: "value", type: { kind: "number" } }], returnType: { kind: "number" } }] }] }]);
   const create = () => createCompilerSessionFromFiles({ currentDirectory: "/src",
     rootFiles: ["/src/core.d.ts", "/src/index.ts"],
     files: { "/src/core.d.ts": testCoreDeclarations,
@@ -41,8 +43,23 @@ test("checked raw program membership retains excluded canonical native owners an
   assert.equal(checked.sourceFiles.includes(nativeFile), false, "the canonical owner is excluded from public source traversal");
   assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
     "filtered source lookup does not expose the canonical native owner");
-  assert.throws(() => checked.getSourceFileQueries(nativeFile), /included source file/u,
-    "the excluded native owner cannot be used as an included consumer query context");
+  const nativeQueries = checked.getSourceFileQueries(nativeFile);
+  assert.equal(nativeQueries.sourceFile === nativeFile, true, "semantic queries use the actual checked native owner file");
+  assert.equal(checked.getSourceFileQueries(nativeFile) === nativeQueries, true, "the exact native semantic context is cached");
+  assert.equal(nativeQueries.checker.getSymbolAtLocation(checked.ast.name(declaration)) === symbol, true,
+    "the native owner context retains the original bound declaration symbol");
+  const method = findNodes(declaration, checked.ast.children, checked.ast.is.IsMethodDeclaration)[0];
+  assert.ok(method);
+  const signature = nativeQueries.checker.getSignatureFromDeclaration(method);
+  assert.ok(signature);
+  assert.equal(nativeQueries.checker.getSignatureDeclaration(signature) === method, true, "the raw signature retains its native declaration");
+  const parameters = nativeQueries.checker.getSignatureParameters(signature);
+  assert.equal(parameters.length, 1, "the native signature retains its complete checked parameter vector");
+  assert.equal(nativeQueries.checker.getPrimarySymbolDeclaration(parameters[0]) === checked.ast.parameters(method)[0], true,
+    "native parameter symbols retain the original declaration Nodes");
+  assert.equal(checked.getSourceFiles().includes(nativeFile), false, "semantic access never broadens public source traversal");
+  assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
+    "semantic access never broadens filtered source lookup");
   for (const [label, file] of [["source", index], ["library", core], ["excluded native owner", nativeFile]] as const) {
     assert.equal(checked.containsSourceFile(file), true, `${label} retains actual raw program identity`);
     assert.equal(checked.containsSourceFile(file), true, `${label} membership is a stable identity read`);
@@ -61,6 +78,10 @@ test("checked raw program membership retains excluded canonical native owners an
   assert.equal(checked.containsSourceFile(foreignFile), false, "matching file names never admit another program's AST");
   assert.equal(checked.containsSourceFile(foreignIndex), false, "foreign ordinary source identities are also refused");
   assert.equal(checked.containsSourceFile(undefined), false, "absence is not program membership");
+  for (const [label, file] of [["native owner", foreignFile], ["ordinary source", foreignIndex], ["absent source", undefined]] as const) {
+    assert.throws(() => checked.getSourceFileQueries(file), /exact source file/u,
+      `${label}: semantic contexts reject foreign or absent identities even after the local cache is populated`);
+  }
 });
 
 test("checked source program exposes one exact AST and direct checker decision surface", () => {

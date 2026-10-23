@@ -70,8 +70,8 @@ export function createSourceProgramQueries(
       : undefined;
   };
   const getSourceFileQueries = (sourceFile: GoPtr<SourceFile>): SourceFileQueries => {
-    if (sourceFile === undefined || !included(sourceFile)) {
-      throw new Error("Source-file queries require an included source file from the checked program.");
+    if (sourceFile === undefined || !containsSourceFile(sourceFile)) {
+      throw new Error("Source-file queries require an exact source file from the checked program.");
     }
     const existing = sourceFileQueries.get(sourceFile);
     if (existing !== undefined) {
