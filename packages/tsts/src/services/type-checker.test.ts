@@ -3,24 +3,31 @@ import assert from "node:assert/strict";
 import { Background } from "../go/context.js";
 import { Node_Expression, Node_Text } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
-import { Node_Name } from "../internal/ast/spine.js";
+import { Node_Name, Node_Parameters } from "../internal/ast/spine.js";
 import {
   KindArrowFunction,
   KindCallExpression,
+  KindConstructor,
   KindExpressionStatement,
+  KindFunctionDeclaration,
+  KindFunctionExpression,
+  KindFunctionType,
+  KindGetAccessor,
   KindIdentifier,
   KindMethodDeclaration,
   KindMethodSignature,
   KindPropertyAssignment,
   KindPropertySignature,
   KindShorthandPropertyAssignment,
+  KindSetAccessor,
   KindTypeAliasDeclaration,
   KindTypeParameter,
   KindTypeReference,
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsAny, TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
-import { Program_GetSemanticDiagnostics } from "../internal/compiler/program.js";
+import { Program_GetSemanticDiagnostics, Program_GetSourceFile } from "../internal/compiler/program.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
+import { createCompilerSessionFromFiles } from "./compiler-session.js";
 import {
   assertCleanSemanticDiagnostics,
   createProgram,
@@ -29,6 +36,87 @@ import {
   findNodesByKind,
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
+
+for (const [label, source, kind, count] of [
+  ["declaration", "function step(value: number) { return value; }", KindFunctionDeclaration, 1],
+  ["arrow", "const step = (value: number) => value;", KindArrowFunction, 1],
+  ["function expression", "const step = function(value: number) { return value; };", KindFunctionExpression, 1],
+  ["destructuring/default/rest", "function step({ value }: { value: number }, count = 1, ...rest: number[]) { return value + count; }", KindFunctionDeclaration, 3],
+  ["optional", "function step(value?: number) { return value; }", KindFunctionDeclaration, 1],
+  ["empty", "function step() { return 1; }", KindFunctionDeclaration, 0],
+  ["pseudo-this", "function step(this: void, thisValue: number) { return thisValue; }", KindFunctionDeclaration, 1],
+  ["tuple rest", "function step(...values: [number, string]) { return values[0]; }", KindFunctionDeclaration, 1],
+  ["constructor", "class Owner { constructor(value: number) {} }", KindConstructor, 1],
+  ["method", "class Owner { step(value: number) { return value; } }", KindMethodDeclaration, 1],
+  ["method signature", "interface Owner { step(value: number): number; }", KindMethodSignature, 1],
+  ["function type", "type Read = (value: number) => number;", KindFunctionType, 1],
+  ["getter", "class Owner { get value() { return 1; } }", KindGetAccessor, 0],
+  ["setter", "class Owner { set value(value: number) {} }", KindSetAccessor, 1],
+] as const) {
+  test(`raw declaration signatures retain ${label} inputs without resolving the result`, () => {
+    const { program, index } = createProgram(source);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const declaration = findFirstNodeByKind(index, kind);
+    const signature = queries.getSignatureFromDeclaration(declaration);
+    assert.equal(signature !== undefined, true, `${label}: exact checked declaration signature`);
+    assert.equal(queries.getSignatureDeclaration(signature) === declaration, true, `${label}: original declaration owner`);
+    assert.equal(signature?.resolvedReturnType === undefined, true, `${label}: result remains unresolved`);
+    const parameters = queries.getSignatureParameters(signature);
+    const receiver = queries.getPrimarySymbolDeclaration(queries.getSignatureThisParameter(signature));
+    const original = (Node_Parameters(declaration) ?? []).filter(parameter => parameter !== receiver);
+    assert.equal(parameters.length, count, `${label}: original unexpanded value count`);
+    assert.equal(parameters.length === original.length && parameters.every((parameter, position) =>
+      parameter !== undefined && queries.getPrimarySymbolDeclaration(parameter) === original[position]), true,
+    `${label}: original parameter identities and order`);
+    if (label === "pseudo-this") {
+      assert.equal(receiver !== undefined, true, "the actual checked receiver is separated");
+      assert.equal(queries.getSymbolName(parameters[0]), "thisValue", "an ordinary thisValue input is retained");
+    }
+    assert.equal(queries.getSignatureFromDeclaration(declaration) === signature, true, `${label}: canonical cached signature`);
+    assert.equal(signature?.resolvedReturnType === undefined, true, `${label}: repeated input read leaves result unresolved`);
+    assert.equal(queries.getSignatureFromDeclaration(index) === undefined, true, `${label}: noncallable does not invent a signature`);
+    assert.equal(queries.getSignatureFromDeclaration(undefined) === undefined, true, `${label}: absence does not invent an empty signature`);
+  });
+}
+
+test("raw declaration signatures retain implementation inputs separately from a selected public overload", () => {
+  const { program, index } = createProgram(`
+    function read(value: number): number;
+    function read(value: number, delta?: number): number { return value + (delta ?? 0); }
+    read(1);
+  `);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const declaration = findNodesByKind(index, KindFunctionDeclaration).at(-1);
+  const implementation = queries.getSignatureFromDeclaration(declaration);
+  assert.equal(implementation !== undefined && queries.getSignatureDeclaration(implementation) === declaration, true,
+    "the exact implementation, not a public overload, owns the definition signature");
+  assert.equal(queries.getSignatureParameters(implementation).length, 2, "the implementation retains its optional native input");
+  assert.equal(implementation?.resolvedReturnType === undefined, true, "definition enumeration does not infer a result");
+  const selected = queries.getResolvedSignature(findFirstNodeByKind(index, KindCallExpression));
+  assert.equal(selected !== undefined && selected !== implementation, true, "the actual invocation has its separate public selection");
+  assert.equal(queries.getSignatureParameters(selected).length, 1, "the selected overload has its own logical input count");
+});
+
+test("raw declaration queries retain original source-file ownership across query contexts", () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/api.ts": "export function read(value: number) { return value; }",
+    "/src/bridge.ts": "export { read } from './api.js';",
+  }, compilerOptions: { noLib: true, strict: true, module: "esnext", target: "es2022" } });
+  session.ensureBound();
+  const apiFile = Program_GetSourceFile(session.program, "/src/api.ts");
+  const bridgeFile = Program_GetSourceFile(session.program, "/src/bridge.ts");
+  assert.equal(apiFile !== undefined && bridgeFile !== undefined, true, "both original files belong to the same program");
+  const declaration = findFirstNodeByKind(apiFile, KindFunctionDeclaration);
+  const local = createTypeCheckerQueries(session.program, { sourceFile: apiFile });
+  const bridge = createTypeCheckerQueries(session.program, { sourceFile: bridgeFile });
+  const original = local.getSignatureFromDeclaration(declaration);
+  const transported = bridge.getSignatureFromDeclaration(declaration);
+  assert.equal(original !== undefined && transported === original, true, "the authored declaration keeps its canonical signature");
+  assert.equal(bridge.getSignatureDeclaration(transported) === declaration, true, "the requesting file never replaces the authored owner");
+  assert.equal(bridge.getPrimarySymbolDeclaration(bridge.getSignatureParameters(transported)[0]) === Node_Parameters(declaration)?.[0], true,
+    "cross-file input reads retain the original Parameter node");
+  assert.equal(transported?.resolvedReturnType === undefined, true, "transport does not force the owner result");
+});
 
 test("public type-checker queries expose TS-Go checker facts without emitter re-analysis", () => {
   const { program, index } = createProgram(`

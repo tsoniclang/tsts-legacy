@@ -36,6 +36,7 @@ import {
   GetSourceFileOfNode,
   GetContainingFunction,
   IsCallOrNewExpression,
+  IsFunctionLike,
   IsObjectLiteralMethod,
   IsPropertyName,
   IsDynamicName,
@@ -95,6 +96,7 @@ import {
   Checker_GetConstantValue,
   Checker_GetExportsOfModule,
   Checker_GetRootSymbols,
+  Checker_GetSignatureFromDeclaration,
 } from "../internal/checker/services.js";
 import { Checker_TypeToString } from "../internal/checker/printer.js";
 import type {
@@ -207,6 +209,7 @@ export interface TypeCheckerQueries {
   readonly getWriteTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
   readonly getDeclaredTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
   readonly getResolvedSignature: (node: GoPtr<Node>) => GoPtr<Signature>;
+  readonly getSignatureFromDeclaration: (declaration: GoPtr<Node>) => GoPtr<Signature>;
   readonly getResolvedCallInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceCallInfo>;
   readonly getResolvedPropertyAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyAccessInfo>;
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
@@ -349,6 +352,9 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_getDeclaredTypeOfSymbol(checker, symbol)),
     getResolvedSignature: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal)),
+    getSignatureFromDeclaration: declaration => !IsFunctionLike(declaration) ? undefined
+      : withChecker(program, GetSourceFileOfNode(declaration), defaultOptions,
+          checker => Checker_GetSignatureFromDeclaration(checker, declaration)),
     getResolvedCallInfo: (node) =>
       memoizeResolvedNodeQuery(callInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) => {
