@@ -237,6 +237,35 @@ test("public type-checker queries expose TS-Go checker facts without emitter re-
   assertCleanSemanticDiagnostics(program, index);
 });
 
+for (const contextualType of ["unknown", "object", "{}"] as const) {
+  test(`object-literal elements retain original evidence under ${contextualType} without a selected member`, () => {
+    const { program, index } = createProgram(`
+      const value: ${contextualType} = { item: { nested: 1 } };
+    `);
+    assertCleanSemanticDiagnostics(program, index);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const properties = findNodesByKind(index, KindPropertyAssignment);
+    assert.equal(properties.length, 2, "outer and nested properties are actual checked occurrences");
+    for (const [position, property] of properties.entries()) {
+      const info = queries.getResolvedObjectLiteralElementInfo(property);
+      assert.equal(info !== undefined, true, `property ${position} retains its source evidence`);
+      assert.equal(info?.element === property, true, `property ${position} keeps original node identity`);
+      assert.equal(info?.sourceElementSymbol !== undefined, true, `property ${position} has its actual source symbol`);
+      assert.equal(info?.sourceSelectedSymbol === info?.sourceElementSymbol, true,
+        `property ${position} selects its own declaration, not an invented contextual member`);
+      assert.equal(info?.sourceSelectedDeclaration === property, true, `property ${position} keeps its original declaration`);
+      assert.equal(info?.sourceSelectedDeclarations.length, 1, `property ${position} has one exact selected declaration`);
+      assert.equal(info?.sourceSelectedType === queries.getTypeOfSymbol(info?.sourceElementSymbol), true,
+        `property ${position} keeps its selected source symbol type`);
+      assert.equal(queries.getResolvedObjectLiteralElementInfo(property) === info, true,
+        `property ${position} retains its one immutable query result`);
+      assert.equal(Object.isFrozen(info), true, `property ${position} evidence is immutable`);
+    }
+    assert.equal(properties[0] !== undefined && queries.getResolvedObjectLiteralElementInfo(properties[0])?.contextualType !== undefined,
+      true, "the outer contextual type remains present without inventing a contextual property");
+  });
+}
+
 test("resolved object-literal elements retain exact contextual member identity", () => {
   const { program, index } = createProgram(`
     interface Counter {
