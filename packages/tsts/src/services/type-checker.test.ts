@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Background } from "../go/context.js";
-import { Node_Expression, Node_Text } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Parameters, Node_Text } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
-import { Node_Name, Node_Parameters } from "../internal/ast/spine.js";
+import { Node_Name } from "../internal/ast/spine.js";
 import {
   KindArrowFunction,
   KindCallExpression,
