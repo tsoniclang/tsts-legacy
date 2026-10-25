@@ -60,6 +60,7 @@ export type {
   ExtensionHostOptions,
   ExtensionImportKind,
   ExtensionInitializeContext,
+  ProviderExportMaterializationContext,
   FieldFact,
   FlowStateFact,
   FunctionPointerFact,

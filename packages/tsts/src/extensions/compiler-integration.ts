@@ -41,6 +41,7 @@ import type {
 } from "./facts.js";
 import {
   extensionHostRunSourceAnalysis,
+  extensionHostProviderExportMaterialized,
   extensionHostSetFact,
   getExtensionHost,
 } from "./host.js";
@@ -209,7 +210,9 @@ function recordProviderVirtualExportSymbolFacts(
     exportName,
     canonicalSymbolId: getSymbolFactId(symbol),
   }, evidence);
-  extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+  const publication = extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey,
+    getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
+  if (publication === "inserted") extensionHost[extensionHostProviderExportMaterialized](symbol);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(

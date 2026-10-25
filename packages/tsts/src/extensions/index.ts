@@ -74,6 +74,7 @@ export type {
   ProviderCompleteExportRequest,
   ProviderExportDeclaration,
   ProviderExportKind,
+  ProviderExportMaterializationContext,
   ProviderHeritageDeclaration,
   ProviderIdentity,
   ProviderImportDeclaration,

@@ -2,8 +2,6 @@ import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
-import { Type_Symbol } from "../internal/checker/types.js";
-import type { Type } from "../internal/checker/types.js";
 import {
   Node_Arguments,
   Node_Expression,
@@ -96,6 +94,7 @@ import type {
   ExtensionFactReader,
   ExtensionFactResolverContext,
   ExtensionFactSubject,
+  ProviderExportMaterializationContext,
   SourceAnalysisFactAccess,
 } from "./host.js";
 import { defineExtensionFactKey } from "./fact-key.js";
@@ -234,6 +233,9 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
     initialize(context): void {
       context.registerFactResolver(sourcePrimitiveFactKey, (subject, resolverContext) =>
         resolveSourcePrimitiveFact(subject, resolverContext, modules));
+    },
+    providerExportMaterialized(context): void {
+      recordCanonicalProviderTypeMarker(context, modules);
     },
     analyzeSource(context): void {
       const sourceFiles = context.source.getSourceFiles().filter(
@@ -397,7 +399,6 @@ function recordSourceSemanticsFacts(
     extensionId,
     sourceFile,
     checker,
-    modules,
   );
   recordSourceSemanticsTypeReferences(
     facts,
@@ -527,7 +528,6 @@ function recordSourceSemanticsMarkerReferences(
     ) {
       return;
     }
-    recordCanonicalProviderTypeMarker(facts, checker.getTypeAtLocation(node), modules);
     const callMarker = resolveMarkerFromCheckedReference(
       facts,
       checker,
@@ -569,14 +569,12 @@ function recordSourceSemanticsCallMarkers(
   extensionId: string,
   sourceFile: GoPtr<SourceFile>,
   checker: TypeCheckerQueries,
-  modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
   visitSourceSemanticsNodePost(sourceFile, (node) => {
     if (node?.Kind !== KindCallExpression) {
       return;
     }
     const callInfo = checker.getResolvedCallInfo(node);
-    recordCanonicalProviderTypeMarker(facts, callInfo?.sourceResultType, modules);
     const marker = resolveSelectedSourceSemanticsCallMarker(facts, callInfo);
     if (marker === undefined || callInfo === undefined) {
       return;
@@ -586,21 +584,21 @@ function recordSourceSemanticsCallMarkers(
 }
 
 function recordCanonicalProviderTypeMarker(
-  facts: SourceSemanticsFactAccess,
-  type: GoPtr<Type>,
+  context: ProviderExportMaterializationContext,
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
-  if (type === undefined) return;
-  const symbol = Type_Symbol(type);
-  if (symbol === undefined) return;
-  const declaration = facts.get(symbol, providerVirtualDeclarationFactKey);
-  if (declaration?.exportName === undefined) return;
-  const module = modules.find((candidate) => candidate.moduleSpecifier === declaration.moduleSpecifier);
+  const { facts, symbol, declaration } = context;
+  if (declaration.exportName === undefined) return;
+  const module = modules.find(candidate => candidate.moduleSpecifier === declaration.moduleSpecifier);
   const marker = getModuleMarker(module, "type-marker", declaration.exportName);
   if (marker?.kind !== "type-marker") return;
   const evidence = createMarkerEvidence(marker.exportName);
-  facts.set(symbol, selectedSourceMarkerDeclarationFactKey, marker, evidence);
-  facts.set(symbol, sourceMarkerFactKey, { kind: marker.kind, marker: marker.marker }, evidence);
+  const fact: SourceMarkerFact = { kind: marker.kind, marker: marker.marker };
+  for (const subject of [symbol, ...(symbol.Declarations ?? [])]) {
+    if (subject === undefined) continue;
+    facts.set(subject, selectedSourceMarkerDeclarationFactKey, marker, evidence);
+    facts.set(subject, sourceMarkerFactKey, fact, evidence);
+  }
 }
 
 function recordSourceSemanticsCallMarker(
