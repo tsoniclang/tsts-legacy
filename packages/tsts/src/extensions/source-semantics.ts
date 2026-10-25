@@ -2,6 +2,8 @@ import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
+import { Type_Symbol } from "../internal/checker/types.js";
+import type { Type } from "../internal/checker/types.js";
 import {
   Node_Arguments,
   Node_Expression,
@@ -395,6 +397,7 @@ function recordSourceSemanticsFacts(
     extensionId,
     sourceFile,
     checker,
+    modules,
   );
   recordSourceSemanticsTypeReferences(
     facts,
@@ -524,6 +527,7 @@ function recordSourceSemanticsMarkerReferences(
     ) {
       return;
     }
+    recordCanonicalProviderTypeMarker(facts, checker.getTypeAtLocation(node), modules);
     const callMarker = resolveMarkerFromCheckedReference(
       facts,
       checker,
@@ -565,18 +569,38 @@ function recordSourceSemanticsCallMarkers(
   extensionId: string,
   sourceFile: GoPtr<SourceFile>,
   checker: TypeCheckerQueries,
+  modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
   visitSourceSemanticsNodePost(sourceFile, (node) => {
     if (node?.Kind !== KindCallExpression) {
       return;
     }
     const callInfo = checker.getResolvedCallInfo(node);
+    recordCanonicalProviderTypeMarker(facts, callInfo?.sourceResultType, modules);
     const marker = resolveSelectedSourceSemanticsCallMarker(facts, callInfo);
     if (marker === undefined || callInfo === undefined) {
       return;
     }
     recordSourceSemanticsCallMarker(facts, diagnostics, extensionId, checker, node, callInfo, marker);
   });
+}
+
+function recordCanonicalProviderTypeMarker(
+  facts: SourceSemanticsFactAccess,
+  type: GoPtr<Type>,
+  modules: readonly SourceSemanticsModuleRuntime[],
+): void {
+  if (type === undefined) return;
+  const symbol = Type_Symbol(type);
+  if (symbol === undefined) return;
+  const declaration = facts.get(symbol, providerVirtualDeclarationFactKey);
+  if (declaration?.exportName === undefined) return;
+  const module = modules.find((candidate) => candidate.moduleSpecifier === declaration.moduleSpecifier);
+  const marker = getModuleMarker(module, "type-marker", declaration.exportName);
+  if (marker?.kind !== "type-marker") return;
+  const evidence = createMarkerEvidence(marker.exportName);
+  facts.set(symbol, selectedSourceMarkerDeclarationFactKey, marker, evidence);
+  facts.set(symbol, sourceMarkerFactKey, { kind: marker.kind, marker: marker.marker }, evidence);
 }
 
 function recordSourceSemanticsCallMarker(

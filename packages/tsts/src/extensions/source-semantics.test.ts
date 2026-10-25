@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
+import { Type_Symbol } from "../internal/checker/types.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import {
@@ -714,6 +715,29 @@ test("JavaScript string markers follow exact imports and reject same-spelled loc
     extended.extensionHost.facts.get(getCallExpression(index, "convert", 1), sourceMarkerFactKey),
     undefined,
   );
+});
+
+test("a conversion call marker does not fabricate a type marker for plain or foreign results", () => {
+  const { extended, program, index } = createProgram(`
+    import { jsstr } from "@example/native/lang.js";
+    import { other } from "./local.js";
+    const plain = jsstr("plain");
+    const foreign = other();
+  `, new Map([
+    ["/src/node_modules/@example/native/lang.d.ts", "export declare function jsstr(value: string): string;"],
+    ["/src/local.ts", "interface JsString { readonly length: number; } export declare function other(): JsString;"],
+  ]));
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+  const source = extended.extensionHost.getCompilerQueryContext().getSourceFileQueries(index);
+  const conversion = getCallExpression(index, "jsstr", 0);
+  assert.deepEqual(extended.extensionHost.facts.get(conversion, sourceMarkerFactKey), { kind: "call-marker", marker: "js-string" });
+  for (const name of ["plain", "foreign"]) {
+    const declaration = getVariableDeclaration(index, name);
+    const type = source.checker.getTypeAtLocation(declaration);
+    assert.equal(extended.extensionHost.facts.get(type, sourceMarkerFactKey) === undefined, true, name + ": no invented type fact");
+    assert.equal(extended.extensionHost.facts.get(Type_Symbol(type), sourceMarkerFactKey) === undefined, true, name + ": no invented symbol fact");
+  }
 });
 
 test("source-semantics qualified source facts require exact module receiver identity", () => {
