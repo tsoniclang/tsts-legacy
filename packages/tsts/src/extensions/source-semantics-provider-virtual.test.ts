@@ -11,7 +11,7 @@ import {
 import { Node_Symbol } from "../internal/ast/ast.js";
 import { Diagnostic_String } from "../internal/ast/diagnostic.js";
 import { Type_Symbol } from "../internal/checker/types.js";
-import type { ProviderDeclarationModel, SourceAnalysisContext } from "./host.js";
+import { getExtensionHost, type ProviderDeclarationModel, type SourceAnalysisContext } from "./host.js";
 import type { SourceMarkerFact } from "./facts.js";
 import {
   findNodes,
@@ -164,12 +164,13 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
         }, {
           id: "Test.Exact.foreign", name: "foreign", kind: "function",
           signatures: [{ id: "Test.Exact.foreign()", parameters: [], returnType: {
-            kind: "provider-ref", moduleSpecifier: foreignModule, exportName: "JsString",
+            kind: "provider-ref", moduleSpecifier: foreignModule, exportName: "JsString", localName: "ForeignString",
           } }],
         }],
       }],
     ]);
-    const checked = createCompilerSessionFromFiles({
+    let conflictingSymbol: ReturnType<typeof Type_Symbol> = undefined;
+    const session = createCompilerSessionFromFiles({
       currentDirectory: "/src",
       rootFiles: ["/src/core.d.ts", "/src/index.ts"],
       files: {
@@ -198,6 +199,7 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
           }),
           ...(conflicting ? [{
             identity: { id: "test.conflicting-type-marker", version: "1.0.0" },
+            dependencies: { dependsOn: ["tsts.source-semantics"] },
             analyzeSource(context: SourceAnalysisContext): void {
               const file = context.source.getSourceFile("/src/index.ts");
               const queries = context.source.getSourceFileQueries(file);
@@ -206,16 +208,31 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
               const type = queries.checker.getTypeAtLocation(declaration);
               const symbol = Type_Symbol(type);
               if (symbol === undefined) throw new Error("the inverse requires the actual canonical checked symbol");
+              conflictingSymbol = symbol;
+              assert.deepEqual(context.facts.get(symbol, sourceMarkerFactKey), { kind: "type-marker", marker: "js-string" });
               const conflictingMarker: SourceMarkerFact = { kind: "type-marker", marker: "fixed-array" };
-              context.facts.set(symbol, sourceMarkerFactKey, conflictingMarker, []);
+              assert.equal(context.facts.set(symbol, sourceMarkerFactKey, conflictingMarker, []), "conflict");
             },
           }] : []),
         ],
       },
-    }).checkSource();
-    assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
-    assert.equal(checked.extensionDiagnostics.length, conflicting ? 1 : 0, "the exact provider source and contradictory-fact inverse are checked");
-    if (conflicting) assert.equal(checked.extensionDiagnostics[0]?.extensionCode, "FACT_CONFLICT");
+    });
+    if (conflicting) {
+      const host = getExtensionHost(session.program!);
+      assert.ok(host !== undefined);
+      assert.throws(() => session.checkSource(), /Cannot commit an extension fact transaction after a fact write failed/u);
+      assert.equal(host.diagnostics.all().filter(diagnostic =>
+        diagnostic.extensionCode === "FACT_WRITER_OWNERSHIP_VIOLATION").length, 1);
+      assert.ok(conflictingSymbol !== undefined);
+      assert.equal(host.facts.get(conflictingSymbol, sourceMarkerFactKey) === undefined, true, "a rejected transaction publishes no semantic marker");
+      return;
+    }
+    const checked = session.checkSource();
+    assert.equal(checked.diagnostics.length, 0, [
+      ...checked.diagnostics.map(Diagnostic_String),
+      ...checked.extensionDiagnostics.map(diagnostic => diagnostic.extensionCode + ": " + diagnostic.message),
+    ].join("\n"));
+    assert.equal(checked.extensionDiagnostics.length, 0, "the exact provider source is checked");
     const sourceFile = checked.getSourceFile("/src/index.ts");
     const source = checked.getSourceFileQueries(sourceFile);
     const declarations = findNodes(sourceFile, source.ast.children, source.ast.is.IsVariableDeclaration);
