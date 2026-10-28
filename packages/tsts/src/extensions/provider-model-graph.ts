@@ -106,6 +106,7 @@ const providerModelFieldNameRecord = {
   exportKind: true,
   sourceTypeFamily: true,
   documentation: true,
+  accessibility: true,
   type: true,
   typeParameters: true,
   heritage: true,
@@ -148,7 +149,7 @@ const providerModelShapeFields = {
   ),
   heritage: providerModelFields("kind", "type"),
   member: providerModelFields("id", "kind", "name", "static", "readonly", "optional", "documentation", "type", "signatures"),
-  signature: providerModelFields("id", "name", "documentation", "parameters", "returnType", "typeParameters"),
+  signature: providerModelFields("id", "name", "documentation", "accessibility", "parameters", "returnType", "typeParameters"),
   parameter: providerModelFields("name", "passingMode", "optional", "rest", "type", "defaultType"),
   typeParameter: providerModelFields("name", "variance", "constraints", "defaultType"),
   typeFamily: providerModelFields("exportName", "typeArgumentCount"),
@@ -506,12 +507,14 @@ function pushProviderModelGraphChildren(
       const id = readProviderModelField(reads, signature, "id");
       const name = readProviderModelField(reads, signature, "name");
       const documentation = readProviderModelField(reads, signature, "documentation");
+      const accessibility = readProviderModelField(reads, signature, "accessibility");
       const parameters = readProviderModelField(reads, signature, "parameters");
       const returnType = readProviderModelField(reads, signature, "returnType");
       const typeParameters = readProviderModelField(reads, signature, "typeParameters");
       return typeof id === "string"
         && isOptionalString(name)
         && isOptionalString(documentation)
+        && isOptionalString(accessibility)
         && pushProviderModelArray(reads, stack, parameters, "parameter", nextDepth, false, frame.path + ".parameters")
         && pushOptionalProviderModelNode(stack, returnType, "type", nextDepth, true, frame.path + ".returnType")
         && pushProviderModelArray(reads, stack, typeParameters, "type-parameter", nextDepth, true, frame.path + ".typeParameters");
@@ -1509,6 +1512,7 @@ function snapshotProviderSignatureDeclaration(
   }
   const id = readProviderModelField(context.reads, signature, "id");
   const name = readProviderModelField(context.reads, signature, "name");
+  const accessibility = readProviderModelField(context.reads, signature, "accessibility");
   const parameters = readProviderModelField(context.reads, signature, "parameters");
   const returnType = readProviderModelField(context.reads, signature, "returnType");
   const typeParameters = readProviderModelField(context.reads, signature, "typeParameters");
@@ -1516,6 +1520,7 @@ function snapshotProviderSignatureDeclaration(
   const snapshot: ProviderSignatureDeclaration = {
     id,
     ...(name === undefined ? {} : { name }),
+    ...(accessibility === undefined ? {} : { accessibility }),
     parameters: snapshotProviderModelArray(
       context,
       parameters,
@@ -2167,6 +2172,7 @@ function canonicalizeProviderExportOwnerSignature(
   return {
     id: signature.id,
     ...(signature.name === undefined ? {} : { name: signature.name }),
+    ...(signature.accessibility === undefined ? {} : { accessibility: signature.accessibility }),
     parameters: signature.parameters.map(
       (parameter) => canonicalizeProviderExportOwnerParameter(context, parameter),
     ),

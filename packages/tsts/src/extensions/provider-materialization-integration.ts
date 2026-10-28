@@ -23,6 +23,22 @@ import { getExtensionHost } from "./host.js";
 import { providerVirtualStructuredTypeDemand } from "./provider-virtual-internal.js";
 import { getProviderVirtualArtifactForCompiler } from "./provider-virtual-internal.js";
 
+export function hasExactProviderConstructorDeclarations(
+  program: object | undefined,
+  declarations: readonly GoPtr<Node>[],
+): boolean {
+  const host = program === undefined ? undefined : getExtensionHost(program);
+  if (host === undefined || declarations.length === 0) return false;
+  const facts = declarations.map(declaration =>
+    declaration === undefined ? undefined : host.facts.get(declaration, providerVirtualDeclarationFactKey));
+  const first = facts[0];
+  return first !== undefined && first.memberId !== undefined && first.signatureId !== undefined &&
+    facts.every(fact => fact !== undefined && fact.signatureId !== undefined &&
+      fact.providerId === first.providerId && fact.providerVersion === first.providerVersion &&
+      fact.providerModuleId === first.providerModuleId && fact.artifactFileName === first.artifactFileName &&
+      fact.exportId === first.exportId && fact.memberId === first.memberId);
+}
+
 export function recordProviderStructuredTypeDemand(
   program: object | undefined,
   type: GoPtr<Type>,

@@ -1,3 +1,4 @@
+import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import {
@@ -965,6 +966,8 @@ export function Checker_checkFunctionOrConstructorSymbolWorker(receiver: GoPtr<C
   let previousDeclaration: GoPtr<Node> = undefined;
   const declarations = symbol_!.Declarations ?? [];
   const isConstructor = ((symbol_!.Flags & SymbolFlagsConstructor) !== 0) as bool;
+  const providerConstructors = isConstructor &&
+    hasExactProviderConstructorDeclarations(receiver!.program, declarations);
   let duplicateFunctionDeclaration = false as bool;
   let multipleConstructorImplementation = false as bool;
   let hasNonAmbientClass = false as bool;
@@ -1007,7 +1010,7 @@ export function Checker_checkFunctionOrConstructorSymbolWorker(receiver: GoPtr<C
             Checker_error(receiver, GetNameOfDeclaration(overload), Overload_signatures_must_all_be_exported_or_non_exported);
           } else if ((deviationInFile & ModifierFlagsAmbient) !== 0) {
             Checker_error(receiver, GetNameOfDeclaration(overload), Overload_signatures_must_all_be_ambient_or_non_ambient);
-          } else if ((deviation & (ModifierFlagsPrivate | ModifierFlagsProtected)) !== 0) {
+          } else if ((deviation & (ModifierFlagsPrivate | ModifierFlagsProtected)) !== 0 && !providerConstructors) {
             Checker_error(receiver, core.OrElse(GetNameOfDeclaration(overload), overload), Overload_signatures_must_all_be_public_private_or_protected);
           } else if ((deviation & ModifierFlagsAbstract) !== 0) {
             Checker_error(receiver, GetNameOfDeclaration(overload), Overload_signatures_must_all_be_abstract_or_non_abstract);

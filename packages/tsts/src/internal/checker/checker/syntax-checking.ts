@@ -1,3 +1,4 @@
+import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
@@ -1952,7 +1953,9 @@ export function Checker_resolveNewExpressionWithEvidence(
   }
   const constructSignatures = Checker_getSignaturesOfType(receiver, expressionType, SignatureKindConstruct);
   if (constructSignatures.length !== 0) {
-    if (!Checker_isConstructorAccessible(receiver, node, constructSignatures[0])) {
+    const providerConstructors = hasExactProviderConstructorDeclarations(
+      receiver!.program, constructSignatures.map(signature => signature?.declaration));
+    if (!providerConstructors && !Checker_isConstructorAccessible(receiver, node, constructSignatures[0])) {
       return Checker_resolveErrorCall(receiver, node);
     }
     if (someSignature(constructSignatures, (signature) => (signature!.flags & SignatureFlagsAbstract) !== 0)) {
@@ -1967,9 +1970,14 @@ export function Checker_resolveNewExpressionWithEvidence(
       }
     }
     if (selectedOutput === undefined) {
-      return Checker_resolveCall(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined);
+      const selected = Checker_resolveCall(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined);
+      return providerConstructors && !Checker_isConstructorAccessible(receiver, node, selected)
+        ? Checker_resolveErrorCall(receiver, node) : selected;
     }
     const resolved = Checker_resolveCallWithEvidence(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, sourceCalleeType);
+    if (providerConstructors && !Checker_isConstructorAccessible(receiver, node, resolved.signature)) {
+      return Checker_resolveErrorCall(receiver, node);
+    }
     if (resolved.evidence !== undefined) {
       selectedOutput.evidence = resolved.evidence;
     }
