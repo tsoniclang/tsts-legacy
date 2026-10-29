@@ -58,7 +58,7 @@ function identityFixture() {
     assert.equal(type !== undefined, true, `${name}: actual checked type`);
     return type!;
   };
-  return { left, right, typeFor };
+  return { checked, left, right, typeFor };
 }
 
 function assertIdentityInBothOrders(
@@ -76,7 +76,7 @@ test("public identity preserves exact generic instances obtained from different 
   const { left, right, typeFor } = identityFixture();
   const numericLeft = typeFor(left, "numeric");
   const numericRight = typeFor(right, "numeric");
-  assert.equal(numericLeft.checker !== numericRight.checker, true, "the public queries exercise distinct checker owners");
+  assert.equal(numericLeft.checker === numericRight.checker, true, "the public queries use the same native API semantic owner");
   left.typeShape.getPropertyInfos(numericLeft);
   right.typeShape.getPropertyInfos(numericRight);
   assertIdentityInBothOrders(left, numericLeft, numericRight, true, "identical Box<number> instances");
@@ -108,4 +108,32 @@ test("public identity preserves local-class outer instantiations across imports"
   const entry = typeFor(left, "entry");
   assertIdentityInBothOrders(right, entry, typeFor(right, "entry"), true, "the same local class and outer value type");
   assertIdentityInBothOrders(left, entry, typeFor(right, "textEntry"), false, "different outer value types");
+});
+
+test("public identity rejects separate checked programs with identical file and declaration spellings", () => {
+  const original = identityFixture();
+  const foreign = identityFixture();
+  const originalType = original.typeFor(original.left, "numeric");
+  const foreignType = foreign.typeFor(foreign.left, "numeric");
+  assertIdentityInBothOrders(original.left, originalType, foreignType, false, "different checked programs");
+  assert.equal(original.left.typeShape.isTypeIdenticalTo(foreignType, foreignType), false,
+    "an identical foreign object is not admitted by the original query owner");
+  assert.throws(() => original.checked.getSourceFileQueries(foreign.left.sourceFile),
+    /source file from the compiler program/u, "foreign file identity is rejected before creating a query owner");
+  assertIdentityInBothOrders(foreign.right, foreignType, foreign.typeFor(foreign.right, "numeric"), true,
+    "the separate program retains its own coherent identity");
+});
+
+test("public identity is independent of file query and member inspection order", () => {
+  for (const reverse of [false, true]) {
+    const { left, right, typeFor } = identityFixture();
+    const first = reverse ? right : left;
+    const second = reverse ? left : right;
+    const firstType = typeFor(first, "mapped");
+    first.typeShape.getPropertyInfos(firstType);
+    const secondType = typeFor(second, "mapped");
+    second.typeShape.getPropertyInfos(secondType);
+    assert.equal(firstType.checker === secondType.checker, true, "query order preserves the native API owner");
+    assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
+  }
 });

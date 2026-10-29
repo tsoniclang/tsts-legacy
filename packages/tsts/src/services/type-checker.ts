@@ -45,7 +45,8 @@ import {
   SkipOuterExpressions,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeChecker, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
@@ -833,11 +834,12 @@ function withChecker<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
-  if (program === undefined || sourceFile === undefined) {
+  if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
     return undefined;
   }
   const context = defaultOptions.context ?? Background();
-  const [checker, done] = Program_GetTypeCheckerForFile(program, context, sourceFile);
+  const [checker, done] = Program_GetTypeChecker(program, WithCheckerLifetime(context, CheckerLifetimeAPI));
   try {
     return callback(checker);
   } finally {
