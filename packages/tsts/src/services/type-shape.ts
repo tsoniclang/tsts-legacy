@@ -264,6 +264,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       program, defaultOptions.sourceFile, defaultOptions,
       checker => {
         if (checker === undefined || left?.checker === undefined || right?.checker === undefined ||
+          left.checker !== checker || right.checker !== checker ||
           left.checker.program!.SourceFiles() !== checker.program!.SourceFiles() ||
           right.checker.program!.SourceFiles() !== checker.program!.SourceFiles()) return false;
         return Checker_isTypeIdenticalTo(checker, left, right);

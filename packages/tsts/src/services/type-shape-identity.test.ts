@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import { Background } from "../go/context.js";
+import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
+import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
+import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 
 function identityFixture() {
   const checked = createCompilerSessionFromFiles({
@@ -138,4 +142,35 @@ test("public identity is independent of file query and member inspection order",
     assert.equal(firstType.checker === secondType.checker, true, "query order preserves the native API owner");
     assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
   }
+});
+
+test("public identity rejects same-program operands owned by a native diagnostic checker", () => {
+  const { checked, left, right, typeFor } = identityFixture();
+  const publicType = typeFor(left, "numeric");
+  let exercised = 0;
+  for (const queries of [left, right]) {
+    const [diagnosticChecker, done] = Program_GetTypeCheckerForFileExclusive(checked.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), queries.sourceFile);
+    try {
+      assert.equal(diagnosticChecker !== undefined, true, "the original checked file has a native diagnostic checker");
+      if (diagnosticChecker === publicType.checker) continue;
+      const declaration = findNodes(queries.sourceFile, queries.ast.children, queries.ast.is.IsVariableDeclaration)
+        .find(node => queries.ast.text(queries.ast.name(node)) === "numeric");
+      assert.equal(declaration !== undefined, true, "the native query uses the original checked numeric declaration");
+      const diagnosticType = Checker_GetTypeAtLocation(diagnosticChecker, queries.ast.name(declaration));
+      assert.equal(diagnosticType !== undefined, true, "the real native diagnostic query returns its actual type");
+      assert.equal(diagnosticType!.checker === diagnosticChecker, true, "the diagnostic operand retains its native owner");
+      assert.equal(diagnosticType!.checker!.program!.SourceFiles() === publicType.checker!.program!.SourceFiles(), true,
+        "the diagnostic and public operands belong to exactly the same checked program");
+      assertIdentityInBothOrders(left, publicType, diagnosticType!, false, "the non-API diagnostic operand");
+      assert.equal(left.typeShape.isTypeIdenticalTo(diagnosticType, diagnosticType), false,
+        "identical diagnostic operands cannot bypass the public relation owner boundary");
+      assertIdentityInBothOrders(right, publicType, typeFor(right, "numeric"), true,
+        "valid public operands still compare after diagnostic evidence is rejected");
+      exercised += 1;
+    } finally {
+      done();
+    }
+  }
+  assert.equal(exercised > 0, true, "at least one real distinct native diagnostic checker was exercised");
 });
