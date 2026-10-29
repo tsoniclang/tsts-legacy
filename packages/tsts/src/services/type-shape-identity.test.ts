@@ -119,7 +119,8 @@ test("public identity rejects separate checked programs with identical file and 
   assert.equal(original.left.typeShape.isTypeIdenticalTo(foreignType, foreignType), false,
     "an identical foreign object is not admitted by the original query owner");
   assert.throws(() => original.checked.getSourceFileQueries(foreign.left.sourceFile),
-    /^Source-file queries require an exact source file from the checked program\.$/u,
+    (error: unknown) => error instanceof Error &&
+      error.message === "Source-file queries require an exact source file from the checked program.",
     "foreign file identity is rejected before creating a query owner");
   assertIdentityInBothOrders(foreign.right, foreignType, foreign.typeFor(foreign.right, "numeric"), true,
     "the separate program retains its own coherent identity");
