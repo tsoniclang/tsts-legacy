@@ -321,7 +321,7 @@ test("alias queries preserve retained argument ownership across files in one che
   const declaration = alias(definitions, "Storage");
   const scalar = aliasType(source, "Scalar");
   const local = aliasType(definitions, "Constant");
-  assert.notEqual(scalar.checker, local.checker);
+  assert.equal(scalar.checker === local.checker, true, "cross-file alias operands share the native API semantic owner");
   for (const queries of [source, definitions]) {
     for (const argument of [scalar, local]) {
       const application = queries.typeShape.instantiateTypeAlias(declaration, [argument]);
@@ -334,5 +334,11 @@ test("alias queries preserve retained argument ownership across files in one che
   const foreign = applicationSource();
   assert.equal(definitions.typeShape.instantiateTypeAlias(declaration, [aliasType(foreign.source, "Scalar")]), undefined);
   assert.equal(source.typeShape.instantiateTypeAlias(alias(foreign.definitions, "Storage"), [scalar]), undefined);
-  assert.equal(source.typeShape.instantiateTypeAlias(alias(definitions, "Pair"), [scalar, local]), undefined);
+  assert.equal(source.typeShape.instantiateTypeAlias(alias(definitions, "Pair"),
+    [scalar, aliasType(foreign.definitions, "Constant")]), undefined);
+  const pair = source.typeShape.instantiateTypeAlias(alias(definitions, "Pair"), [scalar, local]);
+  assert.equal(pair !== undefined, true, "same-program cross-file arguments have a native Pair application");
+  assert.equal(pair!.bindings.length, 2, "the native Pair retains both authored bindings");
+  assert.equal(pair!.bindings[0]?.argument === scalar, true, "the first binding retains the original scalar argument");
+  assert.equal(pair!.bindings[1]?.argument === local, true, "the second binding retains the original local argument");
 });
