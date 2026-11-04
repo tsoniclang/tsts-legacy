@@ -18,7 +18,7 @@ import {
   Node_TypeArguments,
 } from "../internal/ast/ast.js";
 import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
-import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
+import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsImportTypeNode, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindCallExpression,
   KindExportDeclaration,
@@ -26,6 +26,7 @@ import {
   KindIdentifier,
   KindImportDeclaration,
   KindImportSpecifier,
+  KindImportType,
   KindNamedImports,
   KindNamedExports,
   KindNamespaceImport,
@@ -1240,11 +1241,12 @@ function resolveSourcePrimitiveFact(
     return undefined;
   }
   const node = subject as GoPtr<Node>;
-  if (node?.Kind !== KindTypeReference) {
+  if (node?.Kind !== KindTypeReference && node?.Kind !== KindImportType) {
     return undefined;
   }
-  const typeName = AsTypeReferenceNode(node)?.TypeName;
-  const primitive = resolveRecordedPrimitiveTypeReference(
+  const typeName = node.Kind === KindTypeReference
+    ? AsTypeReferenceNode(node)?.TypeName : AsImportTypeNode(node)?.Qualifier;
+  const primitive = resolveRecordedPrimitiveAnnotation(
     context.facts,
     node,
     typeName,
@@ -1266,23 +1268,25 @@ function recordSourceSemanticsTypeReferences(
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
   visitSourceSemanticsNode(sourceFile, (node) => {
-    if (node?.Kind !== KindTypeReference) {
+    if (node?.Kind !== KindTypeReference && node?.Kind !== KindImportType) {
       return;
     }
-    const typeName = AsTypeReferenceNode(node)!.TypeName;
+    if (node.Kind === KindImportType && AsImportTypeNode(node)?.IsTypeOf) return;
+    const typeName = node.Kind === KindTypeReference
+      ? AsTypeReferenceNode(node)!.TypeName : AsImportTypeNode(node)?.Qualifier;
     if (typeName === undefined) {
       return;
     }
-    const marker = resolveSourceSemanticsTypeMarkerReference(facts, typeName);
+    const marker = node.Kind === KindTypeReference
+      ? resolveSourceSemanticsTypeMarkerReference(facts, typeName) : undefined;
     if (marker !== undefined) {
       recordSourceSemanticsTypeMarker(facts, node, typeName, marker);
     }
-    const primitive = resolvePrimitiveFromCheckedReference(
-      facts,
-      checker,
-      typeName,
-      modules,
-    );
+    const selectedSymbol = node.Kind === KindImportType ? checker.getSymbolAtLocation(typeName) : undefined;
+    const primitive = node.Kind === KindImportType
+      ? selectedSymbol === undefined || !checker.getSymbolDeclarations(selectedSymbol).some(declaration => declaration !== undefined)
+        ? undefined : resolvePrimitiveFromSelectedSymbol(facts, selectedSymbol, modules)
+      : resolvePrimitiveFromCheckedReference(facts, checker, typeName, modules);
     if (primitive === undefined) {
       return;
     }
@@ -1690,7 +1694,7 @@ function resolvePrimitiveFromSelectedSymbol(
   );
 }
 
-function resolveRecordedPrimitiveTypeReference(
+function resolveRecordedPrimitiveAnnotation(
   facts: SourceSemanticsFactReader,
   typeReference: Node,
   typeName: GoPtr<Node>,
