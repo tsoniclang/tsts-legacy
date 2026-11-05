@@ -722,6 +722,7 @@ export function Checker_checkIteratedTypeOrElementType(receiver: GoPtr<Checker>,
 
 export function Checker_checkForOfIterationWithExtensionSelection(
   receiver: GoPtr<Checker>,
+  statement: Node,
   iterationKind: "for-of" | "for-await-of",
   inputType: GoPtr<Type>,
   sentType: GoPtr<Type>,
@@ -732,6 +733,7 @@ export function Checker_checkForOfIterationWithExtensionSelection(
     const sourceType = inputType!;
     const selection: ExtensionCheckedIterationSelection = iterationKind === "for-await-of"
       ? {
+          subject: { kind: "for-of", node: statement },
           iterationKind: "for-await-of",
           sourceIterableType: sourceType,
           sourceElementType: sourceType,
@@ -741,6 +743,7 @@ export function Checker_checkForOfIterationWithExtensionSelection(
           },
         }
       : {
+          subject: { kind: "for-of", node: statement },
           iterationKind: "for-of",
           sourceIterableType: sourceType,
           sourceElementType: sourceType,
@@ -765,6 +768,7 @@ export function Checker_checkForOfIterationWithExtensionSelection(
     return {
       elementType,
       selection: {
+        subject: { kind: "for-of", node: statement },
         iterationKind,
         sourceIterableType: inputType,
         sourceElementType: selectedElementType,
@@ -778,6 +782,7 @@ export function Checker_checkForOfIterationWithExtensionSelection(
   return {
     elementType,
     selection: {
+      subject: { kind: "for-of", node: statement },
       iterationKind,
       sourceIterableType: inputType,
       sourceElementType: selectedElementType,

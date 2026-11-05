@@ -108,6 +108,7 @@ export type ExtensionForAwaitOfIterationMechanism =
 
 export type ExtensionCheckedIterationSelection =
   | {
+      readonly subject: { readonly kind: "for-in"; readonly node: Node };
       readonly iterationKind: "for-in";
       readonly sourceIterableType: Type;
       readonly sourceElementType: Type;
@@ -116,16 +117,25 @@ export type ExtensionCheckedIterationSelection =
       };
     }
   | {
+      readonly subject: { readonly kind: "for-of"; readonly node: Node };
       readonly iterationKind: "for-of";
       readonly sourceIterableType: Type;
       readonly sourceElementType: Type;
       readonly mechanism: ExtensionForOfIterationMechanism;
     }
   | {
+      readonly subject: { readonly kind: "for-of"; readonly node: Node };
       readonly iterationKind: "for-await-of";
       readonly sourceIterableType: Type;
       readonly sourceElementType: Type;
       readonly mechanism: ExtensionForAwaitOfIterationMechanism;
+    }
+  | {
+      readonly subject: { readonly kind: "spread"; readonly node: Node };
+      readonly sourceIterableType: Type;
+      readonly sourceElementType: Type;
+      readonly iterationKind?: never;
+      readonly mechanism?: never;
     };
 
 export interface ExtensionCheckedIterationResult {
@@ -145,8 +155,15 @@ export function freezeExtensionCheckedIterationSelection(
   selection: ExtensionCheckedIterationSelection,
 ): ExtensionCheckedIterationSelection {
   switch (selection.iterationKind) {
+    case undefined:
+      return Object.freeze({
+        subject: Object.freeze({ ...selection.subject }),
+        sourceIterableType: selection.sourceIterableType,
+        sourceElementType: selection.sourceElementType,
+      });
     case "for-in":
       return Object.freeze({
+        subject: Object.freeze({ ...selection.subject }),
         iterationKind: selection.iterationKind,
         sourceIterableType: selection.sourceIterableType,
         sourceElementType: selection.sourceElementType,
@@ -154,6 +171,7 @@ export function freezeExtensionCheckedIterationSelection(
       });
     case "for-of":
       return Object.freeze({
+        subject: Object.freeze({ ...selection.subject }),
         iterationKind: selection.iterationKind,
         sourceIterableType: selection.sourceIterableType,
         sourceElementType: selection.sourceElementType,
@@ -161,6 +179,7 @@ export function freezeExtensionCheckedIterationSelection(
       });
     case "for-await-of":
       return Object.freeze({
+        subject: Object.freeze({ ...selection.subject }),
         iterationKind: selection.iterationKind,
         sourceIterableType: selection.sourceIterableType,
         sourceElementType: selection.sourceElementType,
@@ -508,10 +527,12 @@ export function createExtensionIterationProtocolSelectionCapture(): ExtensionIte
 }
 
 export function createExtensionForInIterationSelection(
+  statement: Node,
   sourceIterableType: Type,
   sourceElementType: Type,
 ): ExtensionCheckedIterationSelection {
   return Object.freeze({
+    subject: Object.freeze({ kind: "for-in" as const, node: statement }),
     iterationKind: "for-in",
     sourceIterableType,
     sourceElementType,

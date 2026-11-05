@@ -2487,6 +2487,7 @@ export function Checker_checkPostfixUnaryExpression(receiver: GoPtr<Checker>, no
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkSpreadExpression","kind":"method","status":"implemented","sigHash":"ea28f33c4c792dc8dc6ee3b45dc136c7ec32e335a19f40f31ea1a6e8637cd34a","bodyHash":"935a89ed85ee2fbfbe72eaedd4ac99375f1814c02818ead10b1c7ba5ce928969"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"One worker retains the exact TS-Go spread computation; the existing iteration query observes its actual iterable and element types without changing checking, caching or the ordinary signature."}
  *
  * Go source:
  * func (c *Checker) checkSpreadExpression(node *ast.Node, checkMode CheckMode) *Type {
@@ -2495,8 +2496,21 @@ export function Checker_checkPostfixUnaryExpression(receiver: GoPtr<Checker>, no
  * }
  */
 export function Checker_checkSpreadExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+  return checkSpreadExpressionWithIteration(receiver, node, checkMode);
+}
+
+function checkSpreadExpressionWithIteration(
+  receiver: GoPtr<Checker>,
+  node: GoPtr<Node>,
+  checkMode: CheckMode,
+  onIteration?: (sourceIterableType: Type, sourceElementType: Type) => void,
+): GoPtr<Type> {
   const arrayOrIterableType = Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode);
-  return Checker_checkIteratedTypeOrElementType(receiver, IterationUseSpread, arrayOrIterableType, receiver!.undefinedType, Node_Expression(node));
+  const elementType = Checker_checkIteratedTypeOrElementType(receiver, IterationUseSpread, arrayOrIterableType, receiver!.undefinedType, Node_Expression(node));
+  if (onIteration !== undefined && arrayOrIterableType !== undefined && elementType !== undefined) {
+    onIteration(arrayOrIterableType, elementType);
+  }
+  return elementType;
 }
 
 /**
@@ -3681,6 +3695,17 @@ export function Checker_getResolvedSourceIterationInfo(
   if (receiver === undefined || statement === undefined) {
     return undefined;
   }
+  if (statement.Kind === KindSpreadElement) {
+    let selection: ExtensionCheckedIterationSelection | undefined;
+    checkSpreadExpressionWithIteration(receiver, statement, CheckModeNormal, (sourceIterableType, sourceElementType) => {
+      selection = freezeExtensionCheckedIterationSelection({
+        subject: { kind: "spread", node: statement },
+        sourceIterableType,
+        sourceElementType,
+      });
+    });
+    return selection;
+  }
   if (statement.Kind === KindForInStatement) {
     const data = AsForInOrOfStatement(statement);
     const sourceIterableType = Checker_getNonNullableTypeIfNeeded(
@@ -3704,7 +3729,7 @@ export function Checker_getResolvedSourceIterationInfo(
     }
     return sourceElementType === undefined
       ? undefined
-      : createExtensionForInIterationSelection(sourceIterableType, sourceElementType);
+      : createExtensionForInIterationSelection(statement, sourceIterableType, sourceElementType);
   }
   if (statement.Kind !== KindForOfStatement) {
     return undefined;
@@ -3717,6 +3742,7 @@ export function Checker_getResolvedSourceIterationInfo(
   const iterationKind = data?.AwaitModifier === undefined ? "for-of" : "for-await-of";
   const selection = Checker_checkForOfIterationWithExtensionSelection(
     receiver,
+    statement,
     iterationKind,
     sourceIterableType,
     receiver.undefinedType,

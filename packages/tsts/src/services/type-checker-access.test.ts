@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Node_Text, Node_Type } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
 import {
@@ -8,6 +8,7 @@ import {
   KindCallExpression,
   KindComputedPropertyName,
   KindElementAccessExpression,
+  KindForInStatement,
   KindForOfStatement,
   KindFunctionDeclaration,
   KindGetAccessor,
@@ -15,6 +16,7 @@ import {
   KindPropertyAssignment,
   KindPropertyAccessExpression,
   KindSetAccessor,
+  KindSpreadElement,
   KindTypeAliasDeclaration,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
@@ -670,6 +672,8 @@ test("iteration info preserves declaration and assignment element selection", ()
 
   const declaration = queries.getResolvedIterationInfo(statements[0]);
   const assignment = queries.getResolvedIterationInfo(statements[1]);
+  assert.ok(declaration?.iterationKind === "for-of" && declaration.subject.node === statements[0]);
+  assert.ok(assignment?.iterationKind === "for-of" && assignment.subject.node === statements[1]);
   assert.equal(declaration?.iterationKind, "for-of");
   assert.equal(assignment?.iterationKind, "for-of");
   assert.equal((declaration?.sourceElementType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
@@ -681,6 +685,7 @@ test("iteration info preserves declaration and assignment element selection", ()
   assert.equal(Object.isFrozen(declaration?.mechanism), true);
   assertCleanSemanticDiagnostics(program, index);
   const repeatedDeclaration = queries.getResolvedIterationInfo(statements[0]);
+  assert.ok(repeatedDeclaration?.iterationKind === "for-of" && repeatedDeclaration.subject.node === statements[0]);
   assert.ok(
     repeatedDeclaration === declaration,
     "Repeated declaration iteration queries must retain the exact resolved iteration result.",
@@ -697,6 +702,7 @@ test("iteration info preserves declaration and assignment element selection", ()
   assert.equal(repeatedDeclaration?.mechanism.kind, declaration?.mechanism.kind);
 
   const repeatedAssignment = queries.getResolvedIterationInfo(statements[1]);
+  assert.ok(repeatedAssignment?.iterationKind === "for-of" && repeatedAssignment.subject.node === statements[1]);
   assert.ok(
     repeatedAssignment === assignment,
     "Repeated assignment iteration queries must retain the exact resolved iteration result.",
@@ -726,8 +732,77 @@ test("iteration info preserves for-await-of element and protocol evidence", () =
   assert.equal(statements.length, 1);
 
   const selection = queries.getResolvedIterationInfo(statements[0]);
+  assert.ok(selection?.iterationKind === "for-await-of" && selection.subject.node === statements[0]);
   assert.equal(selection?.iterationKind, "for-await-of");
   assert.equal((selection?.sourceElementType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
   assert.equal(selection?.mechanism.kind, "asynchronous-iterator-protocol");
   assertCleanSemanticDiagnostics(program, index);
+});
+
+test("iteration subjects retain for-in, for-of and for-await-of facts without a synthetic loop", () => {
+  const { program, index } = createProgram(`
+    declare const properties: { readonly value: number };
+    declare const values: Iterable<number>;
+    for (const key in properties) { key; }
+    for (const value of values) { value; }
+    async function consume(input: AsyncIterable<number>): Promise<void> {
+      for await (const value of input) { value; }
+    }
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const forIn = findNodesByKind(index, KindForInStatement)[0];
+  const forOf = findNodesByKind(index, KindForOfStatement);
+  const cases = [
+    { node: forIn, subject: "for-in", iteration: "for-in" },
+    { node: forOf[0], subject: "for-of", iteration: "for-of" },
+    { node: forOf[1], subject: "for-of", iteration: "for-await-of" },
+  ] as const;
+  for (const entry of cases) {
+    const result = queries.getResolvedIterationInfo(entry.node);
+    assert.equal(result?.subject.kind, entry.subject, entry.iteration);
+    assert.equal(result?.subject.node === entry.node, true, entry.iteration);
+    assert.equal(result?.iterationKind, entry.iteration, entry.iteration);
+    assert.equal(result?.mechanism !== undefined, true, entry.iteration);
+    assert.equal(Object.isFrozen(result?.subject), true, entry.iteration);
+  }
+});
+
+test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {
+  const cases = [
+    { name: "array", setup: "declare const source: number[];", expression: "source", element: "number" },
+    { name: "tuple", setup: "declare const source: [number, number, number];", expression: "source", element: "number" },
+    { name: "mixed-tuple", setup: "declare const source: [number, bigint, string];", expression: "source", element: "bigint | number | string" },
+    { name: "string", setup: "declare const source: string;", expression: "source", element: "string" },
+    { name: "iterable", setup: "declare const source: Iterable<number>;", expression: "source", element: "number" },
+    { name: "set", setup: "declare const source: Set<number>;", expression: "source", element: "number" },
+    { name: "map-keys", setup: "declare const source: Map<number, string>;", expression: "source.keys()", element: "number" },
+    { name: "map-values", setup: "declare const source: Map<number, string>;", expression: "source.values()", element: "string" },
+    { name: "map-entries", setup: "declare const source: Map<number, string>;", expression: "source.entries()", element: "[number, string]" },
+    { name: "generator", setup: "function* source(): Generator<number, void, unknown> { yield 1; }", expression: "source()", element: "number" },
+  ] as const;
+  for (const entry of cases) {
+    const { program, index } = createProgram(`
+      ${entry.setup}
+      declare function take(...values: unknown[]): void;
+      const array = [...${entry.expression}];
+      take(...${entry.expression});
+    `, { noLib: false });
+    assertCleanSemanticDiagnostics(program, index);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const spreads = findNodesByKind(index, KindSpreadElement);
+    assert.equal(spreads.length, 2, entry.name);
+    for (const [position, spread] of spreads.entries()) {
+      const label = `${entry.name}:${position === 0 ? "array" : "call"}`;
+      const result = queries.getResolvedIterationInfo(spread);
+      assert.equal(result?.subject.kind, "spread", label);
+      assert.equal(result?.subject.node === spread, true, label);
+      assert.equal(result !== undefined && !("iterationKind" in result) && !("mechanism" in result), true, label);
+      assert.equal(result?.sourceIterableType === queries.getTypeAtLocation(Node_Expression(spread)), true, label);
+      assert.equal(result?.sourceElementType === queries.getTypeAtLocation(spread), true, label);
+      assert.equal(queries.typeToString(result?.sourceElementType).split(" | ").sort().join(" | "), entry.element, label);
+      assert.equal(queries.getResolvedIterationInfo(spread) === result, true, label);
+      assert.equal(Object.isFrozen(result) && Object.isFrozen(result?.subject), true, label);
+    }
+  }
 });
