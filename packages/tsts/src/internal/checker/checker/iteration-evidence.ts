@@ -186,6 +186,7 @@ export function freezeExtensionCheckedIterationSelection(
         mechanism: freezeForAwaitOfIterationMechanism(selection.mechanism),
       });
   }
+  throw new Error("A checked iteration selection requires a supported subject and loop kind.");
 }
 
 export function freezeExtensionCheckedYieldStarResult(
