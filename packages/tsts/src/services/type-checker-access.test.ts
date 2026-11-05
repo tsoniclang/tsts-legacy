@@ -13,8 +13,11 @@ import {
   KindFunctionDeclaration,
   KindGetAccessor,
   KindMethodDeclaration,
+  KindMappedType,
   KindPropertyAssignment,
   KindPropertyAccessExpression,
+  KindPropertyDeclaration,
+  KindPropertySignature,
   KindSetAccessor,
   KindSpreadElement,
   KindTypeAliasDeclaration,
@@ -22,6 +25,7 @@ import {
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
+import { createTypeShapeQueries } from "./type-shape.js";
 import {
   assertCleanSemanticDiagnostics,
   createProgram,
@@ -766,6 +770,80 @@ test("iteration subjects retain for-in, for-of and for-await-of facts without a 
     assert.equal(result?.mechanism !== undefined, true, entry.iteration);
     assert.equal(Object.isFrozen(result?.subject), true, entry.iteration);
   }
+});
+
+test("mapped property metadata retains actual mapped owners, checked keys and synthetic property origins", () => {
+  const { program, index } = createProgram(`
+    type int32 = number;
+    type Flags = { [Key in "left" | "right"]: number };
+    type Numeric = { [Key in 1 | 2]: number };
+    declare const first: unique symbol;
+    declare const second: unique symbol;
+    type Symbols = { [Key in typeof first | typeof second]: number };
+    type Data = { x: int32 };
+    class Input { value: int32 = 1; }
+    type Fields = { [Key in keyof Input]: Input[Key] };
+    declare const flags: Flags;
+    declare const numeric: Numeric;
+    declare const symbols: Symbols;
+    declare const record: Record<"a" | "b", int32>;
+    declare const partial: Partial<Data>;
+    declare const immutable: Readonly<Data>;
+    declare const fields: Fields;
+    declare const ordinary: Data;
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const shape = createTypeShapeQueries(program, { sourceFile: index });
+  const variables = findNodesByKind(index, KindVariableDeclaration);
+  const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
+  const variable = (name: string) => variables.find(node => Node_Text(Node_Name(node)) === name);
+  const alias = (name: string) => aliases.find(node => Node_Text(Node_Name(node)) === name);
+  const original = findNodesByKind(Node_Type(alias("Data")), KindPropertySignature)[0];
+  const field = findNodesByKind(index, KindPropertyDeclaration)[0];
+  const cases = [
+    { name: "flags", owner: Node_Type(alias("Flags")), keys: ["left", "right"], origin: undefined },
+    { name: "numeric", owner: Node_Type(alias("Numeric")), keys: [1, 2], origin: undefined },
+    { name: "symbols", owner: Node_Type(alias("Symbols")), keys: undefined, origin: undefined },
+    { name: "record", owner: undefined, keys: ["a", "b"], origin: undefined },
+    { name: "partial", owner: undefined, keys: ["x"], origin: original },
+    { name: "immutable", owner: undefined, keys: ["x"], origin: original },
+    { name: "fields", owner: Node_Type(alias("Fields")), keys: ["value"], origin: field },
+  ];
+  for (const entry of cases) {
+    const type = queries.getTypeAtLocation(variable(entry.name));
+    const properties = shape.getPropertyInfos(type);
+    const expectedOwner = entry.owner ?? Node_Type(queries.getPrimarySymbolDeclaration(queries.getTypeAliasSymbol(type)));
+    assert.equal(expectedOwner?.Kind, KindMappedType, entry.name);
+    assert.equal(properties.length, entry.keys?.length ?? 2, entry.name);
+    const keys: (string | number)[] = [];
+    const keyTypes = new Set(properties.map(property => property.mapped?.keyType));
+    assert.equal(keyTypes.size, properties.length, entry.name);
+    for (const property of properties) {
+      const mapped = property.mapped;
+      assert.equal(mapped !== undefined && Object.isFrozen(mapped), true, entry.name);
+      assert.equal(mapped?.declaration === expectedOwner, true, entry.name);
+      assert.equal(mapped?.keyType !== undefined, true, entry.name);
+      if (entry.origin !== undefined) {
+        assert.equal(mapped?.syntheticOrigin === queries.getSymbolAtLocation(Node_Name(entry.origin)), true, entry.name);
+        assert.equal(queries.getSymbolDeclarations(mapped?.syntheticOrigin).includes(entry.origin), true, entry.name);
+      } else assert.equal(mapped?.syntheticOrigin === undefined, true, entry.name);
+      if (entry.name === "symbols") {
+        const declaration = queries.getPrimarySymbolDeclaration(queries.getTypeSymbol(mapped?.keyType));
+        assert.equal(declaration !== undefined && [variable("first"), variable("second")].includes(declaration), true, entry.name);
+      } else {
+        const key = shape.getStringLiteralTypeValue(mapped?.keyType) ?? shape.getNumericLiteralTypeValue(mapped?.keyType);
+        assert.equal(typeof key === "string" || typeof key === "number", true, entry.name);
+        if (typeof key === "string" || typeof key === "number") keys.push(key);
+      }
+    }
+    if (entry.keys !== undefined) assert.deepEqual(keys, entry.keys, entry.name);
+    const repeated = shape.getPropertyInfos(type);
+    assert.equal(repeated.every((property, position) => property.mapped?.keyType === properties[position]?.mapped?.keyType &&
+      property.mapped?.syntheticOrigin === properties[position]?.mapped?.syntheticOrigin &&
+      property.mapped?.declaration === properties[position]?.mapped?.declaration), true, entry.name);
+  }
+  assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))).every(property => property.mapped === undefined), true);
 });
 
 test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {
