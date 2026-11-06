@@ -95,6 +95,45 @@ test("generator queries retain exact sync and async yield-star mechanisms", () =
   assert.equal(async?.delegation?.iterationTypes.returnType.flags & TypeFlagsString, TypeFlagsString);
 });
 
+test("generator return bindings retain the original role when instantiated numeric arguments are identical", () => {
+  const { program, index } = createProgram(`
+    type Left = number;
+    type Right = number;
+    type Aliased = Generator<Left, Right, unknown>;
+    interface Reordered<Result, Yield> extends Generator<Yield, Result, unknown> {}
+    interface Inherited extends Generator<Left, Right, unknown> {}
+    function* direct(): Generator<Left, Right, unknown> { yield 1; return 2; }
+    function* aliased(): Aliased { yield 1; return 2; }
+    function* inherited(): Reordered<Right, Left> { yield 1; return 2; }
+    function* closedInherited(): Inherited { yield 1; return 2; }
+    async function* asynchronous(): AsyncGenerator<Left, Right, unknown> { yield 1; return 2; }
+    function ordinary(): number { return 2; }
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const ast = createAstReader();
+  for (const declaration of findNodesByKind(index, KindFunctionDeclaration)) {
+    const name = ast.name(declaration);
+    const label = name === undefined ? "anonymous" : ast.text(name);
+    const generator = queries.getResolvedGeneratorInfo(declaration);
+    if (label === "ordinary") {
+      assert.equal(generator === undefined, true, "ordinary return annotations have no generator role");
+      continue;
+    }
+    const binding = generator?.returnTypeBinding;
+    assert.equal(generator !== undefined && generator.iterationTypes.yieldType === generator.iterationTypes.returnType, true,
+      label + ": checked number identity cannot distinguish yield and return");
+    assert.equal(binding !== undefined, true, label + ": the original protocol supplies the exact return-role binding");
+    if (binding === undefined || generator === undefined) throw new Error(label + ": generator binding is required.");
+    const parameterName = ast.name(binding.declaration);
+    assert.equal(parameterName !== undefined && ast.text(parameterName) === "TReturn", true,
+      label + ": selection retains the actual formal declaration, including reordered inheritance");
+    assert.equal(binding.argumentType === generator.iterationTypes.returnType && binding.parameterType !== binding.argumentType, true,
+      label + ": formal and instantiated return types remain separate original identities");
+    assert.equal(queries.getResolvedGeneratorInfo(declaration) === generator, true, label + ": the original generator query is cached");
+  }
+});
+
 test("well-known-symbol queries distinguish exact global symbols from shadows", () => {
   const { program, index } = createProgram(`
     ${disposalGlobals}

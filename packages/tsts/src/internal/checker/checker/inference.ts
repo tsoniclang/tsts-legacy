@@ -20,6 +20,7 @@ import { All_declarations_of_0_must_have_identical_constraints, Type_parameter_0
 import { Checker_combineTypeMappers, prependTypeMapping, newTypeMapper, TypeMapper_Map } from "../mapper.js";
 import type { TypeMapper } from "../mapper.js";
 import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
+import { Checker_isTypeIdenticalTo } from "../relater.js";
 import { Checker_getConditionalTypeWithCapture } from "./types.js";
 import { Checker_isMemberOfStringMapping, Checker_isTypeMatchedByTemplateLiteralType, getRecursionIdentity } from "../relater.js";
 import type { RecursionId } from "../relater.js";
@@ -1181,7 +1182,8 @@ export function Checker_getConditionalTypeInstantiationWithCapture(receiver: GoP
   if (root!.outerTypeParameters.length !== 0) {
     const typeArguments = Map(root!.outerTypeParameters, (tp: GoPtr<Type>): GoPtr<Type> => TypeMapper_Map(mapper, tp));
     const key = getConditionalTypeKey(typeArguments, alias, forConstraint);
-    let result = root!.instantiations.get(key);
+    const cached = root!.instantiations.get(key);
+    let result = cached;
     if (result === undefined || capture !== undefined) {
       const newMapper = newTypeMapper(root!.outerTypeParameters, typeArguments);
       const checkType = root!.checkType;
@@ -1201,6 +1203,9 @@ export function Checker_getConditionalTypeInstantiationWithCapture(receiver: GoP
           : Checker_getConditionalTypeWithCapture(receiver, root, newMapper, forConstraint, alias, capture);
       }
       if (capture === undefined) root!.instantiations.set(key, result);
+    }
+    if (capture !== undefined && cached !== undefined) {
+      return result !== undefined && Checker_isTypeIdenticalTo(receiver, result, cached) ? cached : undefined;
     }
     return result;
   }

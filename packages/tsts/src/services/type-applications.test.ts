@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
-import { createExtensionConditionalCapture } from "../extensions/conditional-type-evidence.js";
+import { createExtensionConditionalCapture, type ExtensionConditionalCapture, type ExtensionConditionalStep } from "../extensions/conditional-type-evidence.js";
 import { Type_AsConditionalType } from "../internal/checker/types.js";
+import { Checker_instantiateType } from "../internal/checker/checker/types.js";
+import { Checker_getConditionalTypeInstantiationWithCapture, Checker_popActiveMapper, Checker_pushActiveMapper } from "../internal/checker/checker/inference.js";
+import { Checker_combineTypeMappers, newTypeMapper } from "../internal/checker/mapper.js";
+import { Checker_instantiateTypeWithAliasAndCapture } from "../internal/checker/checker/symbols.js";
 
 function applicationSource() {
   const checked = createCompilerSessionFromFiles({
@@ -341,4 +345,153 @@ test("alias queries preserve retained argument ownership across files in one che
   assert.equal(pair!.bindings.length, 2, "the native Pair retains both authored bindings");
   assert.equal(pair!.bindings[0]?.argument === scalar, true, "the first binding retains the original scalar argument");
   assert.equal(pair!.bindings[1]?.argument === local, true, "the second binding retains the original local argument");
+});
+
+function nestedConditionalSource() {
+  const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/core.d.ts": testCoreDeclarations,
+    "/src/index.ts": `
+      export type TrueSelection<T> = T extends { value: infer Element } ? (Element extends string ? Element : never) : never;
+      export type FalseSelection<T> = T extends { value: infer Element } ? (Element extends string ? never : Element) : never;
+      export type ExtraSelection<T> = T extends string ? (T extends number ? never : T) : T;
+      export type ArraySelection<T> = T extends { value: infer Element } ? (Element extends string ? Element : Element)[] : never;
+      export type Await<Value> = Value extends null | undefined ? Value :
+        Value extends object & { then(onfulfilled: infer Callback, ...args: infer Arguments): any } ?
+          Callback extends (value: infer Element, ...args: infer Rest) => any ? Await<Element> : never : Value;
+      export type TextBox = { value: string };
+      export type NumberBox = { value: number };
+      export type PromiseBox = { then(onfulfilled: (value: number) => unknown): unknown };
+      export type Text = string;
+      export type Scalar = number;
+      export type Broad = any;
+    `,
+  }, compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" } }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "the nested conditional fixture is valid checked Source");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the nested fixture has no extension refusal");
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  return checked.getSourceFileQueries(file);
+}
+
+for (const [name, input, nestedBranch] of [
+  ["TrueSelection", "TextBox", "true"],
+  ["FalseSelection", "NumberBox", "false"],
+  ["ExtraSelection", "Broad", "false"],
+  ["Await", "PromiseBox", "true"],
+] as const) {
+  test(`conditional evidence retains nested ${name} selections on cold and warm checker caches`, () => {
+    const source = nestedConditionalSource();
+    const declaration = alias(source, name);
+    const argument = aliasType(source, input);
+    const first = source.typeShape.instantiateTypeAlias(declaration, [argument]);
+    assert.ok(first);
+    const conditions = findNodes(declaration, source.ast.children, source.ast.is.IsConditionalTypeNode);
+    assert.equal(conditions.length > 1, true, "the original alias has a genuine nested conditional");
+    assert.equal(first.conditionalSteps.some(step => step.conditional === conditions[1] && step.branch === nestedBranch), true,
+      "the selected nested branch is retained rather than stopping at its parent syntax");
+    if (name === "Await") {
+      const terminal = first.conditionalSteps.at(-1);
+      assert.equal(terminal?.selectedNode !== undefined && !source.ast.is.IsConditionalTypeNode(terminal.selectedNode), true,
+        "recursive thenable capture reaches its actual terminal branch");
+      assert.equal(terminal?.selectedType === aliasType(source, "Scalar"), true,
+        "the terminal selected value is the original checker scalar, not an inferred replacement");
+    }
+    const repeated = source.typeShape.instantiateTypeAlias(declaration, [argument]);
+    assert.ok(repeated);
+    assert.equal(repeated.result === first.result, true, "evidence does not replace the ordinary cached selected result");
+    assert.equal(repeated.bindings[0]?.declaration === first.bindings[0]?.declaration &&
+      repeated.bindings[0]?.argument === argument, true, "the original declaration and argument identities survive a warm query");
+    assert.equal(repeated.conditionalSteps.length, first.conditionalSteps.length, "a warm checker cache cannot suppress captured transitions");
+    assert.equal(repeated.conditionalSteps.every((step, index) => step.conditional === first.conditionalSteps[index]?.conditional &&
+      step.selectedNode === first.conditionalSteps[index]?.selectedNode && step.bindings.every((binding, bindingIndex) =>
+        binding.parameter === first.conditionalSteps[index]?.bindings[bindingIndex]?.parameter &&
+        binding.argument === first.conditionalSteps[index]?.bindings[bindingIndex]?.argument &&
+        binding.declarations.every((owner, ownerIndex) => owner === first.conditionalSteps[index]?.bindings[bindingIndex]?.declarations[ownerIndex]))), true,
+    "every selected branch retains the exact original declaration and mapper-produced binding values");
+  });
+}
+
+test("conditional evidence replays active-mapper cache hits without replacing their canonical result", () => {
+  const source = nestedConditionalSource();
+  const template = aliasType(source, "ArraySelection");
+  const conditional = Type_AsConditionalType(template);
+  const parameter = conditional?.root?.outerTypeParameters[0];
+  const argument = aliasType(source, "NumberBox");
+  assert.ok(conditional?.root && parameter && template.checker);
+  const checker = template.checker;
+  const mapper = newTypeMapper([parameter], [argument]);
+  Checker_pushActiveMapper(checker, mapper);
+  try {
+    assert.equal(checker.activeTypeMappersCaches[0]!.size, 0, "the native active-mapper owner starts with a cold cache");
+    const coldCapture = createExtensionConditionalCapture();
+    const cold = Checker_instantiateTypeWithAliasAndCapture(checker, template, mapper, undefined, coldCapture);
+    assert.equal(cold !== undefined && coldCapture.complete && coldCapture.steps.length >= 2, true,
+      "an explicit evidence cache miss retains the whole selected branch chain");
+    assert.equal(checker.activeTypeMappersCaches[0]!.size, 0,
+      "explicit evidence does not populate the ordinary active-mapper cache");
+    const ordinary = Checker_instantiateType(checker, template, mapper);
+    assert.ok(ordinary);
+    assert.equal(cold === ordinary, true, "cold evidence and ordinary instantiation retain the exact native selected result");
+    const retained = createExtensionConditionalCapture();
+    const nativeMappers: ExtensionConditionalStep["mapper"][] = [];
+    const capture: ExtensionConditionalCapture = {
+      get complete() { return retained.complete; },
+      get steps() { return retained.steps; },
+      record(root, branch, selectedNode, selectedMapper) {
+        nativeMappers.push(selectedMapper);
+        retained.record(root, branch, selectedNode, selectedMapper);
+      },
+    };
+    assert.equal(checker.activeTypeMappersCaches[0]!.size > 0, true,
+      "the exact native active-mapper cache is already warm before explicit capture");
+    const selected = Checker_instantiateTypeWithAliasAndCapture(checker, template, mapper, undefined, capture);
+    assert.equal(capture.complete, true, "the explicit evidence remains bounded and complete");
+    assert.equal(selected === ordinary, true, "capture preserves the exact ordinary selected result object");
+    assert.equal(capture.steps.length >= 2, true, "cached outer and nested-array selections both retain their evidence");
+    assert.equal(capture.steps.every(step => step.mapper !== undefined &&
+      source.ast.getSourceFile(step.conditional) === source.sourceFile), true,
+    "every captured transition retains the native mapper and original conditional owner");
+    assert.equal(capture.steps.every((step, index) => step.mapper === nativeMappers[index]), true,
+      "capture retains the exact mapper objects passed by the original checker decision");
+    const conditionalCapture = createExtensionConditionalCapture();
+    const direct = Checker_getConditionalTypeInstantiationWithCapture(checker, template,
+      Checker_combineTypeMappers(checker, conditional.mapper, mapper), false, undefined, conditionalCapture);
+    assert.equal(direct === ordinary && conditionalCapture.steps.length === capture.steps.length, true,
+      "the canonical conditional cache has the same result and complete evidence as the active-mapper owner");
+    assert.equal(Checker_instantiateType(checker, template, mapper) === ordinary, true,
+      "an evidence query never overwrites the ordinary instantiation cache");
+    assert.equal(checker.instantiationDepth, 0, "the same native depth owner drains after evidence recomputation");
+  } finally {
+    Checker_popActiveMapper(checker);
+  }
+});
+
+test("standard Awaited capture reaches the terminal branch through recursive Promise inference", () => {
+  const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/index.ts": `export type Wrapped<Value> = Awaited<Value>;
+      export type Input = Promise<Promise<number>>;
+      export type Scalar = number;`,
+  }, compilerOptions: { strict: true, target: "es2022", module: "esnext", moduleResolution: "bundler" } }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "the unchanged standard Awaited and Promise declarations are valid Source");
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const source = checked.getSourceFileQueries(file);
+  const declaration = alias(source, "Wrapped");
+  const argument = aliasType(source, "Input");
+  const scalar = aliasType(source, "Scalar");
+  const application = source.typeShape.instantiateTypeAlias(declaration, [argument]);
+  assert.ok(application);
+  const terminal = application.conditionalSteps.at(-1);
+  console.info("CONDITIONAL_AWAITED_TERMINAL", JSON.stringify({ steps: application.conditionalSteps.length,
+    branches: application.conditionalSteps.map(step => step.branch),
+    terminalKind: terminal?.selectedNode === undefined ? null : source.ast.kindName(terminal.selectedNode),
+    terminalIsScalar: terminal?.selectedType === scalar }));
+  assert.equal(terminal?.selectedNode !== undefined && !source.ast.is.IsConditionalTypeNode(terminal.selectedNode), true,
+    "the capture reaches the terminal selected syntax, not the thenable branch's nested conditional");
+  assert.equal(terminal?.selectedType === scalar && application.result === scalar, true,
+    "ordinary result and the captured terminal retain the exact original checker scalar");
+  const repeated = source.typeShape.instantiateTypeAlias(declaration, [argument]);
+  assert.equal(repeated?.result === application.result &&
+    repeated.conditionalSteps.length === application.conditionalSteps.length, true,
+  "the cached ordinary result cannot suppress the full recursive capture");
 });
