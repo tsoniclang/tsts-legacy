@@ -3,9 +3,13 @@ import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import {
   beginSelectedCallEvidenceFrame,
+  bindSelectedCallDefaultOwner,
+  bindSelectedCallDefaultContext,
   commitSelectedCallEvidenceFrame,
   journalSelectedCallEvidence,
   rollbackSelectedCallEvidenceFrame,
+  retainSelectedCallDefault,
+  selectedCallDefaultNode,
 } from "./selected-call-evidence-transaction.js";
 import * as core from "../../core/core.js";
 import * as slices from "../../../go/slices.js";
@@ -3226,8 +3230,10 @@ function buildUntypedResolvedCallEvidence(
 }
 
 function buildResolvedCallSelectedMethodTypeArguments(
+  receiver: Checker,
   node: Node,
   selectedSignature: Signature,
+  inferenceContext: InferenceContext | undefined,
 ): readonly ResolvedCallSelectedMethodTypeArgumentEvidence[] | undefined {
   const typeParameters = selectedSignature.target?.typeParameters ?? selectedSignature.typeParameters ?? [];
   if (typeParameters.length === 0) {
@@ -3246,11 +3252,14 @@ function buildResolvedCallSelectedMethodTypeArguments(
       throw new Error("A selected generic call signature lost an instantiated source type argument.");
     }
     const explicitTypeNode = explicitTypeNodes[index];
+    const defaultTypeNode = explicitTypeNode === undefined
+      ? selectedCallDefaultNode(receiver, inferenceContext, typeParameter, selectedType) : undefined;
     return Object.freeze({
       typeParameterName: typeParameter.symbol.Name,
       typeParameter,
       selectedType,
       ...(explicitTypeNode === undefined ? {} : { explicitTypeNode }),
+      ...(defaultTypeNode === undefined ? {} : { defaultTypeNode }),
     });
   }));
 }
@@ -3616,6 +3625,7 @@ function Checker_chooseOverloadWithSelectedArguments(
     let evidenceAccepted = false;
     try {
       const candidate = s!.candidates[0];
+      bindSelectedCallDefaultOwner(receiver!, evidenceDecision, candidate!);
       if (s!.typeArguments.length !== 0 || !Checker_hasCorrectArity(receiver, s!.node, s!.args, candidate, s!.signatureHelpTrailingComma)) {
         return undefined;
       }
@@ -3640,6 +3650,7 @@ function Checker_chooseOverloadWithSelectedArguments(
     let evidenceAccepted = false;
     try {
       const candidate = s!.candidates[candidateIndex];
+      bindSelectedCallDefaultOwner(receiver!, evidenceDecision, candidate!);
       if (!Checker_hasCorrectTypeArgumentArity(receiver, candidate, s!.typeArguments) || !Checker_hasCorrectArity(receiver, s!.node, s!.args, candidate, s!.signatureHelpTrailingComma)) {
         continue;
       }
@@ -3655,6 +3666,7 @@ function Checker_chooseOverloadWithSelectedArguments(
           }
         } else {
           inferenceContext = Checker_newInferenceContext(receiver, candidate!.typeParameters, candidate, core.IfElse(IsInJSFile(s!.node), InferenceFlagsAnyDefault, InferenceFlagsNone), undefined as unknown as TypeComparer);
+          bindSelectedCallDefaultContext(receiver!, evidenceDecision, inferenceContext!);
           typeArgumentTypes = Checker_inferTypeArguments(receiver, s!.node, candidate, s!.args, (s!.argCheckMode | CheckModeSkipGenericFunctions) as CheckMode, inferenceContext);
           if ((inferenceContext!.flags & InferenceFlagsSkippedGenericFunction) !== 0) {
             s!.argCheckMode = (s!.argCheckMode | CheckModeSkipGenericFunctions) as CheckMode;
@@ -3717,7 +3729,7 @@ function Checker_chooseOverloadWithSelectedArguments(
         }
       }
       s!.candidates[candidateIndex] = checkCandidate;
-      retainApplicableCallSelection(receiver!, s!.node!, output, checkCandidate!, selectedArguments);
+      retainApplicableCallSelection(receiver!, s!.node!, output, checkCandidate!, selectedArguments, inferenceContext);
       evidenceAccepted = true;
       return checkCandidate;
     } finally {
@@ -3737,6 +3749,7 @@ function retainApplicableCallSelection(
   output: ApplicableCallSelectionOutput | undefined,
   signature: Signature,
   selectedArguments: readonly (SelectedEffectiveCallArgument | undefined)[] | undefined,
+  inferenceContext?: InferenceContext,
 ): void {
   if (output === undefined) {
     return;
@@ -3744,7 +3757,7 @@ function retainApplicableCallSelection(
   if (selectedArguments === undefined || selectedArguments.some((argument) => argument === undefined)) {
     throw new Error("An applicable checked call lost an effective argument selection.");
   }
-  const sourceSelectedMethodTypeArguments = buildResolvedCallSelectedMethodTypeArguments(node, signature);
+  const sourceSelectedMethodTypeArguments = buildResolvedCallSelectedMethodTypeArguments(receiver, node, signature, inferenceContext);
   output.selection = Object.freeze({
     signature,
     selectedArguments: Object.freeze(selectedArguments.slice() as SelectedEffectiveCallArgument[]),
@@ -9247,6 +9260,7 @@ export function Checker_hasTypeParameterDefault(receiver: GoPtr<Checker>, t: GoP
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.fillMissingTypeArguments","kind":"method","status":"implemented","sigHash":"90119f31e42b5b3c6483f74a4486a50d2c36e8e47fd66a2b2a63c01cf4ffbd18","bodyHash":"53094ad900a81ee75d20b4e1e28ec02aebdcae494b0d9096524457dadbc4f47a"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retains original default syntax for native trailing-argument fills in the existing selected-call candidate journal without changing selected Types."}
  *
  * Go source:
  * func (c *Checker) fillMissingTypeArguments(typeArguments []*Type, typeParameters []*Type, minTypeArgumentCount int, isJavaScriptImplicitAny bool) []*Type {
@@ -9304,8 +9318,11 @@ export function Checker_fillMissingTypeArguments(receiver: GoPtr<Checker>, typeA
       }
       if (defaultType !== undefined) {
         result[i] = Checker_instantiateType(receiver, defaultType, newTypeMapper(typeParameters!, result as GoSlice<GoPtr<Type>>));
+        retainSelectedCallDefault(receiver!, undefined, typeParameters![i]!, result[i]!,
+          sourceTypeParameterDefaultNode(typeParameters![i]!));
       } else {
         result[i] = baseDefaultType;
+        retainSelectedCallDefault(receiver!, undefined, typeParameters![i]!, result[i]!, undefined);
       }
     }
     return result as GoSlice<GoPtr<Type>>;
@@ -9357,8 +9374,14 @@ export function Checker_getDefaultFromTypeParameter(receiver: GoPtr<Checker>, t:
   return undefined;
 }
 
+export function sourceTypeParameterDefaultNode(parameter: Type): Node | undefined {
+  return core.FirstNonNil(parameter.symbol?.Declarations ?? [], declaration =>
+    IsTypeParameterDeclaration(declaration) ? AsTypeParameterDeclaration(declaration)!.DefaultType : undefined);
+}
+
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getResolvedTypeParameterDefault","kind":"method","status":"implemented","sigHash":"df0b5f27b5a3ad3a7f7e37bc9b455d7dc3215612a0d28be3e13b5ebb30fa4f7d","bodyHash":"4203eefed124d92a7d77c86f54cc659c56fa486c3247c69112bd8d7a8103ddcb"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Shares the original default-node origin reader with selected-call transport; ordinary native default resolution and cache semantics are unchanged."}
  *
  * Go source:
  * func (c *Checker) getResolvedTypeParameterDefault(t *Type) *Type {
@@ -9413,12 +9436,7 @@ export function Checker_getResolvedTypeParameterDefault(receiver: GoPtr<Checker>
       d!.resolvedDefaultType = receiver!.resolvingDefaultType;
       let defaultType = receiver!.noConstraintType;
       if (t!.symbol !== undefined) {
-        const defaultDeclaration = core.FirstNonNil(t!.symbol!.Declarations ?? [], (decl: GoPtr<Node>) => {
-          if (IsTypeParameterDeclaration(decl)) {
-            return AsTypeParameterDeclaration(decl)!.DefaultType;
-          }
-          return undefined;
-        });
+        const defaultDeclaration = sourceTypeParameterDefaultNode(t!);
         if (defaultDeclaration !== undefined) {
           defaultType = Checker_getTypeFromTypeNode(receiver, defaultDeclaration);
         }

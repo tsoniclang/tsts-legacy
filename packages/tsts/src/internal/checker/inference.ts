@@ -14,6 +14,7 @@ import type { Symbol, SymbolTable } from "../ast/symbol.js";
 import { SymbolFlagsOptional, SymbolFlagsProperty } from "../ast/symbolflags.js";
 import { CheckFlagsReadonly, CheckFlagsReverseMapped } from "../ast/checkflags.js";
 import { LinkStore_Get } from "../core/linkstore.js";
+import { copySelectedCallDefaults, retainSelectedCallDefault } from "./checker/selected-call-evidence-transaction.js";
 import {
   type Checker,
   type InferenceContext,
@@ -68,6 +69,7 @@ import {
   Checker_getBaseSignature,
   Checker_getConstraintOfTypeParameter,
   Checker_getDefaultFromTypeParameter,
+  sourceTypeParameterDefaultNode,
   Checker_getErasedSignature,
   Checker_getMinTypeArgumentCount,
   Checker_fillMissingTypeArguments,
@@ -2853,6 +2855,7 @@ export function Checker_newInferenceContext(receiver: GoPtr<Checker>, typeParame
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/inference.go::method::Checker.cloneInferenceContext","kind":"method","status":"implemented","sigHash":"b528c8557efc41276497cfd0a0ece81df38ffc94e84beb7e3bce2cd5ff238da8","bodyHash":"f6e00d8c073892864f75139c1caa233e8ef774e4d4a50f84b0a1ad50c7a6a090"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retains only the exact copied selected-default contribution in the existing bounded call-evidence frame; native inference caches and signatures are unchanged."}
  *
  * Go source:
  * func (c *Checker) cloneInferenceContext(n *InferenceContext, extraFlags InferenceFlags) *InferenceContext {
@@ -2866,11 +2869,14 @@ export function Checker_cloneInferenceContext(receiver: GoPtr<Checker>, n: GoPtr
   if (n === undefined) {
     return undefined;
   }
-  return Checker_newInferenceContextWorker(receiver, core.Map(n!.inferences, cloneInferenceInfo), n!.signature, n!.flags | extraFlags, n!.compareTypes);
+  const cloned = Checker_newInferenceContextWorker(receiver, core.Map(n!.inferences, cloneInferenceInfo), n!.signature, n!.flags | extraFlags, n!.compareTypes);
+  copySelectedCallDefaults(receiver!, n!, cloned!);
+  return cloned;
 }
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/inference.go::method::Checker.cloneInferredPartOfContext","kind":"method","status":"implemented","sigHash":"5494df88169cd173775b5f3ee1adbec489ccace52f60371081cfcdf04a80d9fd","bodyHash":"4556cd82622a921a32b3e5f484e133d41af729c94b5a93e5c31432d7c9394628"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retains only the exact copied selected-default contribution in the existing bounded call-evidence frame; native inference caches and signatures are unchanged."}
  *
  * Go source:
  * func (c *Checker) cloneInferredPartOfContext(n *InferenceContext) *InferenceContext {
@@ -2886,7 +2892,9 @@ export function Checker_cloneInferredPartOfContext(receiver: GoPtr<Checker>, n: 
   if (inferences.length === 0) {
     return undefined;
   }
-  return Checker_newInferenceContextWorker(receiver, core.Map(inferences, cloneInferenceInfo), n!.signature, n!.flags, n!.compareTypes);
+  const cloned = Checker_newInferenceContextWorker(receiver, core.Map(inferences, cloneInferenceInfo), n!.signature, n!.flags, n!.compareTypes);
+  copySelectedCallDefaults(receiver!, n!, cloned!);
+  return cloned;
 }
 
 /**
@@ -2972,6 +2980,7 @@ export function Checker_inferFromIntraExpressionSites(receiver: GoPtr<Checker>, 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/inference.go::method::Checker.getInferredType","kind":"method","status":"implemented","sigHash":"436a997c39ab435c05948be5e6daf128288aeec093ec139ffeb8092f98b82931","bodyHash":"93777b5af3ccc033fc95ecbba08bb7460666f77b99316c7a4447ed1d127cc4ac"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retains authored-default origin only when the native branch selects it and clears it on native recomputation or constraint replacement; the existing bounded selected-call journal owns evidence."}
  *
  * Go source:
  * func (c *Checker) getInferredType(n *InferenceContext, index int) *Type {
@@ -3072,6 +3081,7 @@ export function Checker_getInferredType(receiver: GoPtr<Checker>, n: GoPtr<Infer
     }
     let inferredType: GoPtr<Type> = undefined;
     let fallbackType: GoPtr<Type> = undefined;
+    let defaultTypeNode: Node | undefined;
     if (n!.signature !== undefined) {
       let inferredCovariantType: GoPtr<Type> = undefined;
       if (inference!.candidates.length !== 0) {
@@ -3102,6 +3112,7 @@ export function Checker_getInferredType(receiver: GoPtr<Checker>, n: GoPtr<Infer
         const defaultType = Checker_getDefaultFromTypeParameter(receiver, inference!.typeParameter);
         if (defaultType !== undefined) {
           inferredType = Checker_instantiateType(receiver, defaultType, mergeTypeMappers(Checker_newBackreferenceMapper(receiver, n, index), n!.nonFixingMapper));
+          defaultTypeNode = sourceTypeParameterDefaultNode(inference!.typeParameter!);
         }
       }
     } else {
@@ -3117,6 +3128,7 @@ export function Checker_getInferredType(receiver: GoPtr<Checker>, n: GoPtr<Infer
       if (inferredType !== undefined) {
         const constraintWithThis = Checker_getTypeWithThisArgument(receiver, instantiatedConstraint, inferredType, false);
         if (n!.compareTypes(inferredType, constraintWithThis, false) === TernaryFalse) {
+          defaultTypeNode = undefined;
           let filteredByConstraint: GoPtr<Type> = undefined;
           if (inference!.priority === InferencePriorityReturnType) {
             filteredByConstraint = Checker_mapType(receiver, inferredType, (t) =>
@@ -3127,11 +3139,13 @@ export function Checker_getInferredType(receiver: GoPtr<Checker>, n: GoPtr<Infer
         }
       }
       if (inferredType === undefined) {
+        defaultTypeNode = undefined;
         inferredType = (fallbackType !== undefined && n!.compareTypes(fallbackType, Checker_getTypeWithThisArgument(receiver, instantiatedConstraint, fallbackType, false), false) !== TernaryFalse) ? fallbackType : instantiatedConstraint;
       }
       inference!.inferredType = inferredType;
     }
     Checker_clearActiveMapperCaches(receiver);
+    retainSelectedCallDefault(receiver!, n!, inference!.typeParameter!, inference!.inferredType!, defaultTypeNode);
   }
   return inference!.inferredType;
 }
