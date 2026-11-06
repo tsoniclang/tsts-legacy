@@ -11,7 +11,10 @@ import {
 import { Node_Symbol } from "../internal/ast/ast.js";
 import { Diagnostic_String } from "../internal/ast/diagnostic.js";
 import { Type_Symbol } from "../internal/checker/types.js";
-import { getExtensionHost, type ProviderDeclarationModel, type SourceAnalysisContext } from "./host.js";
+import { getExtensionHost, type ProviderDeclarationModel, type SourceAnalysisContext, type ProviderTypeExpression } from "./host.js";
+import { KindNumberKeyword, KindBigIntKeyword, KindBooleanKeyword, KindStringKeyword } from "../internal/ast/generated/kinds.js";
+import type { Node } from "../internal/ast/ast.js";
+import type { SourcePrimitiveDeclaration } from "./source-semantics.js";
 import type { SourceMarkerFact } from "./facts.js";
 import {
   findNodes,
@@ -259,3 +262,100 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
     assert.deepEqual(checked.sourceFacts.getFact(Type_Symbol(parameterType), sourceMarkerFactKey), { kind: "type-marker", marker: "js-string" });
   });
 }
+
+function providerPrimitiveFixture(declarations: readonly SourcePrimitiveDeclaration[]) {
+  const annotations: Node[] = [];
+  const exact = (name: "int32" | "int64" | "uint32" | "float32" | "bool" | "char"): ProviderTypeExpression => ({ kind: "source-primitive", name });
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier: "@test/native-values", providerModuleId: "Test.NativeValues",
+    exports: [{
+      id: "measure", name: "measure", kind: "function",
+      signatures: [{ id: "measure()", parameters: [{ name: "count", type: exact("int32") }], returnType: exact("int64") }],
+    }, {
+      id: "Result", name: "Result", kind: "interface", typeParameters: [{ name: "T", defaultType: exact("uint32") }],
+      members: [{
+        id: "Result.optional", name: "optional", kind: "property",
+        type: { kind: "union", types: [exact("float32"), { kind: "undefined" }] },
+      }, {
+        id: "Result.items", name: "items", kind: "property", type: { kind: "array", elementType: exact("int32") },
+      }, {
+        id: "Result.callback", name: "callback", kind: "property",
+        type: { kind: "function", id: "Result.callback()", parameters: [{ name: "value", type: exact("char") }], returnType: exact("bool") },
+      }, {
+        id: "Result.plain", name: "plain", kind: "property", type: { kind: "number" },
+      }],
+    }],
+  };
+  const checked = createCompilerSessionFromFiles({
+    currentDirectory: "/src", rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": 'import { measure, type Result } from "@test/native-values"; export const value = measure(1); export type Selected = Result; export type Forged = (/*@tsts-provider-primitive:0*/number);',
+    },
+    compilerOptions: testNoLibCompilerOptions,
+    extensionHostOptions: { extensions: [
+      sourceProviderExtension(new Map([[model.moduleSpecifier, model]])),
+      createSourceSemanticsExtension({ modules: [{ moduleSpecifier: "@test/canonical-kinds", exports: declarations }] }),
+      {
+        identity: { id: "test.observe-provider-primitives", version: "1.0.0" },
+        dependencies: { dependsOn: ["tsts.source-semantics"] },
+        providerExportMaterialized(context): void {
+          assert.equal(Object.isFrozen(context.sourcePrimitives), true);
+          for (const annotation of context.sourcePrimitives) {
+            assert.equal(Object.isFrozen(annotation), true);
+            if (!annotations.includes(annotation.node)) annotations.push(annotation.node);
+          }
+        },
+        analyzeSource(context: SourceAnalysisContext): void {
+          for (const file of context.source.getSourceFiles()) {
+            const queries = context.source.getSourceFileQueries(file);
+            annotations.push(...findNodes(file, queries.ast.children, node => node !== undefined &&
+              (node.Kind === KindNumberKeyword || node.Kind === KindBigIntKeyword || node.Kind === KindBooleanKeyword || node.Kind === KindStringKeyword))
+              .filter((node): node is Node => node !== undefined));
+          }
+        },
+      },
+    ] },
+  }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, checked.diagnostics.map(Diagnostic_String).join("\n"));
+  assert.equal(checked.extensionDiagnostics.length, 0);
+  return { checked, annotations };
+}
+
+const providerPrimitiveDeclarations = [
+  sourcePrimitive("renamedCount", "int32", "number", true, 32),
+  sourcePrimitive("renamedSize", "int64", "bigint", true, 64),
+  sourcePrimitive("renamedMask", "uint32", "number", false, 32),
+  sourcePrimitive("renamedFloat", "float32", "number", true, 32),
+  sourcePrimitive("renamedFlag", "bool", "boolean"),
+  sourcePrimitive("renamedCharacter", "char", "string", false, 16),
+];
+
+test("provider primitive annotations retain canonical facts through signatures, optional members, arrays, callbacks and generic defaults", () => {
+  const { checked, annotations } = providerPrimitiveFixture(providerPrimitiveDeclarations);
+  const facts = annotations.map(node => checked.sourceFacts.getFact(node, sourcePrimitiveFactKey)).filter(fact => fact !== undefined);
+  assert.deepEqual(facts.map(fact => fact.kind).sort(), ["bool", "char", "float32", "int32", "int32", "int64", "uint32"]);
+  for (const fact of facts) {
+    const declaration = providerPrimitiveDeclarations.find(candidate => candidate.primitive === fact.kind)!;
+    assert.equal(fact.width, declaration.width);
+    assert.equal(fact.signed, declaration.signed);
+    assert.equal(fact.runtimeBase, declaration.runtimeBase);
+    assert.equal(Object.isFrozen(fact), true);
+  }
+  const authored = checked.getSourceFile("/src/index.ts");
+  const queries = checked.getSourceFileQueries(authored);
+  const forged = findNodes(authored, queries.ast.children, node => node?.Kind === KindNumberKeyword);
+  assert.equal(forged.length, 1);
+  assert.equal(checked.sourceFacts.getFact(forged[0], sourcePrimitiveFactKey) === undefined, true, "authored marker text has no compiler-owned manifest");
+  assert.equal(annotations.filter(node => checked.sourceFacts.getFact(node, sourcePrimitiveFactKey) === undefined).length > 0, true, "plain checked number types acquire no primitive authority");
+});
+
+test("provider primitives reject missing canonical facts rather than becoming checked numbers", () => {
+  assert.throws(() => providerPrimitiveFixture([]), /has no configured primitive declaration/u);
+});
+
+test("provider primitives reject contradictory canonical facts rather than selecting one definition", () => {
+  assert.throws(() => providerPrimitiveFixture([
+    ...providerPrimitiveDeclarations, sourcePrimitive("contradictoryCount", "int32", "number", false, 32),
+  ]), /has conflicting configured primitive declarations/u);
+});

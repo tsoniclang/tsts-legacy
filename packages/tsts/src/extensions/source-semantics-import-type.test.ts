@@ -9,7 +9,7 @@ import {
 } from "../index.js";
 import type { Node } from "../internal/ast/ast.js";
 
-function fixture(annotation: string) {
+function fixture(annotation: string, namedImports = true) {
   const checked = createCompilerSessionFromFiles({
     currentDirectory: "/src",
     files: {
@@ -18,8 +18,9 @@ function fixture(annotation: string) {
       }),
       "/src/node_modules/@test/words/index.d.ts": "export type int32 = number; export type int64 = bigint;",
       "/src/unrelated.ts": "export type int32 = number;",
-      "/src/index.ts": `import type { int32, int64 } from "@test/words";
-        type Named32 = int32; type Named64 = int64; type Imported = ${annotation};`,
+      "/src/index.ts": namedImports ? `import type { int32, int64 } from "@test/words";
+        type Named32 = int32; type Named64 = int64; type Imported = ${annotation};`
+        : `type Imported = ${annotation};`,
     },
     compilerOptions: { strict: true, target: "es2022", module: "esnext", moduleResolution: "bundler" },
     extensionHostOptions: { extensions: [createSourceSemanticsExtension({ modules: [{
@@ -73,4 +74,23 @@ test("an unrelated ImportType with the same primitive spelling gets no configure
   assert.equal(checked.sourceFacts.getFact(imported, sourcePrimitiveFactKey) === undefined, true);
   assert.equal(checked.sourceFacts.getFact(qualifier, sourcePrimitiveFactKey) === undefined, true);
   assert.equal(checked.sourceFacts.getFact(imported, canonicalIdentityFactKey) === undefined, true);
+});
+
+for (const [name, runtimeBase, width] of [["int32", "number", 32], ["int64", "bigint", 64]] as const) {
+  test(`ImportType-only global ${name} alias publishes its exact selected primitive without a named import`, () => {
+    const { checked, file, imported, qualifier } = fixture(`import("@test/words").${name}`, false);
+    const checker = checked.getSourceFileQueries(file).checker;
+    const selected = checker.getSymbolAtLocation(qualifier);
+    assert.equal(selected !== undefined && checker.getSymbolDeclarations(selected).length > 0, true, "the actual exported declaration is checked");
+    const expected = { kind: name, runtimeBase, signed: true, width };
+    assert.deepEqual(checked.sourceFacts.getFact(imported, sourcePrimitiveFactKey), expected);
+    assert.deepEqual(checked.sourceFacts.getFact(qualifier, sourcePrimitiveFactKey), expected);
+    assert.equal(checked.sourceFacts.getFact(imported, canonicalIdentityFactKey)?.id, `@test/words::${name}`);
+  });
+}
+
+test("ImportType-only foreign declarations cannot acquire a configured primitive through spelling", () => {
+  const { checked, imported, qualifier } = fixture('import("./unrelated.js").int32', false);
+  assert.equal(checked.sourceFacts.getFact(imported, sourcePrimitiveFactKey) === undefined, true);
+  assert.equal(checked.sourceFacts.getFact(qualifier, sourcePrimitiveFactKey) === undefined, true);
 });

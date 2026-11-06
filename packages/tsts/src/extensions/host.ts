@@ -60,6 +60,7 @@ import {
   renderProviderFunctionSignatureMarker,
   type ProviderRenderedFunctionSignature,
 } from "./provider-callable-signatures.js";
+import { renderProviderSourcePrimitiveMarker, type ProviderRenderedSourcePrimitive, type ProviderSourcePrimitiveAnnotation } from "./provider-source-primitives.js";
 import {
   assertProviderAncillaryAggregateScalarCodeUnits,
   assertProviderBoundaryString,
@@ -346,6 +347,7 @@ export interface SourceAnalysisContext {
 export interface ProviderExportMaterializationContext {
   readonly symbol: Symbol;
   readonly declaration: ProviderVirtualDeclarationFact;
+  readonly sourcePrimitives: readonly ProviderSourcePrimitiveAnnotation[];
   readonly facts: Pick<SourceAnalysisFactAccess, "set">;
 }
 
@@ -3706,7 +3708,7 @@ export class ExtensionHost {
     return this.facts[factStoreSetForHost](subject, key, value, evidence);
   }
 
-  [extensionHostProviderExportMaterialized](symbol: Symbol): void {
+  [extensionHostProviderExportMaterialized](symbol: Symbol, sourcePrimitives: readonly ProviderSourcePrimitiveAnnotation[]): void {
     if (this.#semanticFinalizationState !== "open") {
       throw new Error("Provider exports must materialize before semantic finalization.");
     }
@@ -3727,6 +3729,7 @@ export class ExtensionHost {
             materialized(Object.freeze({
               symbol,
               declaration,
+              sourcePrimitives: Object.freeze(sourcePrimitives.map(annotation => Object.freeze({ ...annotation }))),
               facts: Object.freeze({ set: facts.set }),
             }));
           } finally {
@@ -6123,7 +6126,12 @@ function providerVirtualCompilerMetadataEqual(
     && left.directDeclarations.every((declaration, index) =>
       declaration.id === right.directDeclarations[index]?.id
       && declaration.localName === right.directDeclarations[index]?.localName)
-    && providerRenderedFunctionSignaturesEqual(left.renderedFunctionSignatures, right.renderedFunctionSignatures);
+    && providerRenderedFunctionSignaturesEqual(left.renderedFunctionSignatures, right.renderedFunctionSignatures)
+    && left.renderedSourcePrimitives.length === right.renderedSourcePrimitives.length
+    && left.renderedSourcePrimitives.every((primitive, index) =>
+      primitive.marker === right.renderedSourcePrimitives[index]?.marker
+      && primitive.exportId === right.renderedSourcePrimitives[index]?.exportId
+      && primitive.primitive === right.renderedSourcePrimitives[index]?.primitive);
 }
 
 function providerDeclarationMaterializationEquals(
@@ -6164,6 +6172,7 @@ function renderProviderDeclarationModel(model: ProviderDeclarationModel, options
     exactImportsInTypePositions: options.exactImportsInTypePositions === true,
     directDeclarations: new Map(),
     renderedFunctionSignatures: [],
+    renderedSourcePrimitives: [],
   };
   const hasDirectDeclarations = model.exports.some((declaration) =>
     !canonicalLocalNameByExportName.has(getProviderSourceExportName(declaration)));
@@ -6260,6 +6269,7 @@ function snapshotProviderVirtualCompilerMetadata(context: ProviderRenderContext)
     directDeclarations: Object.freeze([...context.directDeclarations].map(([id, localName]) =>
       Object.freeze({ id, localName }))),
     renderedFunctionSignatures: Object.freeze([...context.renderedFunctionSignatures]),
+    renderedSourcePrimitives: Object.freeze([...context.renderedSourcePrimitives]),
   });
 }
 
@@ -6290,6 +6300,7 @@ interface ProviderRenderContext {
   readonly exactImportsInTypePositions: boolean;
   readonly directDeclarations: Map<string, string>;
   readonly renderedFunctionSignatures: ProviderRenderedFunctionSignature[];
+  readonly renderedSourcePrimitives: ProviderRenderedSourcePrimitive[];
   readonly declaration?: ProviderExportDeclaration;
   readonly member?: ProviderMemberDeclaration;
 }
@@ -6637,8 +6648,14 @@ function renderProviderTypeExpressionWorker(type: ProviderTypeExpression, parent
     case "bigint":
     case "object":
       return type.kind;
-    case "source-primitive":
-      return renderSourcePrimitiveType(type.name);
+    case "source-primitive": {
+      if (context.declaration === undefined) {
+        throw new Error("Provider source primitive was rendered without an owning declaration.");
+      }
+      const marker = context.renderedSourcePrimitives.length;
+      context.renderedSourcePrimitives.push(Object.freeze({ marker, exportId: context.declaration.id, primitive: type.name }));
+      return `(${renderProviderSourcePrimitiveMarker(marker)}${renderSourcePrimitiveType(type.name)})`;
+    }
     case "source-global":
       return type.typeArguments === undefined || type.typeArguments.length === 0
         ? `globalThis.${type.name}`

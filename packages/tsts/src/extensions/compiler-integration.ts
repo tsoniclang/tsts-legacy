@@ -15,15 +15,19 @@ import {
   KindEnumDeclaration,
   KindEnumMember,
   KindCallSignature,
+  KindBigIntKeyword,
+  KindBooleanKeyword,
   KindFunctionType,
   KindIndexSignature,
   KindInterfaceDeclaration,
   KindMethodDeclaration,
   KindMethodSignature,
   KindNeverKeyword,
+  KindNumberKeyword,
   KindPropertyDeclaration,
   KindPropertyAccessExpression,
   KindPropertySignature,
+  KindStringKeyword,
   KindTypeAliasDeclaration,
   KindTypeLiteral,
   KindVariableDeclaration,
@@ -62,6 +66,12 @@ import {
   type ProviderVirtualCompilerArtifact,
 } from "./provider-virtual-internal.js";
 import { parseProviderFunctionSignatureMarker, providerFunctionSignatureMarkerMaximumLength } from "./provider-callable-signatures.js";
+import {
+  parseProviderSourcePrimitiveMarker,
+  providerSourcePrimitiveMarkerMaximumLength,
+  type ProviderRenderedSourcePrimitive,
+  type ProviderSourcePrimitiveAnnotation,
+} from "./provider-source-primitives.js";
 
 export function recordBoundSourceFileExtensionFacts(program: object, file: GoPtr<SourceFile>): void {
   const extensionHost = getExtensionHost(program);
@@ -102,6 +112,7 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
   }, evidence);
   extensionHost[extensionHostSetFact](file, providerVirtualDeclarationFactKey, getProviderVirtualDeclarationFact(virtualModule), evidence);
   recordProviderVirtualFunctionSignatureFacts(extensionHost, file, virtualModule, compilerMetadata.renderedFunctionSignatures, evidence);
+  const sourcePrimitives = bindProviderSourcePrimitives(file, compilerMetadata.renderedSourcePrimitives);
 
   const fileSymbol = Node_Symbol(file as GoPtr<Node>);
   if (fileSymbol === undefined) {
@@ -144,7 +155,7 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
     if (symbol === undefined) {
       throw new Error(`Provider virtual artifact '${virtualModule.fileName}' did not bind export identity '${declaration.id}'.`);
     }
-    recordProviderVirtualExportSymbolFacts(extensionHost, symbol, virtualModule, declaration, evidence);
+    recordProviderVirtualExportSymbolFacts(extensionHost, symbol, virtualModule, declaration, evidence, sourcePrimitives.get(declaration.id) ?? []);
 
     if (directName === undefined) {
       continue;
@@ -154,7 +165,7 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
       throw new Error(`Provider virtual artifact '${virtualModule.fileName}' did not bind direct declaration '${declaration.id}'.`);
     }
     if (directSymbol !== symbol) {
-      recordProviderVirtualExportSymbolFacts(extensionHost, directSymbol, virtualModule, declaration, evidence);
+      recordProviderVirtualExportSymbolFacts(extensionHost, directSymbol, virtualModule, declaration, evidence, sourcePrimitives.get(declaration.id) ?? []);
     }
 
     if (declaration.signatures === undefined || declaration.signatures.length === 0) {
@@ -191,12 +202,52 @@ function recordProviderVirtualModuleFacts(extensionHost: ExtensionHost, file: So
   }
 }
 
+function bindProviderSourcePrimitives(
+  file: SourceFile,
+  primitives: readonly ProviderRenderedSourcePrimitive[],
+): ReadonlyMap<string, readonly ProviderSourcePrimitiveAnnotation[]> {
+  const annotations = new Map<string, ProviderSourcePrimitiveAnnotation[]>();
+  if (primitives.length === 0) return annotations;
+  const sourceText = SourceFile_Text(file);
+  const byteLength = utf8.StringByteLen(sourceText);
+  const used = new Set<number>();
+  const visit = (node: Node): void => {
+    if (node.Kind === KindNumberKeyword || node.Kind === KindBigIntKeyword
+      || node.Kind === KindBooleanKeyword || node.Kind === KindStringKeyword) {
+      const start = Node_Pos(node);
+      const marker = parseProviderSourcePrimitiveMarker(utf8.StringByteSlice(
+        sourceText, start, Math.min(byteLength, start + providerSourcePrimitiveMarkerMaximumLength),
+      ));
+      if (marker !== undefined) {
+        const primitive = primitives[marker];
+        if (primitive === undefined || primitive.marker !== marker || used.has(marker)) {
+          throw new Error("Provider source-primitive annotation has an invalid or duplicate manifest marker.");
+        }
+        used.add(marker);
+        const selected = annotations.get(primitive.exportId) ?? [];
+        selected.push(Object.freeze({ node, primitive: primitive.primitive }));
+        annotations.set(primitive.exportId, selected);
+      }
+    }
+    Node_ForEachChild(node, child => {
+      if (child !== undefined) visit(child);
+      return false;
+    });
+  };
+  visit(file);
+  if (used.size !== primitives.length) {
+    throw new Error("Provider virtual artifact did not bind every source-primitive annotation.");
+  }
+  return annotations;
+}
+
 function recordProviderVirtualExportSymbolFacts(
   extensionHost: ExtensionHost,
   symbol: Symbol,
   virtualModule: ProviderVirtualModuleArtifact,
   declaration: ProviderExportDeclaration,
   evidence: readonly ExtensionEvidence[],
+  sourcePrimitives: readonly ProviderSourcePrimitiveAnnotation[],
 ): void {
   const exportName = getProviderSourceExportName(declaration);
   extensionHost[extensionHostSetFact](symbol, canonicalIdentityFactKey, {
@@ -212,7 +263,7 @@ function recordProviderVirtualExportSymbolFacts(
   }, evidence);
   const publication = extensionHost[extensionHostSetFact](symbol, providerVirtualDeclarationFactKey,
     getProviderVirtualDeclarationFact(virtualModule, declaration), evidence);
-  if (publication === "inserted") extensionHost[extensionHostProviderExportMaterialized](symbol);
+  if (publication === "inserted") extensionHost[extensionHostProviderExportMaterialized](symbol, sourcePrimitives);
 }
 
 function recordProviderVirtualFunctionSignatureFacts(

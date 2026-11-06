@@ -130,7 +130,7 @@ test("provider export notifications publish exact owned markers before source an
     name: "Error",
     message: "Extension callback capabilities cannot be used outside their host-owned callback.",
   });
-  assert.throws(() => host[extensionHostProviderExportMaterialized](event.symbol),
+  assert.throws(() => host[extensionHostProviderExportMaterialized](event.symbol, []),
     /before semantic finalization/u);
   assert.equal(events.length, eventCount);
 });

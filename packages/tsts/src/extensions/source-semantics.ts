@@ -18,7 +18,7 @@ import {
   Node_TypeArguments,
 } from "../internal/ast/ast.js";
 import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
-import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsImportTypeNode, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
+import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsImportTypeNode, AsLiteralTypeNode, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindCallExpression,
   KindExportDeclaration,
@@ -236,6 +236,7 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
         resolveSourcePrimitiveFact(subject, resolverContext, modules));
     },
     providerExportMaterialized(context): void {
+      recordCanonicalProviderSourcePrimitives(context, modules);
       recordCanonicalProviderTypeMarker(context, modules);
     },
     analyzeSource(context): void {
@@ -303,6 +304,23 @@ function recordConfiguredSourceSemanticsDeclarations(
       }
     }
   }
+  visitSourceSemanticsNode(sourceFile, node => {
+    if (node?.Kind !== KindImportType) return;
+    const imported = AsImportTypeNode(node);
+    const moduleSpecifier = AsLiteralTypeNode(imported?.Argument)?.Literal;
+    if (imported?.IsTypeOf || imported?.Qualifier === undefined || moduleSpecifier?.Kind !== KindStringLiteral) return;
+    const module = modules.find(candidate => candidate.moduleSpecifier === Node_Text(moduleSpecifier));
+    if (module === undefined) return;
+    const selected = checker.getSymbolAtLocation(imported.Qualifier);
+    if (selected === undefined) return;
+    const exported = checker.getExportsOfModule(checker.getModuleSymbolFromSpecifier(moduleSpecifier))
+      .find(candidate => candidate === selected);
+    if (exported === undefined) return;
+    const exportName = checker.getSymbolName(exported);
+    if (!module.primitivesByExportName.has(exportName)) return;
+    facts.set(selected, selectedSourcePrimitiveDeclarationFactKey,
+      createSourcePrimitiveSelection(module, exportName), createPrimitiveEvidence(module, exportName));
+  });
 }
 
 function recordSourceSemanticsDeclarationAliases(
@@ -582,6 +600,25 @@ function recordSourceSemanticsCallMarkers(
     }
     recordSourceSemanticsCallMarker(facts, diagnostics, extensionId, checker, node, callInfo, marker);
   });
+}
+
+function recordCanonicalProviderSourcePrimitives(
+  context: ProviderExportMaterializationContext,
+  modules: readonly SourceSemanticsModuleRuntime[],
+): void {
+  for (const annotation of context.sourcePrimitives) {
+    const declarations = modules.flatMap(module => [...module.primitivesByExportName.values()])
+      .filter(declaration => declaration.primitive === annotation.primitive);
+    const selected = declarations[0];
+    if (selected === undefined) {
+      throw new Error(`Provider source primitive '${annotation.primitive}' has no configured primitive declaration.`);
+    }
+    const fact = stripExportName(selected);
+    if (declarations.some(declaration => !sourcePrimitiveFactKey.equals(fact, stripExportName(declaration)))) {
+      throw new Error(`Provider source primitive '${annotation.primitive}' has conflicting configured primitive declarations.`);
+    }
+    context.facts.set(annotation.node, sourcePrimitiveFactKey, fact, [{ message: "exact provider source-primitive annotation" }]);
+  }
 }
 
 function recordCanonicalProviderTypeMarker(
