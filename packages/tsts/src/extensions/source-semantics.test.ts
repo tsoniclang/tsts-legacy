@@ -965,14 +965,11 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
     extended.extensionHost.facts.get(localCall, pointerOperationFactKey),
     undefined,
   );
-  assert.deepEqual(
-    extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
-    [
-      "TSTS_SOURCE_SEMANTICS_0002",
-      "TSTS_SOURCE_SEMANTICS_0002",
-      "TSTS_SOURCE_SEMANTICS_0002",
-    ],
-  );
+  // Legacy publishes facts only: the writable-storage refusal is the Host place rule (TSONIC_ARGUMENT_MARKER_NOT_PLACE).
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode), []);
+  for (const call of [rejectedCall, rejectedExpressionCall, rejectedConstantCall]) {
+    assert.deepEqual(extended.extensionHost.facts.get(call, sourceMarkerFactKey), { kind: "call-marker", marker: "address-of" });
+  }
 });
 
 test("imported pointer storage retains canonical declaration identity and mutability", () => {
@@ -1005,8 +1002,8 @@ test("imported pointer storage retains canonical declaration identity and mutabi
   assert.equal(GetSourceFileOfNode(first.storageDeclaration), Program_GetSourceFile(program, "/src/values.ts"));
   assert.equal(facts[2], undefined);
   assert.equal(facts[3], undefined);
-  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode),
-    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"]);
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode), []);
+  assert.equal(extended.extensionHost.facts.get(getCallExpression(index, "addressOf", 2), sourceMarkerFactKey)?.kind, "call-marker");
 });
 
 test("source-semantics records opaque raw-pointer identity operations by declaration identity", () => {

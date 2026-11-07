@@ -10,7 +10,10 @@ import {
   rollbackSelectedCallEvidenceFrame,
   retainSelectedCallDefault,
   selectedCallDefaultNode,
+  selectedCallInferenceJournal,
 } from "./selected-call-evidence-transaction.js";
+import { selectedCallInferenceEvidence, withSelectedCallInferenceOrigin } from "./selected-call-inference-evidence.js";
+import type { ResolvedCallInferenceEvidence } from "../types.js";
 import * as core from "../../core/core.js";
 import * as slices from "../../../go/slices.js";
 import type { Number } from "../../jsnum/jsnum.js";
@@ -3162,6 +3165,7 @@ function buildApplicableResolvedCallEvidence(
     optionalChain: IsOptionalChain(node),
     selectedSignature,
     sourceSelectedSignatureKind: "resolved",
+    sourceInferenceContributions: bindSelectedCallInferenceOrigins(selection),
     ...(sourceSelectedMethodTypeArguments === undefined ? {} : { sourceSelectedMethodTypeArguments }),
     sourceSelectedSignatureParameters,
     sourceCallee: Object.freeze({
@@ -3209,6 +3213,7 @@ function buildUntypedResolvedCallEvidence(
     optionalChain: IsOptionalChain(node),
     selectedSignature,
     sourceSelectedSignatureKind: "untyped",
+    sourceInferenceContributions: Object.freeze({ kind: "unavailable" }),
     sourceSelectedSignatureParameters: Object.freeze([]),
     sourceCallee: Object.freeze({
       expression: callee,
@@ -3603,6 +3608,7 @@ export function Checker_chooseOverload(receiver: GoPtr<Checker>, s: GoPtr<CallSt
 interface ApplicableCallSelection {
   readonly signature: Signature;
   readonly selectedArguments: readonly SelectedEffectiveCallArgument[];
+  readonly sourceInferenceContributions: ResolvedCallInferenceEvidence;
   readonly sourceSelectedMethodTypeArguments?: readonly ResolvedCallSelectedMethodTypeArgumentEvidence[];
   readonly sourceSelectedSignatureParameters: readonly ResolvedCallSelectedSignatureParameterEvidence[];
 }
@@ -3743,6 +3749,30 @@ function Checker_chooseOverloadWithSelectedArguments(
   return undefined;
 }
 
+function bindSelectedCallInferenceOrigins(selection: ResolvedCallArgumentSelection): ResolvedCallInferenceEvidence {
+  const inference = selection.applicability.sourceInferenceContributions;
+  if (inference.kind !== "available") return inference;
+  const contributions = [];
+  for (const contribution of inference.contributions) {
+    if (contribution.origin.kind !== "argument") {
+      contributions.push(contribution);
+      continue;
+    }
+    const origin = selection.origins[contribution.origin.effectiveArgumentIndex];
+    const argument = selection.applicability.selectedArguments[contribution.origin.effectiveArgumentIndex];
+    if (origin === undefined || argument === undefined || origin.sourceArgument === undefined ||
+      origin.effectiveArgument !== contribution.origin.subject || argument.sourceParameterIndex !== contribution.origin.parameterIndex ||
+      origin.sourceForm === "spread-sequence" || origin.sourceForm === "spread-element" &&
+      (origin.sourceArgumentType === undefined || origin.spreadElementIndex === undefined)) return Object.freeze({ kind: "unavailable" });
+    const sourcePath = origin.sourceForm === "spread-element"
+      ? Object.freeze([Object.freeze({ kind: "tuple" as const, owner: origin.sourceArgumentType!, index: origin.spreadElementIndex! }),
+        ...contribution.sourcePath]) : contribution.sourcePath;
+    contributions.push(Object.freeze({ ...contribution, sourcePath,
+      origin: Object.freeze({ ...contribution.origin, subject: origin.sourceArgument }) }));
+  }
+  return Object.freeze({ kind: "available", contributions: Object.freeze(contributions) });
+}
+
 function retainApplicableCallSelection(
   receiver: Checker,
   node: Node,
@@ -3761,6 +3791,8 @@ function retainApplicableCallSelection(
   output.selection = Object.freeze({
     signature,
     selectedArguments: Object.freeze(selectedArguments.slice() as SelectedEffectiveCallArgument[]),
+    sourceInferenceContributions: selectedCallInferenceEvidence(inferenceContext === undefined ? undefined
+      : selectedCallInferenceJournal(receiver, inferenceContext.inferences), inferenceContext),
     ...(sourceSelectedMethodTypeArguments === undefined ? {} : { sourceSelectedMethodTypeArguments }),
     sourceSelectedSignatureParameters: buildResolvedCallSelectedSignatureParameters(receiver, signature),
   });
@@ -4473,7 +4505,9 @@ export function Checker_inferTypeArguments(receiver: GoPtr<Checker>, node: GoPtr
           } else {
             inferenceSourceType = instantiatedType;
           }
-          Checker_inferTypes(receiver, context!.inferences, inferenceSourceType, inferenceTargetType, InferencePriorityReturnType, false);
+          withSelectedCallInferenceOrigin(selectedCallInferenceJournal(receiver!, context!.inferences), context!,
+            { kind: "contextual-result", subject: node! }, inferenceSourceType!, inferenceTargetType!,
+            () => Checker_inferTypes(receiver, context!.inferences, inferenceSourceType, inferenceTargetType, InferencePriorityReturnType, false));
         }
         const returnContext = Checker_newInferenceContext(receiver, signature!.typeParameters, signature, context!.flags, undefined);
         let outerReturnMapper: GoPtr<TypeMapper>;
@@ -4481,7 +4515,9 @@ export function Checker_inferTypeArguments(receiver: GoPtr<Checker>, node: GoPtr
           outerReturnMapper = Checker_createOuterReturnMapper(receiver, outerContext);
         }
         const returnSourceType = Checker_instantiateType(receiver, contextualType, outerReturnMapper);
-        Checker_inferTypes(receiver, returnContext!.inferences, returnSourceType, inferenceTargetType, InferencePriorityNone, false);
+        withSelectedCallInferenceOrigin(selectedCallInferenceJournal(receiver!, returnContext!.inferences), returnContext!,
+          { kind: "contextual-result", subject: node! }, returnSourceType!, inferenceTargetType!,
+          () => Checker_inferTypes(receiver, returnContext!.inferences, returnSourceType, inferenceTargetType, InferencePriorityNone, false));
         if (core.Some(returnContext!.inferences, hasInferenceCandidates)) {
           context!.returnMapper = Checker_getMapperFromContext(receiver, Checker_cloneInferredPartOfContext(receiver, returnContext));
         } else {
@@ -4506,7 +4542,11 @@ export function Checker_inferTypeArguments(receiver: GoPtr<Checker>, node: GoPtr
   const thisType = Checker_getThisTypeOfSignature(receiver, signature);
   if (thisType !== undefined && receiver!.couldContainTypeVariables(thisType)) {
     const thisArgumentNode = Checker_getThisArgumentOfCall(receiver, node);
-    Checker_inferTypes(receiver, context!.inferences, Checker_getThisArgumentType(receiver, thisArgumentNode), thisType, InferencePriorityNone, false);
+    const thisArgumentType = Checker_getThisArgumentType(receiver, thisArgumentNode);
+    if (thisArgumentNode === undefined || thisArgumentType === undefined) Checker_inferTypes(receiver, context!.inferences, thisArgumentType, thisType, InferencePriorityNone, false);
+    else withSelectedCallInferenceOrigin(selectedCallInferenceJournal(receiver!, context!.inferences), context!,
+      { kind: "receiver", subject: thisArgumentNode }, thisArgumentType, thisType!,
+      () => Checker_inferTypes(receiver, context!.inferences, thisArgumentType, thisType, InferencePriorityNone, false));
   }
   for (let index = 0; index < argCount; index++) {
     const arg = args[index];
@@ -4514,7 +4554,10 @@ export function Checker_inferTypeArguments(receiver: GoPtr<Checker>, node: GoPtr
       const paramType = Checker_getTypeAtPosition(receiver, signature, index as int);
       if (receiver!.couldContainTypeVariables(paramType)) {
         const argType = Checker_checkExpressionWithContextualType(receiver, arg, paramType, context, checkMode);
-        Checker_inferTypes(receiver, context!.inferences, argType, paramType, InferencePriorityNone, false);
+        const parameterIndex = signatureHasRestParameter(signature) ? Math.min(index, signature!.parameters.length - 1) : index;
+        withSelectedCallInferenceOrigin(selectedCallInferenceJournal(receiver!, context!.inferences), context!,
+          { kind: "argument", subject: arg!, effectiveArgumentIndex: index, parameterIndex }, argType!, paramType!,
+          () => Checker_inferTypes(receiver, context!.inferences, argType, paramType, InferencePriorityNone, false));
       }
     }
   }

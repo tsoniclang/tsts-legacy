@@ -11,13 +11,12 @@ import {
   Node_ModuleSpecifier,
   Node_PropertyName,
   Node_Properties,
-  SourceFile_Path,
   Node_Statements,
   Node_Symbol,
   Node_Text,
   Node_TypeArguments,
 } from "../internal/ast/ast.js";
-import { Node_End, Node_ForEachChild, Node_Name, Node_Pos } from "../internal/ast/spine.js";
+import { Node_ForEachChild, Node_Name } from "../internal/ast/spine.js";
 import { AsExportDeclaration, AsExportSpecifier, AsImportClause, AsImportTypeNode, AsLiteralTypeNode, AsNamespaceImport, AsPropertyAccessExpression, AsQualifiedName, AsTypeQueryNode, AsTypeReferenceNode } from "../internal/ast/generated/casts.js";
 import {
   KindCallExpression,
@@ -43,7 +42,6 @@ import {
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import {
-  GetSourceFileOfNode,
   GetSymbolId,
   IsDeclarationName,
   IsLeftHandSideExpression,
@@ -89,7 +87,6 @@ import type {
 import type { ResolvedSourceCallInfo, TypeCheckerQueries } from "../services/type-checker.js";
 import type {
   CompilerExtension,
-  ExtensionDiagnosticWriter,
   ExtensionEvidence,
   ExtensionFactKey,
   ExtensionFactReader,
@@ -99,7 +96,6 @@ import type {
   SourceAnalysisFactAccess,
 } from "./host.js";
 import { defineExtensionFactKey } from "./fact-key.js";
-import { encodeIdentityTuple } from "./identity-tuple.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
 type SourceSemanticsFactAccess = Pick<SourceAnalysisFactAccess, "get" | "set">;
@@ -264,8 +260,6 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
           sourceFile,
           context.source.getSourceFileQueries(sourceFile).checker,
           context.facts,
-          context.diagnostics,
-          sourceSemanticsExtensionId,
           modules,
         );
       }
@@ -402,8 +396,6 @@ function recordSourceSemanticsFacts(
   sourceFile: SourceFile,
   checker: TypeCheckerQueries,
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
   recordSourceSemanticsMarkerReferences(
@@ -414,8 +406,6 @@ function recordSourceSemanticsFacts(
   );
   recordSourceSemanticsCallMarkers(
     facts,
-    diagnostics,
-    extensionId,
     sourceFile,
     checker,
   );
@@ -584,8 +574,6 @@ function recordSourceSemanticsMarkerReferences(
 
 function recordSourceSemanticsCallMarkers(
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   sourceFile: GoPtr<SourceFile>,
   checker: TypeCheckerQueries,
 ): void {
@@ -598,7 +586,7 @@ function recordSourceSemanticsCallMarkers(
     if (marker === undefined || callInfo === undefined) {
       return;
     }
-    recordSourceSemanticsCallMarker(facts, diagnostics, extensionId, checker, node, callInfo, marker);
+    recordSourceSemanticsCallMarker(facts, checker, node, callInfo, marker);
   });
 }
 
@@ -639,10 +627,12 @@ function recordCanonicalProviderTypeMarker(
   }
 }
 
+// Facts only: Source refusals for marker calls (storage expression, writable storage, pointer type arguments) are
+// Host decisions over these facts (TSONIC_ARGUMENT_MARKER_NOT_PLACE, TSONIC_POINTER_TYPE_ARGUMENTS; nextgen §2).
+// Every reference and pointer marker call carries its call-marker fact, so the Host sees the call even when no
+// operation fact could be recorded.
 function recordSourceSemanticsCallMarker(
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   checker: TypeCheckerQueries,
   callExpression: Node,
   callInfo: ResolvedSourceCallInfo,
@@ -660,7 +650,7 @@ function recordSourceSemanticsCallMarker(
       if (argument === undefined) {
         return;
       }
-      recordArgumentPassingMarker(facts, diagnostics, extensionId, callExpression, argument, marker, evidence);
+      recordArgumentPassingMarker(facts, callExpression, argument, marker, evidence);
       return;
     }
     case "shared-borrow": {
@@ -742,10 +732,12 @@ function recordSourceSemanticsCallMarker(
     case "hash-pointer":
     case "bind-pointer":
     case "project-pointer":
+      facts.set(callExpression, sourceMarkerFactKey, {
+        kind: "call-marker",
+        marker: marker.marker,
+      } satisfies SourceMarkerFact, evidence);
       recordPointerOperation(
         facts,
-        diagnostics,
-        extensionId,
         checker,
         callExpression,
         callInfo,
@@ -771,8 +763,6 @@ function hasMarkerTypeArgumentCount(callExpression: Node, count: number): boolea
 
 function recordPointerOperation(
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   checker: TypeCheckerQueries,
   callExpression: Node,
   callInfo: ResolvedSourceCallInfo,
@@ -792,21 +782,6 @@ function recordPointerOperation(
     ? selectedTypeArguments[pointeeIndex]?.explicitTypeNode
     : undefined;
   if (pointeeType === undefined) {
-    diagnostics.append({
-      extensionId,
-      extensionCode: "SOURCE_SEMANTICS_POINTER_TYPE_EVIDENCE_MISSING",
-      numericCode: 9901103,
-      publicCode: "TSTS_SOURCE_SEMANTICS_0003",
-      category: "error",
-      message: `${marker.exportName}(...) requires ${expectedTypeArgumentCount} exact selected pointer type argument${expectedTypeArgumentCount === 1 ? "" : "s"}.`,
-      nodeOrSpan: callExpression,
-      evidence,
-      identity: sourceSemanticsDiagnosticIdentity(
-        "pointer-type",
-        marker.exportName,
-        callExpression,
-      ),
-    });
     return;
   }
   switch (marker.marker) {
@@ -817,21 +792,6 @@ function recordPointerOperation(
       }
       const storage = checker.getResolvedStorageInfo(storageArgument.expression);
       if (storage === undefined || !storage.writable) {
-        diagnostics.append({
-          extensionId,
-          extensionCode: "SOURCE_SEMANTICS_WRITABLE_STORAGE_REQUIRED",
-          numericCode: 9901102,
-          publicCode: "TSTS_SOURCE_SEMANTICS_0002",
-          category: "error",
-          message: `${marker.exportName}(...) requires writable storage.`,
-          nodeOrSpan: storageArgument.expression,
-          evidence,
-          identity: sourceSemanticsDiagnosticIdentity(
-            "writable-storage",
-            marker.exportName,
-            callExpression,
-          ),
-        });
         return;
       }
       const fact = {
@@ -1078,8 +1038,6 @@ function recordRawPointerOperation(
 
 function recordArgumentPassingMarker(
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   callExpression: Node,
   target: Node,
   marker: SourceCallMarkerDeclaration,
@@ -1089,42 +1047,11 @@ function recordArgumentPassingMarker(
     mode: getArgumentPassingMode(marker.marker as ArgumentPassingMarkerKind),
     storageExpression: target,
   } satisfies ArgumentPassingFact;
+  facts.set(callExpression, sourceMarkerFactKey, { kind: "call-marker", marker: marker.marker } satisfies SourceMarkerFact, evidence);
   facts.set(callExpression, argumentPassingFactKey, fact, evidence);
   if (IsLeftHandSideExpression(target)) {
     facts.set(target, argumentPassingFactKey, fact, evidence);
-    return;
   }
-  diagnostics.append({
-    extensionId,
-    extensionCode: "SOURCE_SEMANTICS_NON_STORAGE_ARGUMENT",
-    numericCode: 9901101,
-    publicCode: "TSTS_SOURCE_SEMANTICS_0001",
-    category: "error",
-    message: `${marker.exportName}(...) requires a storage expression.`,
-    nodeOrSpan: target,
-    evidence,
-    identity: sourceSemanticsDiagnosticIdentity(
-      "non-storage",
-      marker.exportName,
-      target,
-    ),
-  });
-}
-
-function sourceSemanticsDiagnosticIdentity(
-  diagnostic: string,
-  exportName: string,
-  node: Node,
-): string {
-  const sourceFile = GetSourceFileOfNode(node);
-  return encodeIdentityTuple([
-    "source-semantics",
-    diagnostic,
-    exportName,
-    sourceFile === undefined ? undefined : SourceFile_Path(sourceFile),
-    Node_Pos(node),
-    Node_End(node),
-  ]);
 }
 
 function getArgumentPassingMode(kind: ArgumentPassingMarkerKind): ArgumentPassingFact["mode"] {
