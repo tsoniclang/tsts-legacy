@@ -111,10 +111,16 @@ export interface SourcePrimitiveFact {
   readonly runtimeBase: "boolean" | "number" | "bigint" | "string" | "object";
 }
 
-export interface ArgumentPassingFact {
-  readonly mode: ArgumentPassingMode;
-  readonly storageExpression?: Node;
-}
+export type ArgumentPassingFact =
+  | {
+      readonly kind: "declaration";
+      readonly mode: ArgumentPassingMode;
+    }
+  | {
+      readonly kind: "argument";
+      readonly mode: ArgumentPassingMode;
+      readonly storageExpression: Node;
+    };
 
 export interface FunctionPointerFact {
   readonly parameters: readonly Node[];
@@ -329,8 +335,8 @@ export const argumentPassingFactKey = markHostSourceReadableFactKey(defineExtens
   name: "argumentPassing",
   snapshot: snapshotArgumentPassingFact,
   equals: (left, right) =>
-    left.mode === right.mode
-    && left.storageExpression === right.storageExpression,
+    left.kind === right.kind && left.mode === right.mode &&
+    (left.kind === "declaration" || right.kind === "argument" && left.storageExpression === right.storageExpression),
 }));
 
 export const functionPointerFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<FunctionPointerFact>({
@@ -518,16 +524,19 @@ function snapshotSourceMarkerFact(value: SourceMarkerFact): SourceMarkerFact {
 }
 
 function snapshotArgumentPassingFact(value: ArgumentPassingFact): ArgumentPassingFact {
-  const record = exactRecord(value, "ArgumentPassingFact", ["mode", "storageExpression"]);
+  const record = exactRecord(value, "ArgumentPassingFact", ["kind", "mode", "storageExpression"]);
+  const kind = requiredString(record, "kind", "ArgumentPassingFact");
   const mode = requiredString(record, "mode", "ArgumentPassingFact");
   if (!isArgumentPassingMode(mode)) {
     throw new Error(`ArgumentPassingFact.mode '${mode}' is invalid.`);
   }
-  const storageExpression = optionalNode(record, "storageExpression", "ArgumentPassingFact");
-  return Object.freeze({
-    mode,
-    ...(storageExpression === undefined ? {} : { storageExpression }),
-  });
+  if (kind === "declaration") {
+    exactRecord(value, "ArgumentPassingFact", ["kind", "mode"]);
+    return Object.freeze({ kind, mode });
+  }
+  if (kind === "argument") return Object.freeze({ kind, mode,
+    storageExpression: requiredNode(record, "storageExpression", "ArgumentPassingFact") });
+  throw new Error(`ArgumentPassingFact.kind '${kind}' is invalid.`);
 }
 
 function snapshotFunctionPointerFact(value: FunctionPointerFact): FunctionPointerFact {

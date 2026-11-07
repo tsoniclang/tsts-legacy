@@ -1086,6 +1086,7 @@ function recordArgumentPassingMarker(
   evidence: readonly ExtensionEvidence[],
 ): void {
   const fact = {
+    kind: "argument",
     mode: getArgumentPassingMode(marker.marker as ArgumentPassingMarkerKind),
     storageExpression: target,
   } satisfies ArgumentPassingFact;
