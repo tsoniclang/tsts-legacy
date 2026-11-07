@@ -1,6 +1,8 @@
 import type { Checker, InferenceContext } from "./state.js";
 import type { Signature, SignatureLinks, Type } from "../types.js";
 import type { Node } from "../../ast/spine.js";
+import { copySelectedCallInferenceContext, createSelectedCallInferenceJournal } from "./selected-call-inference-evidence.js";
+import type { SelectedCallInferenceJournal } from "./selected-call-inference-evidence.js";
 
 export type SelectedCallEvidenceFrameKind =
   | "signature-resolution"
@@ -26,6 +28,7 @@ interface SelectedCallEvidenceFrameRecord extends SelectedCallEvidenceFrame {
   candidate: Signature | undefined;
   readonly contexts: InferenceContext[];
   readonly defaults: SelectedDefaultContribution[];
+  readonly inference: SelectedCallInferenceJournal;
 }
 
 interface SelectedDefaultContribution {
@@ -69,14 +72,22 @@ export function beginSelectedCallEvidenceFrame(
   if (!Number.isSafeInteger(state.frames.length) || state.frames.length >= frameBudget) {
     return failClosed(checker, state, "frame budget exceeded");
   }
+  const transaction = state;
+  const contexts: InferenceContext[] = [];
   const frame: SelectedCallEvidenceFrameRecord = {
     kind,
     depth: state.frames.length,
     settled: false,
     snapshots: [],
     candidate: undefined,
-    contexts: [],
+    contexts,
     defaults: [],
+    inference: createSelectedCallInferenceJournal(contexts, () => {
+      if (!Number.isSafeInteger(transaction.entryCount) || transaction.entryCount >= snapshotBudget) {
+        failClosed(checker, transaction, "selected inference contribution budget exceeded");
+      }
+      transaction.entryCount++;
+    }, () => removeSnapshots(transaction, 1)),
   };
   state.frames.push(frame);
   return frame;
@@ -100,7 +111,9 @@ export function commitSelectedCallEvidenceFrame(
     return;
   }
   mergeSnapshots(state, parent, record);
-  removeSnapshots(state, record.defaults.length + record.contexts.length);
+  if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at commit");
+  removeSnapshots(state, record.defaults.length + record.contexts.length + record.inference.records.length);
+  record.inference.records.length = 0;
   record.defaults.length = 0;
   record.contexts.length = 0;
   settleTopFrame(state, record);
@@ -116,7 +129,9 @@ export function rollbackSelectedCallEvidenceFrame(
   }
   const record = activeFrame(state, frame);
   restoreSnapshots(record.snapshots);
-  removeSnapshots(state, record.snapshots.length + record.defaults.length + record.contexts.length);
+  if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at rollback");
+  removeSnapshots(state, record.snapshots.length + record.defaults.length + record.contexts.length + record.inference.records.length);
+  record.inference.records.length = 0;
   record.snapshots.length = 0;
   record.defaults.length = 0;
   record.contexts.length = 0;
@@ -250,6 +265,7 @@ export function copySelectedCallDefaults(
   const frame = state.frames.find(candidate => candidate.contexts.includes(source));
   if (frame === undefined) return;
   retainDefaultContext(checker, state, frame, destination);
+  copySelectedCallInferenceContext(frame.inference, source, destination);
   for (const inference of destination.inferences) {
     const parameter = inference?.typeParameter;
     const selectedType = inference?.inferredType;
@@ -257,6 +273,17 @@ export function copySelectedCallDefaults(
     const node = selectedCallDefaultNode(checker, source, parameter, selectedType);
     if (node !== undefined) retainSelectedCallDefault(checker, destination, parameter, selectedType, node);
   }
+}
+
+export function selectedCallInferenceJournal(
+  checker: Checker,
+  inferences: InferenceContext["inferences"],
+): SelectedCallInferenceJournal | undefined {
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return undefined;
+  if (state.failed) throw failedStateError();
+  return state.frames.findLast(frame => frame.kind === "overload-candidate" &&
+    frame.contexts.some(context => context.inferences === inferences))?.inference;
 }
 
 function selectedDefaultOwner(
@@ -361,7 +388,9 @@ function settleRoot(
   state: SelectedCallEvidenceTransactionState,
   frame: SelectedCallEvidenceFrameRecord,
 ): void {
-  removeSnapshots(state, frame.snapshots.length + frame.defaults.length + frame.contexts.length);
+  if (frame.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at root settlement");
+  removeSnapshots(state, frame.snapshots.length + frame.defaults.length + frame.contexts.length + frame.inference.records.length);
+  frame.inference.records.length = 0;
   frame.snapshots.length = 0;
   frame.defaults.length = 0;
   frame.contexts.length = 0;
