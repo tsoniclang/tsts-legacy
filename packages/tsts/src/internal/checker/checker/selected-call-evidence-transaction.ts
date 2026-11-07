@@ -43,6 +43,12 @@ export interface SelectedCallEvidenceTransactionState {
   readonly frames: SelectedCallEvidenceFrameRecord[];
   entryCount: number;
   inferenceEntryCount: number;
+  /** Bumped on every frame push or pop and every context bound to a frame: the journal lookup is valid per revision. */
+  revision: number;
+  /** The last journal lookup (selectedCallInferenceJournal): one inference context per revision. */
+  lookupRevision: number;
+  lookupInferences: InferenceContext["inferences"] | undefined;
+  lookupJournal: SelectedCallInferenceJournal | undefined;
 }
 
 const frameBudget = 1_024;
@@ -63,6 +69,10 @@ export function beginSelectedCallEvidenceFrame(
       frames: [],
       entryCount: 0,
       inferenceEntryCount: 0,
+      revision: 0,
+      lookupRevision: -1,
+      lookupInferences: undefined,
+      lookupJournal: undefined,
     };
     checker.selectedCallEvidenceTransactionState = state;
   }
@@ -96,6 +106,7 @@ export function beginSelectedCallEvidenceFrame(
     }),
   };
   state.frames.push(frame);
+  state.revision++;
   return frame;
 }
 
@@ -215,6 +226,7 @@ function retainDefaultContext(
     failClosed(checker, state, "selected-default context budget exceeded");
   }
   frame.contexts.push(context);
+  state.revision++;
   state.entryCount++;
 }
 
@@ -290,8 +302,14 @@ export function selectedCallInferenceJournal(
   const state = checker.selectedCallEvidenceTransactionState;
   if (state === undefined) return undefined;
   if (state.failed) throw failedStateError();
-  return state.frames.findLast(frame => frame.kind === "overload-candidate" &&
+  // Inference recursion asks for the same context many times between frame changes: reuse the last lookup.
+  if (state.lookupRevision === state.revision && state.lookupInferences === inferences) return state.lookupJournal;
+  const journal = state.frames.findLast(frame => frame.kind === "overload-candidate" &&
     frame.contexts.some(context => context.inferences === inferences))?.inference;
+  state.lookupRevision = state.revision;
+  state.lookupInferences = inferences;
+  state.lookupJournal = journal;
+  return journal;
 }
 
 function selectedDefaultOwner(
@@ -415,6 +433,7 @@ function settleTopFrame(
   frame: SelectedCallEvidenceFrameRecord,
 ): void {
   const top = state.frames.pop();
+  state.revision++;
   if (top !== frame) {
     throw new Error("Selected-call evidence frame stack changed during settlement.");
   }

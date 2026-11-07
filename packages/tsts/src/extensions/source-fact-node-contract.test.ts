@@ -113,11 +113,11 @@ test("argument passing fact has exactly one declaration role and one argument ro
     [() => argumentPassingFactKey.snapshot({ mode: "byref-readwrite", storageExpression: storage } as never), /ArgumentPassingFact\.role must be a non-empty string/],
     [() => argumentPassingFactKey.snapshot({ role: "argument", mode: "byref-readwrite" } as never), /ArgumentPassingFact\.storageExpression must be an identity-bearing object/],
     [() => argumentPassingFactKey.snapshot({ role: "argument", mode: "byref-readwrite", storageExpression: undefined } as never), /ArgumentPassingFact\.storageExpression must be an identity-bearing object/],
-    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", storageExpression: storage } as never), /declaration role must not carry storageExpression/],
-    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", storageExpression: undefined } as never), /declaration role must not carry storageExpression/],
-    [() => argumentPassingFactKey.snapshot({ role: "parameter", mode: "byref-readwrite" } as never), /ArgumentPassingFact\.role parameter is invalid/],
-    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "by-reference" } as never), /ArgumentPassingFact\.mode by-reference is invalid/],
-    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", kind: "argument" } as never), /unsupported field kind/],
+    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", storageExpression: storage } as never), /declaration role must not carry 'storageExpression'\./],
+    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", storageExpression: undefined } as never), /declaration role must not carry 'storageExpression'\./],
+    [() => argumentPassingFactKey.snapshot({ role: "parameter", mode: "byref-readwrite" } as never), /ArgumentPassingFact\.role 'parameter' is invalid\./],
+    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "by-reference" } as never), /ArgumentPassingFact\.mode 'by-reference' is invalid\./],
+    [() => argumentPassingFactKey.snapshot({ role: "declaration", mode: "byref-readwrite", kind: "argument" } as never), /ArgumentPassingFact contains unsupported field 'kind'\./],
   ];
   for (const [snapshot, message] of rejected) {
     assert.throws(snapshot, message);
