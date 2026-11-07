@@ -496,9 +496,10 @@ test("provider parameter modes remain declaration facts keyed by exact signature
   const call = source.checker.getResolvedCallInfo(callNode);
   const parameter = call?.sourceSelectedSignatureParameters[0];
   assert.equal(parameter?.parameterName, "value");
-  assert.equal(
-    checked.sourceFacts?.getFact(parameter?.parameterDeclaration, argumentPassingFactKey)?.mode,
-    "byref-readwrite",
+  // WP0 A4: the provider writer records the declaration role (mode only, never storage).
+  assert.deepEqual(
+    checked.sourceFacts?.getFact(parameter?.parameterDeclaration, argumentPassingFactKey),
+    { role: "declaration", mode: "byref-readwrite" },
   );
 });
 

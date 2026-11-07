@@ -483,6 +483,10 @@ test("source-semantics records out ref inref borrow move call-site facts without
     import { out as localOut } from "./local.js";
 
     let value!: number;
+    class Item {}
+    function make(): number { return 1; }
+    const cell = { value: 0 };
+    function receiver() { return cell; }
     out(value);
     refArg(value);
     inref(value);
@@ -491,16 +495,19 @@ test("source-semantics records out ref inref borrow move call-site facts without
     move(value);
     out(value + 1);
     localOut(value);
+    out(make());
+    refArg(new Item());
+    inref(1);
+    out(receiver().value);
   `, new Map([
     ["/src/local.ts", "export function out<T>(value: T): T { return value; }"],
   ]));
 
   assert.equal(Program_GetSemanticDiagnostics(program, Background(), index).length, 0);
   finalizeSourceSemantics(extended);
-  const diagnostics = extended.extensionHost.diagnostics.all();
-  assert.equal(diagnostics.length, 1);
-  assert.equal(diagnostics[0]?.numericCode, 9901101);
-  assert.match(diagnostics[0]?.message ?? "", /out\(\.\.\.\) requires a storage expression/);
+  // Facts only (N8 (b), C-2496): place validity is the Host refusal TSONIC_ARGUMENT_MARKER_NOT_PLACE; Legacy reports
+  // nothing and records the passing fact on every marker call's target, whatever its syntax.
+  assert.deepEqual(extended.extensionHost.diagnostics.all(), []);
 
   const outCall = getCallExpression(index, "out", 0);
   const refCall = getCallExpression(index, "refArg", 0);
@@ -511,12 +518,40 @@ test("source-semantics records out ref inref borrow move call-site facts without
   const invalidOutCall = getCallExpression(index, "out", 1);
   const localOutCall = getCallExpression(index, "localOut", 0);
 
-  assert.equal(extended.extensionHost.facts.get(outCall, argumentPassingFactKey)?.mode, "byref-writeonly-must-init");
-  assert.equal(extended.extensionHost.facts.get(refCall, argumentPassingFactKey)?.mode, "byref-readwrite");
-  assert.equal(extended.extensionHost.facts.get(inrefCall, argumentPassingFactKey)?.mode, "byref-readonly");
-  assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(outCall), argumentPassingFactKey)?.mode, "byref-writeonly-must-init");
-  assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(invalidOutCall), argumentPassingFactKey), undefined);
+  // WP0 A4: the marker writer records the argument role with the exact original storage occurrence on the call
+  // and on its target; never the declaration role.
+  for (const [call, mode] of [
+    [outCall, "byref-writeonly-must-init"],
+    [refCall, "byref-readwrite"],
+    [inrefCall, "byref-readonly"],
+  ] as const) {
+    const target = getFirstCallArgument(call);
+    for (const subject of [call, target]) {
+      assert.deepEqual(extended.extensionHost.facts.get(subject, argumentPassingFactKey), {
+        role: "argument",
+        mode,
+        storageExpression: target,
+      });
+    }
+  }
   assert.equal(extended.extensionHost.facts.get(localOutCall, argumentPassingFactKey), undefined);
+  assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(localOutCall), argumentPassingFactKey), undefined);
+  for (const [call, mode] of [
+    [invalidOutCall, "byref-writeonly-must-init"],
+    [getCallExpression(index, "out", 2), "byref-writeonly-must-init"],
+    [getCallExpression(index, "refArg", 1), "byref-readwrite"],
+    [getCallExpression(index, "inref", 1), "byref-readonly"],
+    [getCallExpression(index, "out", 3), "byref-writeonly-must-init"],
+  ] as const) {
+    const target = getFirstCallArgument(call);
+    for (const subject of [call, target]) {
+      assert.deepEqual(extended.extensionHost.facts.get(subject, argumentPassingFactKey), {
+        role: "argument",
+        mode,
+        storageExpression: target,
+      });
+    }
+  }
 
   assert.equal(extended.extensionHost.facts.get(borrowCall, flowStateFactKey)?.state, "borrowed-shared");
   assert.equal(extended.extensionHost.facts.get(borrowMutCall, flowStateFactKey)?.state, "borrowed-mut");
@@ -998,7 +1033,6 @@ test("imported pointer storage retains canonical declaration identity and mutabi
   assert.ok(first?.operation === "address-of" && second?.operation === "address-of");
   assert.equal(first.storageDeclaration?.Kind, KindVariableDeclaration);
   assert.equal(first.storageDeclaration, second.storageDeclaration);
-  assert.equal(first.storageSymbol, second.storageSymbol);
   assert.equal(GetSourceFileOfNode(first.storageDeclaration), Program_GetSourceFile(program, "/src/values.ts"));
   assert.equal(facts[2], undefined);
   assert.equal(facts[3], undefined);

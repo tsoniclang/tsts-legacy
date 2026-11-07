@@ -44,7 +44,6 @@ import {
 import {
   GetSymbolId,
   IsDeclarationName,
-  IsLeftHandSideExpression,
   IsRightSideOfQualifiedNameOrPropertyAccess,
 } from "../internal/ast/utilities.js";
 import {
@@ -797,12 +796,8 @@ function recordPointerOperation(
       const fact = {
         operation: "address-of",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         storageExpression: storage.storageExpression,
-        storageType: storage.type,
-        ...(storage.symbol === undefined ? {} : { storageSymbol: storage.symbol }),
         ...(storage.declaration === undefined
           ? {}
           : { storageDeclaration: storage.declaration }),
@@ -819,11 +814,8 @@ function recordPointerOperation(
       const fact = {
         operation: "allocate",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         initialExpression: initial.expression,
-        initialType: initial.type,
         locationIdentity: callExpression,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
@@ -837,11 +829,8 @@ function recordPointerOperation(
       const fact = {
         operation: "load",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
-        pointerType: pointer.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -855,13 +844,9 @@ function recordPointerOperation(
       const fact = {
         operation: "store",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
-        pointerType: pointer.type,
         valueExpression: value.expression,
-        valueType: value.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -875,13 +860,9 @@ function recordPointerOperation(
       const fact = {
         operation: "equal-pointer",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         leftExpression: left.expression,
-        leftType: left.type,
         rightExpression: right.expression,
-        rightType: right.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -894,11 +875,8 @@ function recordPointerOperation(
       const fact = {
         operation: "hash-pointer",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
-        pointerType: pointer.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -913,15 +891,10 @@ function recordPointerOperation(
       const fact = {
         operation: "bind-pointer",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
         identityExpression: identity.expression,
-        identityType: identity.type,
         readExpression: read.expression,
-        readType: read.type,
         writeExpression: write.expression,
-        writeType: write.type,
         locationIdentity: identity.expression,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
@@ -943,19 +916,13 @@ function recordPointerOperation(
       const fact = {
         operation: "project-pointer",
         call: callExpression,
-        pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
-        sourcePointeeType: sourceTypeArgument.selectedType,
         ...(sourceTypeArgument.explicitTypeNode === undefined
           ? {}
           : { explicitSourcePointeeTypeNode: sourceTypeArgument.explicitTypeNode }),
         pointerExpression: pointer.expression,
-        pointerType: pointer.type,
         fromSourceExpression: fromSource.expression,
-        fromSourceType: fromSource.type,
         toSourceExpression: toSource.expression,
-        toSourceType: toSource.type,
       } satisfies PointerOperationFact;
       facts.set(callExpression, pointerOperationFactKey, fact, evidence);
       return;
@@ -994,9 +961,7 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
         identityExpression: identity.expression,
-        identityType: identity.type,
       } satisfies RawPointerOperationFact, evidence);
       return;
     }
@@ -1009,11 +974,8 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
         leftExpression: left.expression,
-        leftType: left.type,
         rightExpression: right.expression,
-        rightType: right.type,
       } satisfies RawPointerOperationFact, evidence);
       return;
     }
@@ -1025,9 +987,7 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
         pointerExpression: pointer.expression,
-        pointerType: pointer.type,
       } satisfies RawPointerOperationFact, evidence);
       return;
     }
@@ -1044,14 +1004,15 @@ function recordArgumentPassingMarker(
   evidence: readonly ExtensionEvidence[],
 ): void {
   const fact = {
+    role: "argument",
     mode: getArgumentPassingMode(marker.marker as ArgumentPassingMarkerKind),
     storageExpression: target,
   } satisfies ArgumentPassingFact;
   facts.set(callExpression, sourceMarkerFactKey, { kind: "call-marker", marker: marker.marker } satisfies SourceMarkerFact, evidence);
   facts.set(callExpression, argumentPassingFactKey, fact, evidence);
-  if (IsLeftHandSideExpression(target)) {
-    facts.set(target, argumentPassingFactKey, fact, evidence);
-  }
+  // N8 (b), C-2496: no grammar guard. Every marker call's target carries the fact whatever its syntax; whether the
+  // target is a storage place is the Host decision (TSONIC_ARGUMENT_MARKER_NOT_PLACE) over its exact evidence.
+  facts.set(target, argumentPassingFactKey, fact, evidence);
 }
 
 function getArgumentPassingMode(kind: ArgumentPassingMarkerKind): ArgumentPassingFact["mode"] {

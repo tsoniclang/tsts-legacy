@@ -43,6 +43,7 @@ import {
   sourcePrimitiveFactKey,
 } from "./facts.js";
 import type {
+  ArgumentPassingFact,
   ProviderMemberKey,
   ProviderTypeFamilyFact,
   ProviderVirtualDeclarationFact,
@@ -727,7 +728,7 @@ function recordProviderVirtualParameterFacts(
     if (parameterDeclaration === undefined) {
       throw new Error(`Provider virtual signature lost parameter declaration ${index}.`);
     }
-    const fact = { mode };
+    const fact = { role: "declaration", mode } satisfies ArgumentPassingFact;
     extensionHost[extensionHostSetFact](
       parameterDeclaration,
       argumentPassingFactKey,
