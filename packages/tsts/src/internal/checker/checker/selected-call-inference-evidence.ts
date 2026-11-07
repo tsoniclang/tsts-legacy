@@ -33,7 +33,8 @@ export interface SelectedCallInferenceJournal {
   readonly contexts: readonly InferenceContext[];
   readonly records: SelectedInferenceCandidate[];
   readonly traces: SelectedInferenceTrace[];
-  readonly reserve: () => void;
+  readonly complete: boolean;
+  readonly reserve: () => boolean;
   readonly release: () => void;
 }
 
@@ -41,10 +42,20 @@ const unavailable: ResolvedCallInferenceEvidence = Object.freeze({ kind: "unavai
 
 export function createSelectedCallInferenceJournal(
   contexts: readonly InferenceContext[],
-  reserve: () => void,
+  reserve: () => boolean,
   release: () => void,
 ): SelectedCallInferenceJournal {
-  return { contexts, records: [], traces: [], reserve, release };
+  let complete = true;
+  return {
+    contexts, records: [], traces: [],
+    get complete() { return complete; },
+    reserve: () => {
+      if (!complete) return false;
+      complete = reserve();
+      return complete;
+    },
+    release,
+  };
 }
 
 export function withSelectedCallInferenceOrigin<Output>(
@@ -55,8 +66,7 @@ export function withSelectedCallInferenceOrigin<Output>(
   formalType: Type,
   operation: () => Output,
 ): Output {
-  if (journal === undefined) return operation();
-  journal.reserve();
+  if (journal === undefined || !journal.reserve()) return operation();
   const trace: SelectedInferenceTrace = { context, origin: Object.freeze(origin), sourceType, formalType,
     sourcePath: Object.freeze([]), formalPath: Object.freeze([]), complete: true, typeArguments: undefined };
   journal.traces.push(trace);
@@ -78,8 +88,7 @@ export function withSelectedCallInferenceProjection<Output>(
   operation: () => Output,
 ): Output {
   const trace = currentTrace(journal, inferences);
-  if (trace === undefined || journal === undefined) return operation();
-  journal.reserve();
+  if (trace === undefined || journal === undefined || !journal.reserve()) return operation();
   const previous = { sourceType: trace.sourceType, formalType: trace.formalType,
     sourcePath: trace.sourcePath, formalPath: trace.formalPath, complete: trace.complete };
   const sourceMatches = sourcePart === undefined ? trace.sourceType === sourceType : sourcePart !== null && sourcePart.owner === trace.sourceType;
@@ -168,14 +177,14 @@ export function retainSelectedCallInferenceCandidate(
   priority: number,
   contravariant: boolean,
 ): void {
-  if (journal === undefined || inference.typeParameter === undefined) return;
+  if (journal === undefined || !journal.complete || inference.typeParameter === undefined) return;
   const trace = currentTrace(journal, inferences);
   const context = trace?.context ?? journal.contexts.find(candidateContext => candidateContext.inferences === inferences);
   if (context === undefined) return;
   const contribution = trace !== undefined && trace.complete && trace.sourceType === sourceType && trace.formalType === formalType
     ? Object.freeze({ typeParameter: inference.typeParameter, origin: trace.origin,
       sourcePath: trace.sourcePath, formalPath: trace.formalPath }) : undefined;
-  journal.reserve();
+  if (!journal.reserve()) return;
   journal.records.push({ context, parameter: inference.typeParameter, candidate, priority, contravariant, contribution });
 }
 
@@ -186,7 +195,7 @@ export function copySelectedCallInferenceContext(
 ): void {
   for (const record of journal.records.slice()) {
     if (record.context !== source) continue;
-    journal.reserve();
+    if (!journal.reserve()) return;
     journal.records.push({ ...record, context: destination });
   }
 }
@@ -195,6 +204,7 @@ export function selectedCallInferenceEvidence(
   journal: SelectedCallInferenceJournal | undefined,
   context: InferenceContext | undefined,
 ): ResolvedCallInferenceEvidence {
+  if (journal?.complete === false) return unavailable;
   if (context === undefined) return Object.freeze({ kind: "available", contributions: Object.freeze([]) });
   const expected = new Map<Type, { readonly inference: InferenceInfo;
     readonly positive: Set<Type>; readonly negative: Set<Type>; readonly observedPositive: Set<Type>; readonly observedNegative: Set<Type> }>();
@@ -225,5 +235,5 @@ function currentTrace(
   journal: SelectedCallInferenceJournal | undefined,
   inferences: InferenceContext["inferences"],
 ): SelectedInferenceTrace | undefined {
-  return journal?.traces.findLast(trace => trace.context.inferences === inferences);
+  return journal?.complete ? journal.traces.findLast(trace => trace.context.inferences === inferences) : undefined;
 }

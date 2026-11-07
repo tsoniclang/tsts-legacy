@@ -164,6 +164,7 @@ export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSe
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
 export type {
   TypeIndexInfo,
+  TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
   TypePropertyInfo,
   TypeReferenceArgumentInfo,

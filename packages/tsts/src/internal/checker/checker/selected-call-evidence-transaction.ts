@@ -42,10 +42,12 @@ export interface SelectedCallEvidenceTransactionState {
   failed: boolean;
   readonly frames: SelectedCallEvidenceFrameRecord[];
   entryCount: number;
+  inferenceEntryCount: number;
 }
 
 const frameBudget = 1_024;
 const snapshotBudget = 65_536;
+const inferenceBudget = 65_536;
 
 export function beginSelectedCallEvidenceFrame(
   checker: Checker,
@@ -60,6 +62,7 @@ export function beginSelectedCallEvidenceFrame(
       failed: false,
       frames: [],
       entryCount: 0,
+      inferenceEntryCount: 0,
     };
     checker.selectedCallEvidenceTransactionState = state;
   }
@@ -83,11 +86,14 @@ export function beginSelectedCallEvidenceFrame(
     contexts,
     defaults: [],
     inference: createSelectedCallInferenceJournal(contexts, () => {
-      if (!Number.isSafeInteger(transaction.entryCount) || transaction.entryCount >= snapshotBudget) {
-        failClosed(checker, transaction, "selected inference contribution budget exceeded");
-      }
-      transaction.entryCount++;
-    }, () => removeSnapshots(transaction, 1)),
+      if (transaction.failed || checker.selectedCallEvidenceTransactionState !== transaction
+        || transaction.inferenceEntryCount >= inferenceBudget) return false;
+      transaction.inferenceEntryCount++;
+      return true;
+    }, () => {
+      if (transaction.failed || checker.selectedCallEvidenceTransactionState !== transaction) return;
+      removeInferenceEntries(transaction, 1);
+    }),
   };
   state.frames.push(frame);
   return frame;
@@ -112,7 +118,8 @@ export function commitSelectedCallEvidenceFrame(
   }
   mergeSnapshots(state, parent, record);
   if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at commit");
-  removeSnapshots(state, record.defaults.length + record.contexts.length + record.inference.records.length);
+  removeSnapshots(state, record.defaults.length + record.contexts.length);
+  removeInferenceEntries(state, record.inference.records.length);
   record.inference.records.length = 0;
   record.defaults.length = 0;
   record.contexts.length = 0;
@@ -130,7 +137,8 @@ export function rollbackSelectedCallEvidenceFrame(
   const record = activeFrame(state, frame);
   restoreSnapshots(record.snapshots);
   if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at rollback");
-  removeSnapshots(state, record.snapshots.length + record.defaults.length + record.contexts.length + record.inference.records.length);
+  removeSnapshots(state, record.snapshots.length + record.defaults.length + record.contexts.length);
+  removeInferenceEntries(state, record.inference.records.length);
   record.inference.records.length = 0;
   record.snapshots.length = 0;
   record.defaults.length = 0;
@@ -389,13 +397,14 @@ function settleRoot(
   frame: SelectedCallEvidenceFrameRecord,
 ): void {
   if (frame.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at root settlement");
-  removeSnapshots(state, frame.snapshots.length + frame.defaults.length + frame.contexts.length + frame.inference.records.length);
+  removeSnapshots(state, frame.snapshots.length + frame.defaults.length + frame.contexts.length);
+  removeInferenceEntries(state, frame.inference.records.length);
   frame.inference.records.length = 0;
   frame.snapshots.length = 0;
   frame.defaults.length = 0;
   frame.contexts.length = 0;
   settleTopFrame(state, frame);
-  if (state.entryCount !== 0 || state.frames.length !== 0) {
+  if (state.entryCount !== 0 || state.inferenceEntryCount !== 0 || state.frames.length !== 0) {
     failClosed(checker, state, "root settlement retained transaction state");
   }
   checker.selectedCallEvidenceTransactionState = undefined;
@@ -422,6 +431,14 @@ function removeSnapshots(state: SelectedCallEvidenceTransactionState, count: num
   state.entryCount -= count;
 }
 
+function removeInferenceEntries(state: SelectedCallEvidenceTransactionState, count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0
+    || !Number.isSafeInteger(state.inferenceEntryCount) || count > state.inferenceEntryCount) {
+    throw new Error("Selected-call inference contribution count is inconsistent.");
+  }
+  state.inferenceEntryCount -= count;
+}
+
 function failClosed(
   checker: Checker,
   state: SelectedCallEvidenceTransactionState,
@@ -440,6 +457,7 @@ function failClosed(
   }
   state.frames.length = 0;
   state.entryCount = 0;
+  state.inferenceEntryCount = 0;
   checker.selectedCallEvidenceTransactionState = undefined;
   throw new Error(`Selected-call evidence transaction failed closed: ${reason}.`);
 }

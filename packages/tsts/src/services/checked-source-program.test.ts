@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GoPtr } from "../go/compat.js";
 import type { Node } from "../internal/ast/ast.js";
-import { Program_GetSourceFiles } from "../internal/compiler/program.js";
-import { createSourceProgramQueries } from "../extensions/source-program.js";
 import {
   createCompilerSessionFromFiles,
   defineExtensionFactKey,
@@ -16,36 +14,6 @@ import {
   testNoLibCompilerOptions,
   testProviderModel,
 } from "../extensions/source-provider-test-support.js";
-
-test("original checked program order is frozen independently of the included source view", () => {
-  const checked = createCompilerSessionFromFiles({ currentDirectory: "/src",
-    rootFiles: ["/src/core.d.ts", "/src/second.ts"],
-    files: { "/src/core.d.ts": testCoreDeclarations,
-      "/src/first.ts": "export type First = string | number;",
-      "/src/second.ts": 'import type { First } from "./first.js"; export declare const value: First;' },
-    compilerOptions: testNoLibCompilerOptions,
-  }).checkSource();
-  assert.equal(checked.diagnostics.length, 0);
-  const original = (Program_GetSourceFiles(checked.program) ?? []).filter(file => file !== undefined);
-  const consumer = checked.getSourceFile("/src/second.ts");
-  const alias = checked.getSourceFile("/src/first.ts");
-  assert.equal(consumer !== undefined && alias !== undefined, true);
-  const filtered = createSourceProgramQueries(checked.program, { ast: checked.ast,
-    includeSourceFile: file => file === consumer });
-  assert.equal(Object.isFrozen(checked.programSourceFiles), true);
-  assert.equal(Object.isFrozen(filtered.programSourceFiles), true);
-  assert.equal(checked.programSourceFiles.length, original.length);
-  assert.equal(filtered.programSourceFiles.length, original.length);
-  for (const [index, file] of original.entries()) {
-    assert.equal(checked.programSourceFiles[index] === file, true, `checked original file ${index}`);
-    assert.equal(filtered.programSourceFiles[index] === file, true, `filtered original file ${index}`);
-  }
-  assert.equal(filtered.programSourceFiles.includes(alias!), true, "the included view cannot erase the original alias owner");
-  assert.equal(filtered.getSourceFiles().length, 1);
-  assert.equal(filtered.getSourceFiles()[0] === consumer, true);
-  assert.equal(filtered.getSourceFile("/src/first.ts") === undefined, true);
-  assert.equal(filtered.programSourceFiles === filtered.programSourceFiles, true);
-});
 
 test("checked raw program membership retains excluded canonical native owners and refuses foreign identities", () => {
   const specifier = "@test/raw-program-owner.js";
@@ -72,7 +40,6 @@ test("checked raw program membership retains excluded canonical native owners an
   const declaration = queries.checker.getPrimarySymbolDeclaration(symbol);
   const nativeFile = checked.ast.getSourceFile(declaration);
   assert.equal(nativeFile !== undefined, true, "the real checked native type retains its canonical owner file");
-  assert.equal(checked.programSourceFiles.includes(nativeFile!), true, "the original program vector keeps the excluded canonical owner");
   assert.equal(checked.sourceFiles.includes(nativeFile), false, "the canonical owner is excluded from public source traversal");
   assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
     "filtered source lookup does not expose the canonical native owner");

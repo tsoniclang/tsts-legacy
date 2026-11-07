@@ -1,8 +1,86 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { KindCallExpression, KindNewExpression } from "../internal/ast/generated/kinds.js";
+import { CheckModeNormal, InferenceFlagsNone } from "../internal/checker/checker/state.js";
+import { Checker_newInferenceContext } from "../internal/checker/inference.js";
+import { Checker_inferTypeArguments } from "../internal/checker/checker/signatures.js";
+import { beginSelectedCallEvidenceFrame, bindSelectedCallDefaultContext, bindSelectedCallDefaultOwner,
+  commitSelectedCallEvidenceFrame, selectedCallInferenceJournal } from "../internal/checker/checker/selected-call-evidence-transaction.js";
+import { withSelectedCallInferenceOrigin, withSelectedCallInferenceProjection } from "../internal/checker/checker/selected-call-inference-evidence.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { assertCleanSemanticDiagnostics, createProgram, findNodesByKind } from "./type-checker-test-support.js";
+
+test("inference journal exhaustion preserves actual call checking and journal-free inference", () => {
+  const count = 65_540;
+  const { program, index } = createProgram(`
+    declare function choose<Value>(...values: Value[]): Value;
+    choose(${Array.from({ length: count }, () => "1").join(",")});
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const call = findNodesByKind(index, KindCallExpression)[0]!;
+  const evidence = queries.getResolvedCallInfo(call);
+  const candidate = evidence?.selectedSignature.target;
+  const parameter = candidate?.typeParameters[0];
+  const checker = parameter?.checker;
+  const expression = evidence?.sourceArguments[0]?.expression;
+  const sourceType = expression === undefined ? undefined : queries.getTypeAtLocation(expression);
+  if (evidence?.outcome !== "applicable" || candidate === undefined || parameter === undefined
+    || checker === undefined || sourceType === undefined) {
+    throw new Error("The over-budget original call must retain its genuine signature, source and checker.");
+  }
+  assert.equal(evidence.sourceArguments.length === count, true, "the actual call exceeds the journal bound");
+  assert.equal(evidence.sourceInferenceContributions.kind === "unavailable", true,
+    "exhaustion stops only observational evidence, never the original checker");
+  assert.equal(checker.selectedCallEvidenceTransactionState === undefined, true,
+    "the over-budget original call settles both independent budgets");
+  const baseline = Checker_newInferenceContext(checker, candidate.typeParameters, candidate, InferenceFlagsNone, undefined);
+  if (baseline === undefined) throw new Error("Journal-free comparison requires the actual native inference context.");
+  const inferred = Checker_inferTypeArguments(checker, call, candidate,
+    evidence.sourceArguments.map(argument => argument.expression), CheckModeNormal, baseline)[0];
+  assert.equal(inferred !== undefined && inferred === evidence.sourceSelectedMethodTypeArguments?.[0]?.selectedType, true,
+    "the identical original rest-argument inference without a journal selects the identical Type");
+  assertCleanSemanticDiagnostics(program, index);
+});
+
+test("active inference journal cleanup preserves the original transaction failure", () => {
+  const { program, index } = createProgram(`
+    declare function choose<Value>(value: Value): Value;
+    choose(1);
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const call = findNodesByKind(index, KindCallExpression)[0]!;
+  const evidence = queries.getResolvedCallInfo(call);
+  const candidate = evidence?.selectedSignature.target;
+  const parameter = candidate?.typeParameters[0];
+  const checker = parameter?.checker;
+  const expression = evidence?.sourceArguments[0]?.expression;
+  const sourceType = expression === undefined ? undefined : queries.getTypeAtLocation(expression);
+  if (candidate === undefined || parameter === undefined || checker === undefined
+    || expression === undefined || sourceType === undefined) {
+    throw new Error("The original failure control requires its genuine checked owner.");
+  }
+  beginSelectedCallEvidenceFrame(checker, "signature-resolution");
+  const frame = beginSelectedCallEvidenceFrame(checker, "overload-candidate");
+  bindSelectedCallDefaultOwner(checker, frame, candidate);
+  const context = Checker_newInferenceContext(checker, candidate.typeParameters, candidate, InferenceFlagsNone, undefined);
+  if (context === undefined) throw new Error("The failure control requires an actual native inference context.");
+  bindSelectedCallDefaultContext(checker, frame, context);
+  const journal = selectedCallInferenceJournal(checker, context.inferences);
+  if (journal === undefined) throw new Error("The actual transaction must own its inference journal.");
+  assert.throws(() => withSelectedCallInferenceOrigin(journal, context,
+    { kind: "argument", subject: expression, effectiveArgumentIndex: 0, parameterIndex: 0 }, sourceType, parameter,
+    () => withSelectedCallInferenceProjection(journal, context.inferences, sourceType, parameter, undefined, undefined,
+      () => bindSelectedCallDefaultOwner(checker, frame, candidate))),
+  { message: "Selected-call evidence transaction failed closed: a selected-default owner is not one exact overload candidate." });
+  assert.equal(checker.selectedCallEvidenceTransactionState === undefined && journal.traces.length === 0, true,
+    "failed transaction unwinding does not retain traces or mask its original reason");
+  const next = beginSelectedCallEvidenceFrame(checker, "signature-resolution");
+  commitSelectedCallEvidenceFrame(checker, next);
+  assert.equal(checker.selectedCallEvidenceTransactionState === undefined, true,
+    "a fresh actual transaction settles independently after the failure");
+});
 
 test("selected aggregate inference publishes its winning original contribution vector", () => {
   const { program, index } = createProgram(`
