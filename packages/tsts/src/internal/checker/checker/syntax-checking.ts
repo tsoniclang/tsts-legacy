@@ -1,4 +1,5 @@
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
+import { configuredSourcePrimitiveOperand } from "../../../extensions/compiler-integration.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
@@ -14,7 +15,7 @@ import {
 } from "../../ast/generated/casts.js";
 import { NewSyntheticExpression } from "../../ast/generated/factory.js";
 import type { Expression } from "../../ast/generated/unions.js";
-import { NodeFlagsAwaitContext, NodeFlagsOptionalChain, NodeFlagsUnreachable } from "../../ast/generated/flags.js";
+import { NodeFlagsAwaitContext, NodeFlagsOptionalChain, NodeFlagsUnreachable, SymbolFlagsAlias } from "../../ast/generated/flags.js";
 import type { NodeFlags } from "../../ast/generated/flags.js";
 import { Diagnostic_AddRelatedInfo, Diagnostic_Code, Diagnostic_Loc } from "../../ast/diagnostic.js";
 import type { Diagnostic } from "../../ast/diagnostic.js";
@@ -47,7 +48,7 @@ import {
   IsIdentifier, IsArrayLiteralExpression, IsObjectLiteralExpression,
   IsPropertyAccessExpression, IsPrivateIdentifier, IsConstructorDeclaration,
   IsSetAccessorDeclaration, IsBlock, IsParameterDeclaration,
-  IsBindingElement, IsClassStaticBlockDeclaration, IsCaseClause, IsDefaultClause, IsParenthesizedExpression,
+  IsBindingElement, IsClassStaticBlockDeclaration, IsCaseClause, IsDefaultClause, IsParenthesizedExpression, IsShiftOperator,
   IsLabeledStatement, IsConditionalExpression, IsBinaryExpression, IsSourceFile, IsLogicalOrCoalescingAssignmentOperator,
 } from "../../ast/generated/predicates.js";
 import {
@@ -80,6 +81,7 @@ import {
   Checker_getTypeOfSymbol, Checker_getExportSymbolOfValueSymbolIfExported, Checker_getResolvedSymbolOrNil, Checker_isReadonlySymbol, Checker_reportNonexistentProperty,
   Checker_checkIdentifier, Checker_checkPrivateIdentifierExpression, Checker_checkPropertyAccessExpression, Checker_checkQualifiedName, Checker_checkIndexedAccess,
   Checker_checkMetaProperty, Checker_getDeclaredTypeOfSymbol, Checker_getSymbolOfDeclaration, Checker_classDeclarationExtendsNull,
+  Checker_GetSymbolAtLocation, Checker_resolveAlias,
 } from "./symbols.js";
 import { Checker_checkTruthinessExpression, Checker_checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType, Checker_checkTruthinessOfType, Checker_extractDefinitelyFalsyTypes, Checker_removeDefinitelyFalsyTypes } from "./flow-narrowing.js";
 import { Checker_isCanceled, Checker_isUncheckedJSSuggestion, IsTypeAny, getContainingFunctionOrClassStaticBlock, NewDiagnosticForNode, forEachYieldExpression, isTypeAssertion, expressionResultIsUnused, isLiteralExpressionOfObject, getSuperContainer } from "../utilities.js";
@@ -2882,6 +2884,7 @@ function isIterativelyCheckableNonLogicalBinaryExpression(node: GoPtr<Node>): bo
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkBinaryLikeExpression","kind":"method","status":"implemented","sigHash":"058951d0c451f4334faaa90f108eb88c838ea7af7a55bddace4da2ff77570115","bodyHash":"35a4d3d98cecf55f83774842062fdfe4dbc8bb5d764df060a73c2c94e942e66b"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Configured primitive shift operands retain their existing exact declaration facts instead of inheriting backing number/bigint incompatibilities; the Host remains the sole native operator-admission owner and ordinary number/bigint checking is unchanged."}
  *
  * Go source:
  * func (c *Checker) checkBinaryLikeExpression(left *ast.Node, operatorToken *ast.Node, right *ast.Node, checkMode CheckMode, errorNode *ast.Node) *Type {
@@ -3199,6 +3202,18 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
       }
       const leftOk = Checker_checkArithmeticOperandType(receiver, left, leftType, The_left_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type, true as bool);
       const rightOk = Checker_checkArithmeticOperandType(receiver, right, rightType, The_right_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type, true as bool);
+      const shift = IsShiftOperator(operator) || operator === KindLessThanLessThanEqualsToken
+        || operator === KindGreaterThanGreaterThanEqualsToken || operator === KindGreaterThanGreaterThanGreaterThanEqualsToken;
+      const originalSymbol = (node: Node): GoPtr<Symbol> => {
+        const symbol = Checker_GetSymbolAtLocation(receiver, node);
+        return symbol !== undefined && (symbol.Flags & SymbolFlagsAlias) !== 0
+          ? Checker_resolveAlias(receiver, symbol) : symbol;
+      };
+      const configuredLeft = shift ? configuredSourcePrimitiveOperand(receiver!.program, left, originalSymbol) : undefined;
+      const configuredRight = shift ? configuredSourcePrimitiveOperand(receiver!.program, right, originalSymbol) : undefined;
+      const configuredShift = configuredLeft !== undefined && configuredRight !== undefined
+        && (configuredLeft.runtimeBase === "number" || configuredLeft.runtimeBase === "bigint")
+        && (configuredRight.runtimeBase === "number" || configuredRight.runtimeBase === "bigint");
       let resultType: GoPtr<Type>;
       if (
         (Checker_isTypeAssignableToKind(receiver, leftType, TypeFlagsAnyOrUnknown) && Checker_isTypeAssignableToKind(receiver, rightType, TypeFlagsAnyOrUnknown)) ||
@@ -3209,7 +3224,7 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
         switch (operator) {
           case KindGreaterThanGreaterThanGreaterThanToken:
           case KindGreaterThanGreaterThanGreaterThanEqualsToken:
-            Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, undefined);
+            if (!configuredShift) Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, undefined);
             break;
           case KindAsteriskAsteriskToken:
           case KindAsteriskAsteriskEqualsToken:
@@ -3219,6 +3234,8 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
             break;
         }
         resultType = receiver!.bigintType;
+      } else if (configuredShift) {
+        resultType = configuredLeft.runtimeBase === "bigint" ? receiver!.bigintType : receiver!.numberType;
       } else {
         Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, (leftOperand, rightOperand) => Checker_bothAreBigIntLike(receiver, leftOperand, rightOperand));
         resultType = receiver!.errorType;
