@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GoPtr } from "../go/compat.js";
@@ -35,10 +36,10 @@ test("source analysis consumes the fully checked program once through direct sou
       const source = context.source.getSourceFileQueries(sourceFile);
       const call = findFirstCall(source.ast, sourceFile);
       assert.ok(call !== undefined);
-      const selected = source.checker.getResolvedCallInfo(call);
-      assert.equal(selected?.outcome, "applicable");
+      const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(call));
+      assert.equal(selected?.kind, "applicable");
       assert.ok(selected?.call === call, "Source analysis must retain the exact checked call node.");
-      assert.equal(selected?.sourceSelectedMethodTypeArguments?.length, 1);
+      assert.equal(selected?.selection.application.signatureTypeArguments?.length, 1);
       assert.equal(context.facts.set(call, selectedCallFactKey, "identity<number>"), "inserted");
       selectedCall = call;
     },

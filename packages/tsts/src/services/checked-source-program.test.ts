@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GoPtr } from "../go/compat.js";
@@ -163,21 +164,21 @@ test("checked source program exposes one exact AST and direct checker decision s
 
   const explicitCall = calls.find((call) => source.ast.typeArguments(call).length === 1);
   assert.ok(explicitCall !== undefined);
-  const call = source.checker.getResolvedCallInfo(explicitCall);
-  assert.equal(call?.outcome, "applicable");
+  const call = requireApplicableCallInfo(source.checker.getResolvedCallInfo(explicitCall));
+  assert.equal(call?.kind, "applicable");
   assert.ok(call?.call === explicitCall, "Resolved call evidence must retain the exact call node.");
-  assert.equal(call?.sourceSelectedMethodTypeArguments?.length, 1);
-  assert.equal(call?.sourceSelectedMethodTypeArguments?.[0]?.typeParameterName, "T");
+  assert.equal(call?.selection.application.signatureTypeArguments?.length, 1);
+  assert.equal(call?.selection.application.signatureTypeArguments?.[0]?.typeParameter.symbol?.Name, "T");
   assert.ok(
-    call?.sourceSelectedMethodTypeArguments?.[0]?.explicitTypeNode
+    call?.selection.application.signatureTypeArguments?.[0]?.explicitTypeNode
       === source.ast.typeArguments(explicitCall)[0],
     "Explicit method type-argument evidence must retain the exact authored type node.",
   );
-  assert.equal(call?.sourceArguments.length, 1);
-  assert.equal(call?.sourceArgumentBindings.length, 1);
-  assert.equal(call?.sourceSelectedSignatureParameters.length, 1);
+  assert.equal(call?.selection.argumentValues.length, 1);
+  assert.equal(call?.selection.arguments.values.length, 1);
+  assert.equal(call?.selection.parameters.length, 1);
   assert.ok(
-    source.checker.getResolvedCallInfo(explicitCall) === call,
+    requireApplicableCallInfo(source.checker.getResolvedCallInfo(explicitCall)) === call,
     "Repeated direct call queries must retain the exact resolved call result.",
   );
 
@@ -303,7 +304,7 @@ test("checked source facts are immutable consumer capabilities over exact source
       const source = context.source.getSourceFileQueries(sourceFile);
       selectedCall = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression)[0];
       assert.ok(selectedCall !== undefined);
-      assert.equal(source.checker.getResolvedCallInfo(selectedCall)?.outcome, "applicable");
+      assert.equal(requireApplicableCallInfo(source.checker.getResolvedCallInfo(selectedCall))?.kind, "applicable");
       assert.equal(context.facts.set(selectedCall, factKey, "identity(1)"), "inserted");
     },
   };

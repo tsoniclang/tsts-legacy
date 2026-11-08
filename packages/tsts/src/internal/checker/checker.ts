@@ -1,4 +1,5 @@
 import type { bool, int } from "../../go/scalars.js";
+import { observeBackingDiagnostic, observePublishedDiagnostic } from "./checker/backing-constraint-evidence.js";
 import type { GoPtr, GoSlice } from "../../go/compat.js";
 import * as core from "../core/core.js";
 import type { Node } from "../ast/spine.js";
@@ -362,6 +363,8 @@ export function Checker_checkCollisionWithGlobalObjectInGeneratedCode(receiver: 
 export function Checker_addDiagnostic(receiver: GoPtr<Checker>, diagnostic: GoPtr<Diagnostic>): void {
   // Discard diagnostics created while at the maximum number of recursive TypeToString invocations.
   if (receiver!.serializationLevel < maxSerializationLevel) {
+    observeBackingDiagnostic(receiver!, diagnostic);
+    observePublishedDiagnostic(receiver!, diagnostic);
     DiagnosticsCollection_Add(receiver!.diagnostics, diagnostic);
   }
 }

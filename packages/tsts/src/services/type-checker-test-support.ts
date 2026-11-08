@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { ResolvedSourceCallInfo } from "./type-checker.js";
 import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import { Background } from "../go/context.js";
@@ -16,9 +17,16 @@ import type { ParseConfigHost } from "../internal/tsoptions/tsconfigparsing.js";
 import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
 import { FromMap } from "../internal/vfs/vfstest/vfstest.js";
 
+export function requireApplicableCallInfo(
+  evidence: ResolvedSourceCallInfo | undefined,
+): Extract<ResolvedSourceCallInfo, { readonly kind: "applicable" }> {
+  assert.ok(evidence?.kind === "applicable", "The original valid call requires an actual applicable checker candidate.");
+  return evidence;
+}
+
 export function createProgram(
   sourceText: string,
-  settings: { readonly noLib?: boolean; readonly fileName?: "index.ts" | "index.js"; readonly checkJs?: boolean } = {},
+  settings: { readonly noLib?: boolean; readonly fileName?: "index.ts" | "index.js"; readonly checkJs?: boolean; readonly target?: "esnext" } = {},
 ): { readonly program: GoPtr<Program>; readonly index: GoPtr<SourceFile> } {
   const fileName = settings.fileName ?? "index.ts";
   const sourcePath = `/src/${fileName}`;
@@ -30,6 +38,7 @@ export function createProgram(
         module: "esnext",
         moduleResolution: "bundler",
         strict: true,
+        ...(settings.target === undefined ? {} : { target: settings.target }),
         ...(settings.checkJs === true ? { allowJs: true, checkJs: true, noEmit: true } : {}),
       },
       files: [fileName],

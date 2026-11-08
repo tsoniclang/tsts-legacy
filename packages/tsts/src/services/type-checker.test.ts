@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Background } from "../go/context.js";
@@ -401,21 +402,21 @@ test("resolved call info exposes one canonical checker-owned selected decision",
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
 
-  const queryFirst = queries.getResolvedCallInfo(call);
-  assert.equal(queryFirst?.outcome, "applicable");
+  const queryFirst = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
+  assert.equal(queryFirst?.kind, "applicable");
   assert.ok(queryFirst?.call === call, "Resolved call evidence must retain the exact call node.");
   assert.ok(
-    queryFirst?.selectedSignature === queries.getResolvedSignature(call),
+    queryFirst?.selection.application.instantiatedSignature === queries.getResolvedSignature(call),
     "Resolved call evidence must retain the checker-selected signature.",
   );
-  assert.equal(queryFirst?.sourceSelectedMethodTypeArguments?.length, 1);
+  assert.equal(queryFirst?.selection.application.signatureTypeArguments?.length, 1);
   assert.equal(
-    (queryFirst?.sourceSelectedMethodTypeArguments?.[0]?.selectedType.flags ?? 0) & TypeFlagsNumber,
+    (queryFirst?.selection.application.signatureTypeArguments?.[0]?.checkedArgument?.flags ?? 0) & TypeFlagsNumber,
     TypeFlagsNumber,
   );
-  assert.ok(queryFirst?.sourceSelectedMethodTypeArguments?.[0]?.explicitTypeNode !== undefined);
+  assert.ok(queryFirst?.selection.application.signatureTypeArguments?.[0]?.explicitTypeNode !== undefined);
   assert.deepEqual(
-    queryFirst?.sourceSelectedSignatureParameters.map((parameter) => [
+    queryFirst?.selection.parameters.map((parameter) => [
       parameter.parameterIndex,
       parameter.parameterName,
       parameter.acceptsOmission,
@@ -426,23 +427,23 @@ test("resolved call info exposes one canonical checker-owned selected decision",
       [1, "rest", true, true],
     ],
   );
-  assert.equal(queryFirst?.sourceArguments.length, 2);
-  assert.equal(queryFirst?.sourceArgumentBindings.length, 2);
-  assert.equal(queryFirst?.sourceArgumentBindings[1]?.sourceParameterForm, "rest-element");
-  assert.ok(queryFirst?.sourceReceiver !== undefined);
-  assert.equal(queryFirst?.sourceCalleeAccess?.kind, "property");
-  assert.ok(queryFirst?.sourceCalleeAccess?.selectedDeclaration !== undefined);
-  assert.equal((queryFirst?.sourceResultType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
+  assert.equal(queryFirst?.selection.argumentValues.length, 2);
+  assert.equal(queryFirst?.selection.arguments.values.length, 2);
+  assert.equal(queryFirst?.selection.arguments.values[1]?.parameterForm, "rest-element");
+  assert.ok(queryFirst?.selection.application.receiver !== undefined);
+  assert.equal(queryFirst?.selection.calleeAccess?.kind, "property");
+  assert.ok(queryFirst?.selection.calleeAccess?.selectedDeclaration !== undefined);
+  assert.equal((queryFirst?.resultType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
 
   assertCleanSemanticDiagnostics(program, index);
-  const repeated = queries.getResolvedCallInfo(call);
+  const repeated = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
   assert.ok(repeated === queryFirst, "Repeated call queries must retain the exact evidence object.");
   assert.ok(
-    repeated?.selectedSignature === queryFirst?.selectedSignature,
+    repeated?.selection.application.instantiatedSignature === queryFirst?.selection.application.instantiatedSignature,
     "Repeated call queries must retain exact signature identity.",
   );
   assert.ok(
-    repeated?.sourceResultType === queryFirst?.sourceResultType,
+    repeated?.resultType === queryFirst?.resultType,
     "Repeated call queries must retain exact result-type identity.",
   );
 });
@@ -463,10 +464,10 @@ test("resolved call info retains the final contextual callee observation", () =>
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
 
-  const selected = queries.getResolvedCallInfo(call);
-  assert.equal(selected?.outcome, "applicable");
-  assert.ok(selected?.sourceReceiver !== undefined);
-  assert.equal(queries.typeToString(selected.sourceReceiver.type), "ValidationError[]");
+  const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
+  assert.equal(selected?.kind, "applicable");
+  assert.ok(selected?.selection.application.receiver !== undefined);
+  assert.equal(queries.typeToString(selected.selection.application.receiver.type), "ValidationError[]");
   assert.ok(
     queries.getResolvedCallInfo(call) === selected,
     "The finalized call must retain one immutable contextual selection.",
@@ -483,15 +484,15 @@ test("resolved tuple-rest arguments retain their declared rest parameter identit
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
 
-  const selected = queries.getResolvedCallInfo(call);
-  assert.equal(selected?.outcome, "applicable");
+  const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
+  assert.equal(selected?.kind, "applicable");
   assert.deepEqual(
-    selected?.sourceSelectedSignatureParameters.map((parameter) => [parameter.parameterIndex, parameter.rest]),
+    selected?.selection.parameters.map((parameter) => [parameter.parameterIndex, parameter.rest]),
     [[0, true]],
   );
-  assert.equal(selected?.sourceArgumentBindings.length, 3);
+  assert.equal(selected?.selection.arguments.values.length, 3);
   assert.deepEqual(
-    selected?.sourceArgumentBindings.map((binding) => binding.sourceParameterIndex),
+    selected?.selection.arguments.values.map((binding) => binding.parameterIndex),
     [0, 0, 0],
   );
 });
@@ -509,7 +510,7 @@ test("invalid super calls preserve TS-Go diagnostics without selected call evide
 
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
-  assert.equal(queries.getResolvedCallInfo(call), undefined);
+  assert.equal(queries.getResolvedCallInfo(call) === undefined, true);
 });
 
 test("resolved call info preserves exact optional-chain result semantics", () => {
@@ -544,36 +545,36 @@ test("resolved call info retains exact dynamic property and element callee acces
   assert.equal(calls.length, 2);
 
   const propertyCall = queries.getResolvedCallInfo(calls[0]);
-  assert.equal(propertyCall?.outcome, "untyped");
-  assert.equal(propertyCall?.sourceCalleeAccess?.kind, "property");
-  assert.equal(propertyCall?.sourceCalleeAccess?.selectedSymbol, undefined);
-  assert.equal(propertyCall?.sourceCalleeAccess?.selectedDeclaration, undefined);
+  assert.equal(propertyCall?.kind, "untyped");
+  assert.equal(propertyCall?.calleeAccess?.kind, "property");
+  assert.equal(propertyCall?.calleeAccess?.selectedSymbol === undefined, true);
+  assert.equal(propertyCall?.calleeAccess?.selectedDeclaration === undefined, true);
   assert.equal(
-    (propertyCall?.sourceCalleeAccess?.receiver.type.flags ?? 0) & TypeFlagsAny,
+    (propertyCall?.calleeAccess?.receiver.type.flags ?? 0) & TypeFlagsAny,
     TypeFlagsAny,
   );
   assert.equal(
-    (propertyCall?.sourceCalleeAccess?.resultType.flags ?? 0) & TypeFlagsAny,
+    (propertyCall?.calleeAccess?.resultType.flags ?? 0) & TypeFlagsAny,
     TypeFlagsAny,
   );
 
   const elementCall = queries.getResolvedCallInfo(calls[1]);
-  assert.equal(elementCall?.outcome, "untyped");
-  assert.equal(elementCall?.sourceCalleeAccess?.kind, "element");
-  assert.equal(elementCall?.sourceCalleeAccess?.selectedSymbol, undefined);
-  assert.equal(elementCall?.sourceCalleeAccess?.selectedDeclaration, undefined);
+  assert.equal(elementCall?.kind, "untyped");
+  assert.equal(elementCall?.calleeAccess?.kind, "element");
+  assert.equal(elementCall?.calleeAccess?.selectedSymbol === undefined, true);
+  assert.equal(elementCall?.calleeAccess?.selectedDeclaration === undefined, true);
   assert.equal(
-    (elementCall?.sourceCalleeAccess?.receiver.type.flags ?? 0) & TypeFlagsAny,
+    (elementCall?.calleeAccess?.receiver.type.flags ?? 0) & TypeFlagsAny,
     TypeFlagsAny,
   );
   assert.equal(
-    (elementCall?.sourceCalleeAccess?.resultType.flags ?? 0) & TypeFlagsAny,
+    (elementCall?.calleeAccess?.resultType.flags ?? 0) & TypeFlagsAny,
     TypeFlagsAny,
   );
   assert.equal(
     queries.typeToString(
-      elementCall?.sourceCalleeAccess?.kind === "element"
-        ? elementCall.sourceCalleeAccess.argument.type
+      elementCall?.calleeAccess?.kind === "element"
+        ? elementCall.calleeAccess.argument.type
         : undefined,
     ),
     "string",
@@ -599,14 +600,14 @@ test("resolved call info retains only the winning overload candidate", () => {
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
 
-  const selected = queries.getResolvedCallInfo(call);
-  assert.equal(selected?.outcome, "applicable");
-  assert.equal(selected?.sourceSelectedSignatureParameters.length, 1);
+  const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
+  assert.equal(selected?.kind, "applicable");
+  assert.equal(selected?.selection.parameters.length, 1);
   assert.equal(
-    (selected?.sourceSelectedSignatureParameters[0]?.selectedType.flags ?? 0) & TypeFlagsNumber,
+    (selected?.selection.parameters[0]?.selectedType.flags ?? 0) & TypeFlagsNumber,
     TypeFlagsNumber,
   );
-  assert.equal((selected?.sourceResultType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
+  assert.equal((selected?.resultType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
 
   assertCleanSemanticDiagnostics(program, index);
   assert.ok(
@@ -623,11 +624,11 @@ test("resolved call info preserves omission semantics without inventing effectiv
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
   queries.getTypeAtLocation(call);
-  const selected = queries.getResolvedCallInfo(call);
+  const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
 
-  assert.equal(selected?.outcome, "applicable");
+  assert.equal(selected?.kind, "applicable");
   assert.deepEqual(
-    selected?.sourceSelectedSignatureParameters.map((parameter) => [
+    selected?.selection.parameters.map((parameter) => [
       parameter.parameterIndex,
       parameter.parameterName,
       parameter.acceptsOmission,
@@ -638,9 +639,9 @@ test("resolved call info preserves omission semantics without inventing effectiv
       [1, "state", true, false],
     ],
   );
-  assert.equal(selected?.sourceArguments.length, 1);
-  assert.equal(selected?.sourceArgumentBindings.length, 1);
-  assert.equal(selected?.sourceArgumentBindings[0]?.sourceParameterIndex, 0);
+  assert.equal(selected?.selection.argumentValues.length, 1);
+  assert.equal(selected?.selection.arguments.values.length, 1);
+  assert.equal(selected?.selection.arguments.values[0]?.parameterIndex, 0);
   assertCleanSemanticDiagnostics(program, index);
 });
 
@@ -652,13 +653,13 @@ test("resolved call info preserves an applicable zero-argument decision", () => 
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const calls = findNodesByKind(index, KindCallExpression);
   assert.equal(calls.length, 1);
-  assert.equal(queries.getResolvedCallInfo(index), undefined);
+  assert.equal(queries.getResolvedCallInfo(index) === undefined, true);
 
-  const selected = queries.getResolvedCallInfo(calls[0]);
-  assert.equal(selected?.outcome, "applicable");
-  assert.deepEqual(selected?.sourceSelectedSignatureParameters, []);
-  assert.deepEqual(selected?.sourceArguments, []);
-  assert.deepEqual(selected?.sourceArgumentBindings, []);
+  const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(calls[0]));
+  assert.equal(selected?.kind, "applicable");
+  assert.equal(selected?.selection.parameters.length, 0);
+  assert.equal(selected?.selection.argumentValues.length, 0);
+  assert.equal(selected?.selection.arguments.values.length, 0);
   assertCleanSemanticDiagnostics(program, index);
 });
 

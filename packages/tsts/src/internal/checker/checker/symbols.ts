@@ -1,4 +1,5 @@
 import type { bool, int } from "../../../go/scalars.js";
+import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
 import { Checker_instantiateTypeWorkerWithCapture } from "./types.js";
 import type { GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
@@ -8662,7 +8663,7 @@ export function Checker_getReferencedValueOrAliasSymbol(receiver: GoPtr<Checker>
  */
 export function Checker_newSymbol(receiver: GoPtr<Checker>, flags: SymbolFlags, name: string): GoPtr<Symbol> {
   receiver!.SymbolCount++;
-  const result = Arena_New(receiver!.symbolArena) as GoPtr<Symbol>;
+  const result = { checkerId: receiver!.id } as Symbol;
   result!.Flags = (flags | SymbolFlagsTransient) as SymbolFlags;
   result!.Name = name;
   return result;
@@ -17669,6 +17670,29 @@ export function Checker_getPropertyTypeForIndexType(receiver: GoPtr<Checker>, or
 }
 
 function getPropertyTypeForIndexTypeWithEvidence(
+  receiver: GoPtr<Checker>,
+  originalObjectType: GoPtr<Type>,
+  objectType: GoPtr<Type>,
+  indexType: GoPtr<Type>,
+  fullIndexType: GoPtr<Type>,
+  accessNode: GoPtr<Node>,
+  accessFlags: AccessFlags,
+  selected?: SelectedElementAccessCheck,
+): GoPtr<Type> {
+  const operation = () => getPropertyTypeForIndexTypeObserved(receiver, originalObjectType, objectType,
+    indexType, fullIndexType, accessNode, accessFlags, selected);
+  if (accessNode === undefined || !IsElementAccessExpression(accessNode) || originalObjectType === undefined || indexType === undefined) {
+    return operation();
+  }
+  const expression = Node_Expression(accessNode);
+  const argument = AsElementAccessExpression(accessNode)!.ArgumentExpression;
+  if (expression === undefined || argument === undefined) return operation();
+  return withBackingConstraint(receiver!, { kind: "index", access: accessNode, site: accessNode,
+    application: activeBackingCandidate(receiver!), receiver: checkedComponent(expression, originalObjectType),
+    index: checkedComponent(argument, indexType) }, operation);
+}
+
+function getPropertyTypeForIndexTypeObserved(
   receiver: GoPtr<Checker>,
   originalObjectType: GoPtr<Type>,
   objectType: GoPtr<Type>,

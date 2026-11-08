@@ -1,4 +1,6 @@
 import type { bool, int } from "../../../go/scalars.js";
+import type { ResolvedCallApplicationEvidence } from "../types.js";
+import { retainBackingDiagnosticEnvelope, retainBackingDiagnosticNotes, withBackingCandidate } from "./backing-constraint-evidence.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
 import { Node_Text, Node_Members, Node_Statements, Node_CanHaveStatements, Node_Expression, Node_Arguments, Node_TypeArgumentList, Node_TypeArguments, Node_Parameters, Node_TagName, Node_Symbol, Node_Type, Node_Initializer, SourceFile_Diagnostics, SourceFile_Text } from "../../ast/ast.js";
@@ -1048,30 +1050,45 @@ export function Checker_getDiagnosticHeadMessageForDecoratorResolution(receiver:
  * 	}
  * }
  */
-export function Checker_reportCallResolutionErrors(receiver: GoPtr<Checker>, node: GoPtr<Node>, s: GoPtr<CallState>, signatures: GoSlice<GoPtr<Signature>>, headMessage: GoPtr<Message>): void {
+export function Checker_reportCallResolutionErrors(receiver: GoPtr<Checker>, node: GoPtr<Node>, s: GoPtr<CallState>, signatures: GoSlice<GoPtr<Signature>>, headMessage: GoPtr<Message>, applications?: readonly ResolvedCallApplicationEvidence[]): void {
   const c = receiver!;
   if (s!.candidatesForArgumentError.length !== 0) {
     const last = s!.candidatesForArgumentError[s!.candidatesForArgumentError.length - 1];
     const diags: Array<GoPtr<Diagnostic>> = [];
-    Checker_isSignatureApplicable(receiver, s!.node, s!.args, last, c.assignableRelation, CheckModeNormal, true as bool, diags);
+    const application = applications?.findLast(candidate => candidate.instantiatedSignature === last);
+    const operation = () => Checker_isSignatureApplicable(receiver, s!.node, s!.args, last,
+      c.assignableRelation, CheckModeNormal, true as bool, diags);
+    if (application === undefined) operation();
+    else withBackingCandidate(c, application, operation);
     for (let diagnostic of diags) {
       if (s!.candidatesForArgumentError.length > 1) {
         diagnostic = NewDiagnosticChain(diagnostic, The_last_overload_gave_the_following_error);
+        retainBackingDiagnosticEnvelope(c, diagnostic!);
         diagnostic = NewDiagnosticChain(diagnostic, No_overload_matches_this_call);
+        retainBackingDiagnosticEnvelope(c, diagnostic!);
       }
       if (headMessage !== undefined) {
         diagnostic = NewDiagnosticChain(diagnostic, headMessage);
+        retainBackingDiagnosticEnvelope(c, diagnostic!);
       }
       if (last!.declaration !== undefined && s!.candidatesForArgumentError.length > 1) {
-        Diagnostic_AddRelatedInfo(diagnostic, NewDiagnosticForNode(last!.declaration, The_last_overload_is_declared_here));
+        const note = NewDiagnosticForNode(last!.declaration, The_last_overload_is_declared_here);
+        Diagnostic_AddRelatedInfo(diagnostic, note);
+        retainBackingDiagnosticNotes(c, diagnostic!, [note]);
       }
+      const previousNotes = diagnostic!.relatedInformation.length;
       Checker_addImplementationSuccessElaboration(receiver, s, last, diagnostic);
+      retainBackingDiagnosticNotes(c, diagnostic!, diagnostic!.relatedInformation.slice(previousNotes));
       Checker_addDiagnostic(receiver, diagnostic);
     }
   } else if (s!.candidateForArgumentArityError !== undefined) {
     Checker_addDiagnostic(receiver, Checker_getArgumentArityError(receiver, s!.node, [s!.candidateForArgumentArityError], s!.args, headMessage));
   } else if (s!.candidateForTypeArgumentError !== undefined) {
-    Checker_checkTypeArguments(receiver, s!.candidateForTypeArgumentError, Node_TypeArguments(s!.node) ?? [], true as bool, headMessage);
+    const application = applications?.findLast(candidate => candidate.signature === s!.candidateForTypeArgumentError);
+    const operation = () => Checker_checkTypeArguments(receiver, s!.candidateForTypeArgumentError,
+      Node_TypeArguments(s!.node) ?? [], true as bool, headMessage);
+    if (application === undefined) operation();
+    else withBackingCandidate(c, application, operation);
   } else if (!IsJsxOpeningFragment(node)) {
     const signaturesWithCorrectTypeArgumentArity = Filter(signatures, (sig: GoPtr<Signature>) =>
       Checker_hasCorrectTypeArgumentArity(receiver, sig, s!.typeArguments));

@@ -896,7 +896,9 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   const rejectedConstantCall = getCallExpression(index, "addressOf", 4);
   const localCall = getCallExpression(index, "localAddressOf", 0);
 
-  assert.equal(direct?.operation, "address-of");
+  assert.equal(direct?.operation, "address-of", JSON.stringify(extended.extensionHost.diagnostics.all().map(
+    diagnostic => ({ code: diagnostic.publicCode, message: diagnostic.message }),
+  )));
   assert.equal(direct?.locationIdentity, direct?.storageExpression);
   assert.equal(direct?.explicitPointeeTypeNode, undefined);
   assert.equal(aliased?.operation, "address-of");

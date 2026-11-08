@@ -12,6 +12,8 @@ import type {
 interface SelectedInferenceTrace {
   readonly context: InferenceContext;
   readonly origin: ResolvedCallInferenceOrigin;
+  readonly sourceRootType: Type;
+  readonly formalRootType: Type;
   sourceType: Type;
   formalType: Type;
   sourcePath: readonly ResolvedCallInferencePathPart[];
@@ -60,6 +62,8 @@ export interface SelectedCallInferenceJournal {
   readonly complete: boolean;
   readonly reserve: () => boolean;
   readonly release: () => void;
+  readonly invalidate: () => void;
+  readonly returnContexts: Map<InferenceContext, InferenceContext>;
 }
 
 const unavailable: ResolvedCallInferenceEvidence = Object.freeze({ kind: "unavailable" });
@@ -81,6 +85,8 @@ export function createSelectedCallInferenceJournal(
       return complete;
     },
     release,
+    invalidate: () => { complete = false; },
+    returnContexts: new Map(),
   };
 }
 
@@ -96,6 +102,8 @@ export function withSelectedCallInferenceOrigin<Output>(
   const trace: SelectedInferenceTrace = {
     context,
     origin: Object.freeze(origin),
+    sourceRootType: sourceType,
+    formalRootType: formalType,
     sourceType,
     formalType,
     sourcePath: Object.freeze([]),
@@ -284,6 +292,7 @@ export function retainSelectedCallInferenceCandidate(
   if (context === undefined) return;
   const contribution = trace !== undefined && trace.complete && trace.sourceType === sourceType && trace.formalType === formalType
     ? Object.freeze({ typeParameter: inference.typeParameter, origin: trace.origin,
+      sourceRootType: trace.sourceRootType, formalRootType: trace.formalRootType,
       sourcePath: trace.sourcePath, formalPath: trace.formalPath }) : undefined;
   if (!journal.reserve()) return;
   journal.records.push({ context, parameter: inference.typeParameter, candidate, priority, contravariant, contribution });
@@ -307,6 +316,19 @@ export function selectedCallInferenceEvidence(
 ): ResolvedCallInferenceEvidence {
   if (journal?.complete === false) return unavailable;
   if (context === undefined) return Object.freeze({ kind: "available", contributions: Object.freeze([]) });
+  const contexts: InferenceContext[] = [];
+  const pending = [context];
+  const visited = new Set<InferenceContext>();
+  while (pending.length !== 0) {
+    const selected = pending.pop()!;
+    if (visited.has(selected)) continue;
+    visited.add(selected);
+    contexts.push(selected);
+    const returned = journal?.returnContexts.get(selected);
+    if (returned !== undefined) pending.push(returned);
+  }
+  const contributions: ResolvedCallInferenceContribution[] = [];
+  for (const selected of contexts) {
   const expected = new Map<Type, {
     readonly inference: InferenceInfo;
     readonly positive: Set<Type>;
@@ -314,7 +336,7 @@ export function selectedCallInferenceEvidence(
     readonly observedPositive: Set<Type>;
     readonly observedNegative: Set<Type>;
   }>();
-  for (const inference of context.inferences) {
+  for (const inference of selected.inferences) {
     if (inference?.typeParameter === undefined) continue;
     expected.set(inference.typeParameter, {
       inference,
@@ -324,9 +346,8 @@ export function selectedCallInferenceEvidence(
       observedNegative: new Set(),
     });
   }
-  const contributions: ResolvedCallInferenceContribution[] = [];
   for (const record of journal?.records ?? []) {
-    if (record.context !== context) continue;
+    if (record.context !== selected) continue;
     const actual = expected.get(record.parameter);
     const candidates = record.contravariant ? actual?.negative : actual?.positive;
     if (actual === undefined || actual.inference.priority !== record.priority || !candidates?.has(record.candidate)) continue;
@@ -336,6 +357,7 @@ export function selectedCallInferenceEvidence(
   }
   for (const actual of expected.values()) {
     if (actual.positive.size !== actual.observedPositive.size || actual.negative.size !== actual.observedNegative.size) return unavailable;
+  }
   }
   return Object.freeze({ kind: "available", contributions: Object.freeze(contributions) });
 }

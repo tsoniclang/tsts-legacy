@@ -2,6 +2,7 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
+import type { ResolvedCheckerBackingConstraint } from "../internal/checker/types.js";
 import {
   Program_GetDefaultResolutionModeForFile,
   Program_GetSourceFileForResolvedModule,
@@ -31,6 +32,7 @@ export interface SourceProgramQueries {
   readonly getSourceFiles: () => readonly GoPtr<SourceFile>[];
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
+  readonly getBackingConstraints: () => readonly ResolvedCheckerBackingConstraint[];
   readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
 }
 
@@ -136,6 +138,17 @@ export function createSourceProgramQueries(
     getSourceFiles,
     getSourceFile,
     getSourceFileQueries,
+    getBackingConstraints() {
+      const visited = new Set<readonly ResolvedCheckerBackingConstraint[]>();
+      const constraints: ResolvedCheckerBackingConstraint[] = [];
+      for (const file of programSourceFiles) {
+        const vector = getSourceFileQueries(file).checker.getBackingConstraints();
+        if (visited.has(vector)) continue;
+        visited.add(vector);
+        constraints.push(...vector);
+      }
+      return Object.freeze(constraints);
+    },
     resolveModuleSourceFile,
   });
 }

@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GoPtr } from "../go/compat.js";
@@ -129,12 +130,12 @@ test("public embedding API checks a provider-backed program through direct sourc
   assert.equal(Object.isFrozen(source.checker), true);
   assert.equal(Object.isFrozen(source.typeShape), true);
   const call = findNode(sourceFile, checked.ast, (node) => checked.ast.is.IsCallExpression(node));
-  const selected = source.checker.getResolvedCallInfo(call);
-  assert.equal(selected?.outcome, "applicable");
-  assert.equal(source.checker.typeToString(selected?.sourceResultType), "void");
+  const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(call));
+  assert.equal(selected?.kind, "applicable");
+  assert.equal(source.checker.typeToString(selected?.resultType), "void");
   assert.equal(
     checked.sourceFacts?.getFact(
-      source.checker.getSignatureDeclaration(selected?.selectedSignature),
+      source.checker.getSignatureDeclaration(selected?.selection.application.instantiatedSignature),
       providerVirtualDeclarationFactKey,
     )?.signatureId,
     "consume(number)",
@@ -314,9 +315,9 @@ test("public AST reader exposes exact authored type nodes", () => {
   );
   const selected = checked.getSourceFileQueries(sourceFile).checker
     .getResolvedCallInfo(call);
-  assert.equal(selected?.sourceSelectedSignatureKind, "resolved");
+  assert.equal(selected?.kind, "applicable");
   const declaration = checked.getSourceFileQueries(sourceFile).checker
-    .getSignatureDeclaration(selected?.selectedSignature);
+    .getSignatureDeclaration(selected?.selection.application.instantiatedSignature);
   assert.equal(checked.ast.kindName(declaration), "KindFunctionType");
   const returnType = checked.ast.typeNode(declaration);
   assert.equal(checked.ast.is.IsTypeReferenceNode(returnType), true);

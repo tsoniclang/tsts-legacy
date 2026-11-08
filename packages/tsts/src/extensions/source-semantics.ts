@@ -1,4 +1,5 @@
 import type { bool } from "../go/scalars.js";
+import type { ResolvedCallSourceValueEvidence } from "../internal/checker/types.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Symbol } from "../internal/ast/symbol.js";
@@ -778,14 +779,14 @@ function recordPointerOperation(
   marker: SourceCallMarkerDeclaration,
   evidence: readonly ExtensionEvidence[],
 ): void {
-  if (callInfo.sourceSelectedSignatureKind !== "resolved") {
+  if (callInfo.kind !== "applicable") {
     return;
   }
-  const selectedTypeArguments = callInfo.sourceSelectedMethodTypeArguments ?? [];
+  const selectedTypeArguments = callInfo.selection.application.signatureTypeArguments;
   const expectedTypeArgumentCount = marker.marker === "project-pointer" ? 2 : 1;
   const pointeeIndex = marker.marker === "project-pointer" ? 1 : 0;
   const pointeeType = selectedTypeArguments.length === expectedTypeArgumentCount
-    ? selectedTypeArguments[pointeeIndex]?.selectedType
+    ? selectedTypeArguments[pointeeIndex]?.checkedArgument
     : undefined;
   const explicitPointeeTypeNode = selectedTypeArguments.length === expectedTypeArgumentCount
     ? selectedTypeArguments[pointeeIndex]?.explicitTypeNode
@@ -838,7 +839,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         storageExpression: storage.storageExpression,
         storageType: storage.type,
         ...(storage.symbol === undefined ? {} : { storageSymbol: storage.symbol }),
@@ -860,7 +861,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         initialExpression: initial.expression,
         initialType: initial.type,
         locationIdentity: callExpression,
@@ -878,7 +879,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
       } satisfies PointerOperationFact;
@@ -896,7 +897,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
         valueExpression: value.expression,
@@ -916,7 +917,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         leftExpression: left.expression,
         leftType: left.type,
         rightExpression: right.expression,
@@ -935,7 +936,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
       } satisfies PointerOperationFact;
@@ -954,7 +955,7 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         identityExpression: identity.expression,
         identityType: identity.type,
         readExpression: read.expression,
@@ -975,7 +976,7 @@ function recordPointerOperation(
         pointer === undefined ||
         fromSource === undefined ||
         toSource === undefined ||
-        sourceTypeArgument?.selectedType === undefined
+        sourceTypeArgument?.checkedArgument === undefined
       ) {
         return;
       }
@@ -984,8 +985,8 @@ function recordPointerOperation(
         call: callExpression,
         pointeeType,
         ...(explicitPointeeTypeNode === undefined ? {} : { explicitPointeeTypeNode }),
-        resultType: callInfo.sourceResultType,
-        sourcePointeeType: sourceTypeArgument.selectedType,
+        resultType: callInfo.resultType,
+        sourcePointeeType: sourceTypeArgument.checkedArgument,
         ...(sourceTypeArgument.explicitTypeNode === undefined
           ? {}
           : { explicitSourcePointeeTypeNode: sourceTypeArgument.explicitTypeNode }),
@@ -1008,9 +1009,9 @@ function exactSourceCallArgument(
   callInfo: ResolvedSourceCallInfo,
   index: number,
   expectedCount: number,
-): ResolvedSourceCallInfo["sourceArguments"][number] | undefined {
-  return callInfo.sourceArguments.length === expectedCount
-    ? callInfo.sourceArguments[index]
+): ResolvedCallSourceValueEvidence | undefined {
+  return callInfo.kind === "applicable" && callInfo.selection.argumentValues.length === expectedCount
+    ? callInfo.selection.argumentValues[index]
     : undefined;
 }
 
@@ -1021,7 +1022,7 @@ function recordRawPointerOperation(
   marker: SourceCallMarkerDeclaration,
   evidence: readonly ExtensionEvidence[],
 ): void {
-  if (callInfo.sourceSelectedSignatureKind !== "resolved") {
+  if (callInfo.kind !== "applicable") {
     return;
   }
   switch (marker.marker) {
@@ -1033,7 +1034,7 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         identityExpression: identity.expression,
         identityType: identity.type,
       } satisfies RawPointerOperationFact, evidence);
@@ -1048,7 +1049,7 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         leftExpression: left.expression,
         leftType: left.type,
         rightExpression: right.expression,
@@ -1064,7 +1065,7 @@ function recordRawPointerOperation(
       facts.set(callExpression, rawPointerOperationFactKey, {
         operation: marker.marker,
         call: callExpression,
-        resultType: callInfo.sourceResultType,
+        resultType: callInfo.resultType,
         pointerExpression: pointer.expression,
         pointerType: pointer.type,
       } satisfies RawPointerOperationFact, evidence);
@@ -1415,10 +1416,10 @@ function resolveSelectedSourceSemanticsCallMarker(
   facts: SourceSemanticsFactAccess,
   callInfo: GoPtr<ResolvedSourceCallInfo>,
 ): SourceCallMarkerDeclaration | undefined {
-  if (callInfo === undefined) {
+  if (callInfo === undefined || callInfo.kind !== "applicable") {
     return undefined;
   }
-  const callee = callInfo.sourceCallee;
+  const callee = callInfo.selection.callee;
   for (const subject of [
     callee.expression,
     callee.selectedDeclaration,

@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -57,7 +58,7 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   const source = checked.getSourceFileQueries(sourceFile);
   const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
   const facts = calls.map(call => checked.sourceFacts?.getFact(
-    source.checker.getSignatureDeclaration(source.checker.getResolvedCallInfo(call)?.selectedSignature),
+    source.checker.getSignatureDeclaration(requireApplicableCallInfo(source.checker.getResolvedCallInfo(call))?.selection.application.instantiatedSignature),
     providerVirtualDeclarationFactKey,
   ));
   assert.deepEqual(facts.map(fact => [fact?.memberId, fact?.signatureId]), [

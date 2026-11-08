@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -123,13 +124,13 @@ test("numeric literal queries retain imported aliases and selected generic argum
   assert.equal(calls.length, 4);
   const expected = [2, 9007199254740993n, undefined, undefined];
   for (const [index, call] of calls.entries()) {
-    const selected = source.checker.getResolvedCallInfo(call);
-    assert.equal(selected?.outcome, "applicable");
-    assert.ok(selected?.outcome === "applicable");
-    const argument = selected.sourceSelectedMethodTypeArguments?.[0];
+    const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(call));
+    assert.equal(selected?.kind, "applicable");
+    assert.ok(selected?.kind === "applicable");
+    const argument = selected.selection.application.signatureTypeArguments?.[0];
     assert.ok(argument !== undefined);
-    assert.equal(source.typeShape.getNumericLiteralTypeValue(argument.selectedType), expected[index]);
-    assert.equal(source.typeShape.getNumericLiteralTypeValue(selected.sourceResultType), expected[index]);
+    assert.equal(source.typeShape.getNumericLiteralTypeValue(argument.checkedArgument), expected[index]);
+    assert.equal(source.typeShape.getNumericLiteralTypeValue(selected.resultType), expected[index]);
   }
   assert.deepEqual(session.checkSource().diagnostics, checked.diagnostics);
   assert.deepEqual(session.checkSource().extensionDiagnostics, checked.extensionDiagnostics);

@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Node_Expression, Node_Text, Node_Type } from "../internal/ast/ast.js";
@@ -48,7 +49,7 @@ test("global value lookup retains actual library and alias signature identity th
   assert.equal(queries.getGlobalValueSymbol("String") === globalString, true, "repeat lookup is the identical checked symbol, not a synthetic symbol store");
   const calls = findNodesByKind(index, KindCallExpression);
   assert.equal(calls.length, 3, "direct, aliased and actual local-shadow calls");
-  const callDeclarations = calls.map(call => queries.getSignatureDeclaration(queries.getResolvedCallInfo(call)?.selectedSignature));
+  const callDeclarations = calls.map(call => queries.getSignatureDeclaration(requireApplicableCallInfo(queries.getResolvedCallInfo(call))?.selection.application.instantiatedSignature));
   const globalType = queries.getTypeOfSymbol(globalString);
   const declarations = queries.getCallSignaturesOfType(globalType).map(signature => queries.getSignatureDeclaration(signature));
   assert.equal(callDeclarations[0] !== undefined && declarations.includes(callDeclarations[0]), true, "direct String uses the actual global call signature");
@@ -61,7 +62,7 @@ test("global value lookup retains actual library and alias signature identity th
   assertCleanSemanticDiagnostics(foreign.program, foreign.index);
   const foreignQueries = createTypeCheckerQueries(foreign.program, { sourceFile: foreign.index });
   const foreignCall = findNodesByKind(foreign.index, KindCallExpression)[0];
-  const foreignDeclaration = foreignQueries.getSignatureDeclaration(foreignQueries.getResolvedCallInfo(foreignCall)?.selectedSignature);
+  const foreignDeclaration = foreignQueries.getSignatureDeclaration(requireApplicableCallInfo(foreignQueries.getResolvedCallInfo(foreignCall))?.selection.application.instantiatedSignature);
   assert.equal(foreignQueries.isDefaultLibraryDeclaration(foreignDeclaration), true, "the foreign program owns its genuine library declaration");
   assert.equal(queries.isDefaultLibraryDeclaration(foreignDeclaration), false, "the same library filename never admits a foreign declaration identity");
   assert.equal(queries.getGlobalValueSymbol("__P01_unknown_global__") === undefined, true, "unknown global value remains absent");

@@ -918,9 +918,9 @@ export function Checker_inferFromTypeArguments(receiver: GoPtr<Checker>, n: GoPt
     if (owners === undefined || sourceType === undefined || targetType === undefined) infer();
     else withSelectedCallInferenceProjection(journal, n!.inferences, sourceType, targetType,
       owners.sourceArray ? { kind: "element", owner: owners.source }
-        : { kind: "type-argument", owner: owners.source, index },
+        : { kind: isTupleType(owners.source) ? "tuple" : "type-argument", owner: owners.source, index },
       owners.formalArray ? { kind: "element", owner: owners.formal }
-        : { kind: "type-argument", owner: owners.formal, index }, infer);
+        : { kind: isTupleType(owners.formal) ? "tuple" : "type-argument", owner: owners.formal, index }, infer);
   }
 }
 
@@ -1864,11 +1864,28 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
       const targetArity = Checker_getTypeReferenceArity(c, target);
       const elementTypes = Checker_getTypeArguments(c, target);
       const elementInfos = Type_TargetTupleType(target)!.elementInfos;
+      const journal = selectedCallInferenceJournal(c, state.inferences);
+      const inferComponent = (sourceType: GoPtr<Type>, formalIndex: number,
+        sourcePart: ResolvedCallInferencePathPart | null,
+        operation = () => Checker_inferFromTypes(c, state, sourceType, elementTypes[formalIndex])): void => {
+        const formalType = elementTypes[formalIndex];
+        if (sourceType === undefined || formalType === undefined) operation();
+        else withSelectedCallInferenceProjection(journal, state.inferences, sourceType, formalType, sourcePart,
+          { kind: "tuple", owner: target!, index: formalIndex }, operation);
+      };
+      const inferPosition = (sourceIndex: number, formalIndex: number): void => inferComponent(
+        Checker_getTypeArguments(c, source)[sourceIndex], formalIndex,
+        isTupleType(source) ? { kind: "tuple", owner: source!, index: sourceIndex } : { kind: "element", owner: source! });
+      const inferSlice = (start: number, endCount: number, formalIndex: number): void => {
+        const sliced = Checker_sliceTupleType(c, source, start, endCount);
+        inferComponent(sliced, formalIndex, { kind: "tuple-slice", owner: source!, start, endCount,
+          readonly: isTupleType(sliced) && Type_TargetTupleType(sliced)!.readonly });
+      };
       // When source and target are tuple types with the same structure (fixed, variadic, and rest are matched
       // to the same kind in each position), simply infer between the element types.
       if (isTupleType(source) && Checker_isTupleTypeStructureMatching(c, source, target)) {
         for (let i = 0; i < targetArity; i++) {
-          Checker_inferFromTypes(c, state, Checker_getTypeArguments(c, source)[i], elementTypes[i]);
+          inferPosition(i, i);
         }
         return;
       }
@@ -1882,7 +1899,7 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
       }
       // Infer between starting fixed elements.
       for (let i = 0; i < startLength; i++) {
-        Checker_inferFromTypes(c, state, Checker_getTypeArguments(c, source)[i], elementTypes[i]);
+        inferPosition(i, i);
       }
       if (!isTupleType(source) || (sourceArity - startLength - endLength === 1 && (Type_TargetTupleType(source)!.elementInfos[startLength]!.flags & ElementFlagsRest) !== 0)) {
         // Single rest element remains in source, infer from that to every element in target
@@ -1892,7 +1909,8 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
           if ((elementInfos[i]!.flags & ElementFlagsVariadic) !== 0) {
             t = Checker_createArrayType(c, t);
           }
-          Checker_inferFromTypes(c, state, t, elementTypes[i]);
+          inferComponent(t, i, t !== restType ? null : isTupleType(source)
+            ? { kind: "tuple", owner: source!, index: startLength } : { kind: "element", owner: source! });
         }
       } else {
         const middleLength = targetArity - startLength - endLength;
@@ -1902,8 +1920,8 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
             const targetInfo = getInferenceInfoForType(state, elementTypes[startLength]);
             if (targetInfo !== undefined && targetInfo.impliedArity >= 0) {
               // Infer slices from source based on implied arity of T.
-              Checker_inferFromTypes(c, state, Checker_sliceTupleType(c, source, startLength, endLength + sourceArity - targetInfo.impliedArity), elementTypes[startLength]);
-              Checker_inferFromTypes(c, state, Checker_sliceTupleType(c, source, startLength + targetInfo.impliedArity, endLength), elementTypes[startLength + 1]);
+              inferSlice(startLength, endLength + sourceArity - targetInfo.impliedArity, startLength);
+              inferSlice(startLength + targetInfo.impliedArity, endLength, startLength + 1);
             }
           } else if ((elementInfos[startLength]!.flags & ElementFlagsVariadic) !== 0 && (elementInfos[startLength + 1]!.flags & ElementFlagsRest) !== 0) {
             // Middle of target is [...T, ...rest] and source is tuple type
@@ -1913,7 +1931,7 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
               const constraint = Checker_getBaseConstraintOfType(c, info.typeParameter);
               if (constraint !== undefined && isTupleType(constraint) && (Type_TargetTupleType(constraint)!.combinedFlags & ElementFlagsVariable) === 0) {
                 const impliedArity = Type_TargetTupleType(constraint)!.fixedLength;
-                Checker_inferFromTypes(c, state, Checker_sliceTupleType(c, source, startLength, sourceArity - (startLength + impliedArity)), elementTypes[startLength]);
+                inferSlice(startLength, sourceArity - (startLength + impliedArity), startLength);
                 const restType = Checker_getElementTypeOfSliceOfTupleType(c, source, startLength + impliedArity, endLength, false, false);
                 if (restType !== undefined) {
                   Checker_inferFromTypes(c, state, restType, elementTypes[startLength + 1]);
@@ -1936,7 +1954,8 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
                   if (restType !== undefined) {
                     Checker_inferFromTypes(c, state, restType, elementTypes[startLength]);
                   }
-                  Checker_inferFromTypes(c, state, trailingSlice, elementTypes[startLength + 1]);
+                  inferComponent(trailingSlice, startLength + 1, { kind: "tuple-slice", owner: source!, start: startIndex,
+                    endCount: sourceArity - endIndex, readonly: false });
                 }
               }
             }
@@ -1946,7 +1965,9 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
           // If target ends in optional element(s), make a lower priority a speculative inference.
           const priority = core.IfElse<InferencePriority>((elementInfos[targetArity - 1]!.flags & ElementFlagsOptional) !== 0, InferencePrioritySpeculativeTuple, 0);
           const sourceSlice = Checker_sliceTupleType(c, source, startLength, endLength);
-          Checker_inferWithPriority(c, state, sourceSlice, elementTypes[startLength], priority);
+          inferComponent(sourceSlice, startLength, { kind: "tuple-slice", owner: source!, start: startLength,
+            endCount: endLength, readonly: isTupleType(sourceSlice) && Type_TargetTupleType(sourceSlice)!.readonly }, () =>
+              Checker_inferWithPriority(c, state, sourceSlice, elementTypes[startLength], priority));
         } else if (middleLength === 1 && (elementInfos[startLength]!.flags & ElementFlagsRest) !== 0) {
           // Middle of target is exactly one rest element. If middle of source is not empty, infer union of middle element types.
           const restType = Checker_getElementTypeOfSliceOfTupleType(c, source, startLength, endLength, false, false);
@@ -1957,7 +1978,7 @@ export function Checker_inferFromObjectTypes(receiver: GoPtr<Checker>, n: GoPtr<
       }
       // Infer between ending fixed elements
       for (let i = 0; i < endLength; i++) {
-        Checker_inferFromTypes(c, state, Checker_getTypeArguments(c, source)[sourceArity - i - 1], elementTypes[targetArity - i - 1]);
+        inferPosition(sourceArity - i - 1, targetArity - i - 1);
       }
       return;
     }
@@ -3951,7 +3972,7 @@ function applyToObservedParameterTypes(
     if (role === "tail") {
       if (parameterType === selected || Checker_isArrayType(checker, parameterType)) return [parameterPart];
       return isTupleType(parameterType)
-        ? [parameterPart, { kind: "tuple-slice", owner: parameterType, start: position - parameterIndex, readonly }]
+        ? [parameterPart, { kind: "tuple-slice", owner: parameterType, start: position - parameterIndex, endCount: 0, readonly }]
         : null;
     }
     return [parameterPart, Checker_isArrayType(checker, parameterType)

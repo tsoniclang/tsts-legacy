@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { bool } from "../go/scalars.js";
@@ -22,9 +23,9 @@ function selectedCalls(sourceText: string, warm: boolean) {
     for (const call of calls) queries.getTypeAtLocation(call);
   }
   const selected = calls.map(call => {
-    const evidence = queries.getResolvedCallInfo(call);
-    if (evidence?.outcome !== "applicable") throw new Error("The original valid call requires applicable evidence.");
-    const declaration = queries.getSignatureDeclaration(evidence.selectedSignature);
+    const evidence = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
+    if (evidence?.kind !== "applicable") throw new Error("The original valid call requires applicable evidence.");
+    const declaration = queries.getSignatureDeclaration(evidence.selection.application.instantiatedSignature);
     if (declaration === undefined) throw new Error("A selected default requires the original signature declaration.");
     return { call, evidence, declaration };
   });
@@ -44,7 +45,7 @@ for (const warm of [false, true]) {
       read();
     `, warm);
     const actual = selected[0]!;
-    const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+    const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
     const binder = Node_TypeParameters(actual.declaration)?.[0];
     const syntax = AsTypeParameterDeclaration(binder)?.DefaultType;
     assert.equal(argument !== undefined && binder !== undefined && syntax !== undefined, true,
@@ -52,10 +53,10 @@ for (const warm of [false, true]) {
     assert.equal(selectedDefault(argument!) === syntax, true, "default authority is the original authored node");
     assert.equal(queries.getPrimarySymbolDeclaration(queries.getTypeSymbol(argument!.typeParameter)) === binder, true,
       "the selected argument retains its original declaration binder");
-    const repeated = queries.getResolvedCallInfo(actual.call);
-    assert.equal(repeated?.selectedSignature === actual.evidence.selectedSignature, true,
+    const repeated = requireApplicableCallInfo(queries.getResolvedCallInfo(actual.call));
+    assert.equal(repeated?.selection.application.instantiatedSignature === actual.evidence.selection.application.instantiatedSignature, true,
       "the ordinary cached signature is not replaced");
-    assert.equal(repeated?.sourceSelectedMethodTypeArguments === actual.evidence.sourceSelectedMethodTypeArguments, true,
+    assert.equal(repeated?.selection.application.signatureTypeArguments === actual.evidence.selection.application.signatureTypeArguments, true,
       "the canonical cached contribution vector is reused");
   });
 }
@@ -68,10 +69,10 @@ test("an inferred equal backing type does not acquire authored default authority
     read(input);
   `, false);
   const actual = selected[0]!;
-  const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+  const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
   assert.equal(argument !== undefined && syntax !== undefined, true, "the inferred call has a genuine authored default");
-  assert.equal(argument!.selectedType === queries.getTypeFromTypeNode(syntax), true,
+  assert.equal(argument!.checkedArgument === queries.getTypeFromTypeNode(syntax), true,
     "the inferred value and default really have the identical native backing Type");
   assert.equal(selectedDefault(argument!) === undefined, true, "equal backing identity does not select the default");
 });
@@ -82,7 +83,7 @@ test("explicit equal arguments retain their own syntax without default authority
     declare function read<Value = Word>(): Value;
     read<bigint>();
   `, true);
-  const argument = selected[0]!.evidence.sourceSelectedMethodTypeArguments?.[0];
+  const argument = selected[0]!.evidence.selection.application.signatureTypeArguments?.[0];
   assert.equal(argument?.explicitTypeNode !== undefined, true, "the explicit Source argument has its own syntax");
   assert.equal(argument !== undefined && selectedDefault(argument) === undefined, true,
     "explicit evidence cannot also claim an authored default");
@@ -97,7 +98,7 @@ test("losing overload defaults never replace the winning original default", () =
     read("right");
   `, false);
   const actual = selected[0]!;
-  const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+  const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
   const binder = Node_TypeParameters(actual.declaration)?.[0];
   const syntax = AsTypeParameterDeclaration(binder)?.DefaultType;
   assert.equal(argument !== undefined && syntax !== undefined, true, "the winning overload has its original default");
@@ -115,7 +116,7 @@ test("context-sensitive overload retries retain only the winning default contrib
     read("right", value => { void value; });
   `, false);
   const actual = selected[0]!;
-  const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+  const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
   assert.equal(argument !== undefined && syntax !== undefined, true, "the original contextual overload remains selected");
   assert.equal(selectedDefault(argument!) === syntax, true, "discarded contextual trials do not poison the winning default");
@@ -128,7 +129,7 @@ test("trailing defaults retain exact authority after an earlier explicit argumen
     read<string>("value");
   `, true);
   const actual = selected[0]!;
-  const arguments_ = actual.evidence.sourceSelectedMethodTypeArguments;
+  const arguments_ = actual.evidence.selection.application.signatureTypeArguments;
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[1])?.DefaultType;
   assert.equal(arguments_?.length === 2 && syntax !== undefined, true, "the actual selected call contains both original binders");
   assert.equal(arguments_![0]!.explicitTypeNode !== undefined && selectedDefault(arguments_![0]!) === undefined, true,
@@ -146,7 +147,7 @@ test("nested calls keep their distinct default owners despite identical native b
   `, true);
   assert.equal(selected.length, 2, "the original program has the two distinct calls");
   const nodes = selected.map(actual => {
-    const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+    const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
     const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
     assert.equal(argument !== undefined && syntax !== undefined, true, "each original signature owns a default");
     assert.equal(selectedDefault(argument!) === syntax, true, "a nested frame cannot publish another call's default");
@@ -162,7 +163,7 @@ test("dependent defaults preserve each original syntax in binder order", () => {
     read();
   `, false);
   const actual = selected[0]!;
-  const arguments_ = actual.evidence.sourceSelectedMethodTypeArguments;
+  const arguments_ = actual.evidence.selection.application.signatureTypeArguments;
   const binders = Node_TypeParameters(actual.declaration) ?? [];
   assert.equal(arguments_?.length === 2 && binders.length === 2, true, "both dependent binder identities are selected");
   for (const [index, argument] of arguments_!.entries()) {
@@ -182,7 +183,7 @@ test("nested calls to one generic signature retain their own inference-context o
   assert.equal(selected[0]!.declaration === selected[1]!.declaration, true,
     "signature identity alone cannot distinguish the nested default owner");
   for (const actual of selected) {
-    const argument = actual.evidence.sourceSelectedMethodTypeArguments?.[0];
+    const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
     const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
     assert.equal(argument !== undefined && syntax !== undefined && selectedDefault(argument) === syntax, true,
       "each actual inference context retains the original selected default");
@@ -194,7 +195,7 @@ test("a constraint fallback without a default publishes no default authority", (
     declare function read<Value extends string>(): Value;
     read();
   `, true);
-  const argument = selected[0]!.evidence.sourceSelectedMethodTypeArguments?.[0];
+  const argument = selected[0]!.evidence.selection.application.signatureTypeArguments?.[0];
   assert.equal(argument !== undefined && selectedDefault(argument) === undefined, true,
     "a native constraint result is not an authored default selection");
 });
@@ -206,7 +207,7 @@ test("native inference cache reuse and invalidation preserve and clear exact def
     read();
   `, true);
   const actual = selected[0]!;
-  const candidate = actual.evidence.selectedSignature.target;
+  const candidate = actual.evidence.selection.application.instantiatedSignature.target;
   const parameter = candidate?.typeParameters[0];
   const checker = parameter?.checker;
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
@@ -256,7 +257,7 @@ test("same-signature nested candidate rollback cannot consume another inference 
     read();
   `, false);
   const actual = selected[0]!;
-  const candidate = actual.evidence.selectedSignature.target;
+  const candidate = actual.evidence.selection.application.instantiatedSignature.target;
   const parameter = candidate?.typeParameters[0];
   const checker = parameter?.checker;
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;

@@ -1,4 +1,6 @@
-import type { bool } from "../go/scalars.js";
+import type { bool, uint } from "../go/scalars.js";
+import { checkerBackingConstraints } from "../internal/checker/checker/backing-constraint-evidence.js";
+import type { ResolvedCheckerBackingConstraint } from "../internal/checker/types.js";
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
@@ -45,8 +47,8 @@ import {
   SkipOuterExpressions,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetSourceFile, Program_GetTypeChecker, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
-import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
+import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerById, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
@@ -60,6 +62,7 @@ import {
 } from "../internal/checker/exports.js";
 import {
   Checker_finalizeResolvedCallEvidence,
+  Checker_getResolvedCallSelectionEvidence,
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
 import { CheckModeNormal, getNumberLiteralValue } from "../internal/checker/checker/state.js";
@@ -194,6 +197,7 @@ export interface ResolvedSourceStorageInfo {
 }
 
 export interface TypeCheckerQueries {
+  readonly getBackingConstraints: () => readonly ResolvedCheckerBackingConstraint[];
   readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
   readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
   readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
@@ -266,6 +270,14 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   const wellKnownSymbolInfos = new WeakMap<Node, ResolvedSourceWellKnownSymbolInfo>();
   const resourceManagementInfos = new WeakMap<Node, ResolvedSourceResourceManagementInfo>();
   const queries: TypeCheckerQueries = {
+    getBackingConstraints() {
+      const constraints = withCheckedFile(program, defaultOptions.sourceFile, defaultOptions, checker => {
+        if (checker === undefined) throw new Error("Backing-constraint queries require the original checked program.");
+        return checkerBackingConstraints(checker);
+      });
+      if (constraints === undefined) throw new Error("Backing-constraint queries lost their checked lifetime.");
+      return constraints;
+    },
     getGlobalValueSymbol(name) {
       if (Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
       return withChecker(program, defaultOptions.sourceFile, defaultOptions, checker => {
@@ -352,7 +364,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getDeclaredTypeOfSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_getDeclaredTypeOfSymbol(checker, symbol)),
     getResolvedSignature: (node) =>
-      withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal)),
+      withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, (checker) =>
+        Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal)),
     getSignatureFromDeclaration(declaration) {
       if (!IsFunctionLike(declaration)) return undefined;
       const sourceFile = GetSourceFileOfNode(declaration);
@@ -362,11 +375,13 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     },
     getResolvedCallInfo: (node) =>
       memoizeResolvedNodeQuery(callInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) => {
+        withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, (checker) => {
           if (!IsCallOrNewExpression(node)) {
             return undefined;
           }
           Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal);
+          const selection = Checker_getResolvedCallSelectionEvidence(checker, node);
+          if (selection?.kind !== "applicable") return selection;
           const sourceResultType = Checker_GetTypeAtLocation(checker, node);
           return Checker_finalizeResolvedCallEvidence(checker, node, sourceResultType);
         })),
@@ -394,7 +409,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
           getResolvedSourceObjectLiteralElementInfo(checker, node, objectLiteralElementSymbols))),
     getResolvedStorageInfo: (node) =>
       memoizeResolvedNodeQuery(storageInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) =>
+        withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, (checker) =>
           getResolvedSourceStorageInfo(checker, node))),
     getResolvedCallableCompletionInfo: (node) =>
       memoizeResolvedNodeQuery(callableCompletionInfos, node, () =>
@@ -432,11 +447,14 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getInvocationReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => readInvocationReturnType(checker, signature)),
     getCallSignaturesOfType: (type) =>
-      withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
+      withCheckerForType(program, type, defaultOptions, (checker) =>
+        Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignaturesOfType: (type) =>
-      withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
+      withCheckerForType(program, type, defaultOptions, (checker) =>
+        Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
     getPropertyOfType: (type, name) =>
-      withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetPropertyOfType(checker, type, name)),
+      withCheckerForType(program, type, defaultOptions, (checker) =>
+        Checker_GetPropertyOfType(checker, type, name)),
     getTypeOfPropertyOfType: (type, name) =>
       withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetTypeOfPropertyOfType(checker, type, name)),
     getConstantValue: (node) =>
@@ -788,6 +806,9 @@ function withCheckerForSymbol<T>(
   if (symbol === undefined) {
     return undefined;
   }
+  if (symbol.checkerId !== undefined) {
+    return withCheckerById(program, symbol.checkerId, defaultOptions, callback);
+  }
   return withChecker(
     program,
     defaultOptions.sourceFile,
@@ -825,7 +846,44 @@ function withCheckerForSignature<T>(
   if (signature === undefined) {
     return undefined;
   }
-  return withChecker(program, defaultOptions.sourceFile, defaultOptions, callback);
+  return withCheckerById(program, signature.checkerId, defaultOptions, callback);
+}
+
+function withCheckerById<T>(
+  program: GoPtr<Program>,
+  checkerId: uint,
+  defaultOptions: CreateTypeCheckerQueriesOptions,
+  callback: (checker: GoPtr<Checker>) => GoPtr<T>,
+): GoPtr<T> {
+  const sourceFile = defaultOptions.sourceFile;
+  if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
+  const context = defaultOptions.context ?? Background();
+  const [checker, done] = Program_GetTypeCheckerById(program,
+    WithCheckerLifetime(context, CheckerLifetimeAPI), checkerId);
+  try {
+    return checker !== undefined && checker.id === checkerId ? callback(checker) : undefined;
+  } finally {
+    done();
+  }
+}
+
+function withCheckedFile<T>(
+  program: GoPtr<Program>,
+  sourceFile: GoPtr<SourceFile>,
+  defaultOptions: CreateTypeCheckerQueriesOptions,
+  callback: (checker: GoPtr<Checker>) => GoPtr<T>,
+): GoPtr<T> {
+  if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
+  const context = defaultOptions.context ?? Background();
+  const [checker, done] = Program_GetTypeCheckerForFile(program,
+    WithCheckerLifetime(context, CheckerLifetimeDiagnostics), sourceFile);
+  try {
+    return callback(checker);
+  } finally {
+    done();
+  }
 }
 
 function withChecker<T>(

@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -60,9 +61,9 @@ test("provider modules preserve default, renamed, and namespace import identitie
   assert.equal(constructions.length, 3);
   assert.deepEqual(
     constructions.map((construction) => {
-      const selected = source.checker.getResolvedCallInfo(construction);
+      const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
       return checked.sourceFacts?.getFact(
-        selected?.sourceCallee.selectedDeclaration,
+        selected?.selection.callee.selectedDeclaration,
         providerVirtualDeclarationFactKey,
       )?.exportId;
     }),
@@ -247,7 +248,7 @@ test("source-global provider references bind the active checked globals without 
     calls.map((call) =>
       checked.sourceFacts?.getFact(
         source.checker.getSignatureDeclaration(
-          source.checker.getResolvedCallInfo(call)?.selectedSignature,
+          requireApplicableCallInfo(source.checker.getResolvedCallInfo(call))?.selection.application.instantiatedSignature,
         ),
         providerVirtualDeclarationFactKey,
       )?.signatureId),

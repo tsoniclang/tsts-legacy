@@ -7,8 +7,6 @@ import {
   sourcePrimitiveFactKey,
 } from "../index.js";
 import { Diagnostic_Code, Diagnostic_String } from "../internal/ast/diagnostic.js";
-import { SymbolFlagsAlias } from "../internal/ast/generated/flags.js";
-import { configuredSourcePrimitiveOperand } from "./compiler-integration.js";
 import type { ProviderDeclarationModel } from "./host.js";
 import { findNodes, sourceProviderExtension, testCoreDeclarations, testNoLibCompilerOptions } from "./source-provider-test-support.js";
 
@@ -65,26 +63,41 @@ function rejected(program: string) {
     `unproven or ordinary backing operands keep the frontend operator refusal: ${program}`);
 }
 
-function leftPrimitiveFact(current: ReturnType<typeof checked>) {
+function operandOccurrencePrimitiveFact(current: ReturnType<typeof checked>) {
   const file = current.getSourceFile("/src/index.ts");
   if (file === undefined) throw new Error("The original checked program is required.");
   const binaries = findNodes(file, current.ast.children, current.ast.is.IsBinaryExpression);
   assert.equal(binaries.length, 1, "one exact original operation is retained");
   const binary = current.ast.as.AsBinaryExpression(binaries[0]);
   if (binary === undefined) throw new Error("The original binary operation is required.");
-  const checker = current.getSourceFileQueries(file).checker;
-  return configuredSourcePrimitiveOperand(current.program, binary.Left, node => {
-    const symbol = checker.getSymbolAtLocation(node);
-    return symbol !== undefined && (symbol.Flags & SymbolFlagsAlias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol;
-  });
+  return current.sourceFacts.getFact(binary.Left, sourcePrimitiveFactKey);
+}
+
+function checkedWithWitnesses(program: string) {
+  const current = checked(program);
+  const constraints = current.getBackingConstraints();
+  for (const diagnostic of current.diagnostics) {
+    assert.equal(constraints.some(constraint => constraint.diagnostic.root === diagnostic), true,
+      "an actual checker refusal retains its exact original diagnostic root, not a code/span substitute");
+  }
+  for (const constraint of constraints) {
+    assert.equal(current.diagnostics.includes(constraint.diagnostic.root), true,
+      "only the actual emitted diagnostic root supplies the pending backed obligation");
+    if (constraint.kind !== "operator") continue;
+    const original = current.ast.as.AsBinaryExpression(constraint.operation);
+    assert.equal(original !== undefined && constraint.left.root.node === original.Left &&
+      constraint.right.root.node === original.Right, true,
+    "the canonical Host receives the exact original operand occurrences for admission");
+  }
+  return current;
 }
 
 const imports = `import type { ${primitives.map(primitive => primitive.exportName).join(", ")} } from "${moduleSpecifier}";`;
 
-test("configured shift inputs admit every exact native left/count declaration without a backing-kind choice", () => {
+test("configured shifts retain every exact native left/count fact and pending backing obligation", () => {
   for (const left of primitives) for (const count of [primitives[2], primitives[0]]) {
     for (const operator of ["<<", ">>", ">>>", "<<=", ">>=", ">>>="]) {
-      const current = noDiagnostics(`${imports}
+      const current = checkedWithWitnesses(`${imports}
         export function run(value: ${left.exportName}, count: ${count.exportName}): ${left.exportName} {
           return value ${operator} count;
         }`);
@@ -101,20 +114,20 @@ test("configured shift inputs admit every exact native left/count declaration wi
 });
 
 test("configured renamed, namespace, parenthesized and transparent aliases select original declaration facts", () => {
-  noDiagnostics(`import type { WideSigned as Value, NarrowSigned as Count } from "${moduleSpecifier}";
+  checkedWithWitnesses(`import type { WideSigned as Value, NarrowSigned as Count } from "${moduleSpecifier}";
     import type * as values from "${moduleSpecifier}";
     type Local = (Value); type Nested = Local; type Shift = values.NarrowSigned;
     export function run(value: Nested, count: Shift) { return (value) >>> (count); }`);
 });
 
 test("configured ImportType aliases retain the same original primitive declaration", () => {
-  noDiagnostics(`type Value = import("${moduleSpecifier}").WideSigned;
+  checkedWithWitnesses(`type Value = import("${moduleSpecifier}").WideSigned;
     type Count = import("${moduleSpecifier}").NarrowSigned;
     export function run(value: Value, count: Count) { return value >>> count; }`);
 });
 
 test("configured property declarations and explicit assertions carry their exact annotation facts", () => {
-  noDiagnostics(`${imports}
+  checkedWithWitnesses(`${imports}
     interface Inputs { value: WideSigned; count: NarrowSigned; }
     export function run(input: Inputs) { return input.value >>> input.count; }
     export function asserted(value: bigint, count: number) {
@@ -128,10 +141,14 @@ test("configured facts are available on cold and warm checks before Source analy
   current.ensureBound();
   const first = current.ensureChecked();
   const second = current.ensureChecked();
-  assert.equal(first.length, 0, "bound provider declaration facts suffice before analyzeSource");
-  assert.equal(second.length, 0, "warm checking retains the same result");
+  assert.equal(first.length, 1, "the original mixed-backing refusal is retained before Host admission");
+  assert.equal(second.length === first.length && second[0] === first[0], true,
+    "warm checking retains the exact diagnostic object, not a recoded replacement");
   const result = current.checkSource();
-  assert.equal(result.diagnostics.length, 0, "normal finalization preserves the checked result");
+  assert.equal(result.diagnostics.length === first.length && result.diagnostics[0] === first[0], true,
+    "normal finalization preserves the original pending diagnostic");
+  assert.equal(result.getBackingConstraints().some(constraint => constraint.diagnostic.root === first[0]), true,
+    "the configured Host owner receives the same immutable checker diagnostic root");
   assert.equal(current.checkSource() === result, true, "the ordinary cached checked program is unchanged");
 });
 
@@ -168,9 +185,9 @@ test("one ordinary or inferred operand cannot supply the missing configured fact
 });
 
 test("a constrained formal preserves ordinary checking without manufacturing a configured primitive", () => {
-  const current = noDiagnostics(`${imports}
+  const current = checkedWithWitnesses(`${imports}
     export function run<Value extends WideSigned>(value: Value, count: NarrowSigned) { return value >>> count; }`);
-  assert.equal(leftPrimitiveFact(current) === undefined, true,
+  assert.equal(operandOccurrencePrimitiveFact(current) === undefined, true,
     "the baseline-admitted formal is not the primitive named by its constraint");
 });
 
@@ -188,6 +205,6 @@ test("a callable result or an array element annotation is not the operand's prim
     const current = checked(program);
     assert.equal(current.diagnostics.length, 1, "the original arithmetic operand rejection remains exact");
     assert.equal(Diagnostic_Code(current.diagnostics[0]), 2362, "the value is not an arithmetic operand");
-    assert.equal(leftPrimitiveFact(current) === undefined, true, "a nested return or element annotation is not the operand");
+    assert.equal(operandOccurrencePrimitiveFact(current) === undefined, true, "a nested return or element annotation is not the operand");
   }
 });

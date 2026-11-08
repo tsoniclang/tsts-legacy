@@ -9,6 +9,7 @@ import { LinkStore_Get } from "../../core/linkstore.js";
 import type {
   CheckedCallSelectionSeed,
   CheckedCallSourceSelectionProvenance,
+  EffectiveCallArgumentOrigin,
   SignatureLinks,
   Type,
 } from "../types.js";
@@ -176,6 +177,18 @@ export function retainElementCallCalleeEvidence(
   });
 }
 
+export function retainCallArgumentOrigins(
+  checker: Checker,
+  callExpression: Node,
+  origins: readonly EffectiveCallArgumentOrigin[],
+): void {
+  const links = LinkStore_Get(checker.signatureLinks, callExpression) as SignatureLinks;
+  retainCallSelectionSeed(checker, callExpression, {
+    ...links.checkedCallSelectionSeed,
+    argumentOrigins: origins,
+  });
+}
+
 function retainCallSelectionSeed(
   checker: Checker,
   callExpression: Node,
@@ -183,7 +196,8 @@ function retainCallSelectionSeed(
 ): CheckedCallSelectionSeed {
   const links = LinkStore_Get(checker.signatureLinks, callExpression) as SignatureLinks;
   journalSelectedCallEvidence(checker, links);
-  const seed = Object.freeze({ ...incoming });
+  const origins = incoming.argumentOrigins ?? links.checkedCallSelectionSeed?.argumentOrigins;
+  const seed = Object.freeze({ ...incoming, ...(origins === undefined ? {} : { argumentOrigins: origins }) });
   links.checkedCallSelectionSeed = seed;
   return seed;
 }
