@@ -7,6 +7,7 @@ import {
   defineExtensionFactKey,
   type CompilerExtension,
 } from "../index.js";
+import { createSourceProgramQueries } from "../extensions/source-program.js";
 import {
   findNodes,
   sourceProviderExtension,
@@ -14,6 +15,36 @@ import {
   testNoLibCompilerOptions,
   testProviderModel,
 } from "../extensions/source-provider-test-support.js";
+
+test("original compiler program order remains frozen independently of included source traversal", () => {
+  const checked = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts", "/src/extra.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/dependency.ts": "export const value = 1;",
+      "/src/index.ts": "import { value } from './dependency.js'; export const result = value;",
+      "/src/extra.ts": "export const extra = 2;",
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "the actual dependency program checks");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the original file-order fixture is valid");
+  assert.deepEqual(checked.programSourceFiles.map(file => checked.ast.getFileName(file)),
+    ["/src/core.d.ts", "/src/dependency.ts", "/src/index.ts", "/src/extra.ts"],
+    "the dependency precedes its importer in the actual original compiler order");
+  assert.equal(Object.isFrozen(checked.programSourceFiles), true, "the one original vector cannot be reordered");
+  const index = checked.getSourceFile("/src/index.ts");
+  assert.equal(index !== undefined, true, "the original included file is retained");
+  const filtered = createSourceProgramQueries(checked.program, { includeSourceFile: file => file === index });
+  assert.equal(filtered.getSourceFiles().length === 1 && filtered.getSourceFiles()[0] === index, true,
+    "the existing inclusion policy controls only public traversal");
+  assert.equal(filtered.programSourceFiles.length === checked.programSourceFiles.length
+    && filtered.programSourceFiles.every((file, position) => file === checked.programSourceFiles[position]), true,
+    "filtering retains every exact original identity and its original order");
+  assert.equal(filtered.containsSourceFile(checked.programSourceFiles[0]), true,
+    "the original excluded library is still owned by this checked program");
+});
 
 test("checked raw program membership retains excluded canonical native owners and refuses foreign identities", () => {
   const specifier = "@test/raw-program-owner.js";

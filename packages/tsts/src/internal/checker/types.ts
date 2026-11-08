@@ -961,6 +961,39 @@ export interface ResolvedCallSelectedSignatureParameterEvidence {
   readonly rest: boolean;
 }
 
+export type ResolvedCallInferencePathPart =
+  | { readonly kind: "element"; readonly owner: Type }
+  | { readonly kind: "tuple"; readonly owner: Type; readonly index: number }
+  | { readonly kind: "tuple-slice"; readonly owner: Type; readonly start: number; readonly readonly: boolean }
+  | { readonly kind: "type-argument"; readonly owner: Type; readonly index: number }
+  | { readonly kind: "member"; readonly owner: Type; readonly symbol: Symbol_62f2f8bf; readonly declaration: Node }
+  | { readonly kind: "index"; readonly owner: Type; readonly key: Type; readonly declaration: Node }
+  | { readonly kind: "callable-result"; readonly owner: Type; readonly signature: Signature;
+      readonly signatureKind: "call" | "construct"; readonly declaration?: Node }
+  | { readonly kind: "callable-parameter"; readonly owner: Type; readonly signature: Signature;
+      readonly signatureKind: "call" | "construct"; readonly index: number; readonly declaration?: Node }
+  | { readonly kind: "callable-receiver"; readonly owner: Type; readonly signature: Signature;
+      readonly signatureKind: "call" | "construct"; readonly declaration?: Node }
+  | { readonly kind: "signature-tail"; readonly owner: Type; readonly signature: Signature;
+      readonly signatureKind: "call" | "construct"; readonly start: number; readonly readonly: boolean }
+  | { readonly kind: "union-member"; readonly owner: Type; readonly member: Type; readonly index: number };
+
+export type ResolvedCallInferenceOrigin =
+  | { readonly kind: "argument"; readonly subject: Node; readonly effectiveArgumentIndex: number; readonly parameterIndex: number }
+  | { readonly kind: "receiver"; readonly subject: Node }
+  | { readonly kind: "contextual-result"; readonly subject: Node };
+
+export interface ResolvedCallInferenceContribution {
+  readonly typeParameter: Type;
+  readonly origin: ResolvedCallInferenceOrigin;
+  readonly sourcePath: readonly ResolvedCallInferencePathPart[];
+  readonly formalPath: readonly ResolvedCallInferencePathPart[];
+}
+
+export type ResolvedCallInferenceEvidence =
+  | { readonly kind: "available"; readonly contributions: readonly ResolvedCallInferenceContribution[] }
+  | { readonly kind: "unavailable" };
+
 export interface ResolvedCallSelectionEvidence {
   readonly outcome: "applicable" | "untyped";
   readonly call: Node;

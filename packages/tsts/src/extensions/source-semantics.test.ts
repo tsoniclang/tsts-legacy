@@ -498,9 +498,7 @@ test("source-semantics records out ref inref borrow move call-site facts without
   assert.equal(Program_GetSemanticDiagnostics(program, Background(), index).length, 0);
   finalizeSourceSemantics(extended);
   const diagnostics = extended.extensionHost.diagnostics.all();
-  assert.equal(diagnostics.length, 1);
-  assert.equal(diagnostics[0]?.numericCode, 9901101);
-  assert.match(diagnostics[0]?.message ?? "", /out\(\.\.\.\) requires a storage expression/);
+  assert.equal(diagnostics.length, 0, "Legacy records original marker occurrences; the Host owns place validity");
 
   const outCall = getCallExpression(index, "out", 0);
   const refCall = getCallExpression(index, "refArg", 0);
@@ -515,7 +513,13 @@ test("source-semantics records out ref inref borrow move call-site facts without
   assert.equal(extended.extensionHost.facts.get(refCall, argumentPassingFactKey)?.mode, "byref-readwrite");
   assert.equal(extended.extensionHost.facts.get(inrefCall, argumentPassingFactKey)?.mode, "byref-readonly");
   assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(outCall), argumentPassingFactKey)?.mode, "byref-writeonly-must-init");
-  assert.equal(extended.extensionHost.facts.get(getFirstCallArgument(invalidOutCall), argumentPassingFactKey), undefined);
+  const nonStorageExpression = getFirstCallArgument(invalidOutCall);
+  const nonStorageFact = extended.extensionHost.facts.get(nonStorageExpression, argumentPassingFactKey);
+  assert.equal(nonStorageFact?.role === "argument" && nonStorageFact.storageExpression === nonStorageExpression, true,
+    "the original nonstorage occurrence remains available to the Host place owner");
+  const outFact = extended.extensionHost.facts.get(outCall, argumentPassingFactKey);
+  assert.equal(outFact?.role === "argument" && outFact.storageExpression === getFirstCallArgument(outCall), true,
+    "the genuine marker retains its exact original storage occurrence");
   assert.equal(extended.extensionHost.facts.get(localOutCall, argumentPassingFactKey), undefined);
 
   assert.equal(extended.extensionHost.facts.get(borrowCall, flowStateFactKey)?.state, "borrowed-shared");

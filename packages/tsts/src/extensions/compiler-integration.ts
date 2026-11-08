@@ -727,7 +727,7 @@ function recordProviderVirtualParameterFacts(
     if (parameterDeclaration === undefined) {
       throw new Error(`Provider virtual signature lost parameter declaration ${index}.`);
     }
-    const fact = { mode };
+    const fact = { role: "declaration" as const, mode };
     extensionHost[extensionHostSetFact](
       parameterDeclaration,
       argumentPassingFactKey,

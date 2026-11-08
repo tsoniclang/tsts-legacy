@@ -46,7 +46,6 @@ import {
   GetSourceFileOfNode,
   GetSymbolId,
   IsDeclarationName,
-  IsLeftHandSideExpression,
   IsRightSideOfQualifiedNameOrPropertyAccess,
 } from "../internal/ast/utilities.js";
 import {
@@ -660,7 +659,7 @@ function recordSourceSemanticsCallMarker(
       if (argument === undefined) {
         return;
       }
-      recordArgumentPassingMarker(facts, diagnostics, extensionId, callExpression, argument, marker, evidence);
+      recordArgumentPassingMarker(facts, callExpression, argument, marker, evidence);
       return;
     }
     case "shared-borrow": {
@@ -1078,37 +1077,18 @@ function recordRawPointerOperation(
 
 function recordArgumentPassingMarker(
   facts: SourceSemanticsFactAccess,
-  diagnostics: ExtensionDiagnosticWriter,
-  extensionId: string,
   callExpression: Node,
   target: Node,
   marker: SourceCallMarkerDeclaration,
   evidence: readonly ExtensionEvidence[],
 ): void {
   const fact = {
+    role: "argument",
     mode: getArgumentPassingMode(marker.marker as ArgumentPassingMarkerKind),
     storageExpression: target,
   } satisfies ArgumentPassingFact;
   facts.set(callExpression, argumentPassingFactKey, fact, evidence);
-  if (IsLeftHandSideExpression(target)) {
-    facts.set(target, argumentPassingFactKey, fact, evidence);
-    return;
-  }
-  diagnostics.append({
-    extensionId,
-    extensionCode: "SOURCE_SEMANTICS_NON_STORAGE_ARGUMENT",
-    numericCode: 9901101,
-    publicCode: "TSTS_SOURCE_SEMANTICS_0001",
-    category: "error",
-    message: `${marker.exportName}(...) requires a storage expression.`,
-    nodeOrSpan: target,
-    evidence,
-    identity: sourceSemanticsDiagnosticIdentity(
-      "non-storage",
-      marker.exportName,
-      target,
-    ),
-  });
+  facts.set(target, argumentPassingFactKey, fact, evidence);
 }
 
 function sourceSemanticsDiagnosticIdentity(

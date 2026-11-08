@@ -111,10 +111,16 @@ export interface SourcePrimitiveFact {
   readonly runtimeBase: "boolean" | "number" | "bigint" | "string" | "object";
 }
 
-export interface ArgumentPassingFact {
-  readonly mode: ArgumentPassingMode;
-  readonly storageExpression?: Node;
-}
+export type ArgumentPassingFact =
+  | {
+      readonly role: "declaration";
+      readonly mode: ArgumentPassingMode;
+    }
+  | {
+      readonly role: "argument";
+      readonly mode: ArgumentPassingMode;
+      readonly storageExpression: Node;
+    };
 
 export interface FunctionPointerFact {
   readonly parameters: readonly Node[];
@@ -329,8 +335,10 @@ export const argumentPassingFactKey = markHostSourceReadableFactKey(defineExtens
   name: "argumentPassing",
   snapshot: snapshotArgumentPassingFact,
   equals: (left, right) =>
-    left.mode === right.mode
-    && left.storageExpression === right.storageExpression,
+    left.role === right.role
+    && left.mode === right.mode
+    && (left.role === "declaration"
+      || right.role === "argument" && left.storageExpression === right.storageExpression),
 }));
 
 export const functionPointerFactKey = markHostSourceReadableFactKey(defineExtensionFactKey<FunctionPointerFact>({
@@ -518,16 +526,21 @@ function snapshotSourceMarkerFact(value: SourceMarkerFact): SourceMarkerFact {
 }
 
 function snapshotArgumentPassingFact(value: ArgumentPassingFact): ArgumentPassingFact {
-  const record = exactRecord(value, "ArgumentPassingFact", ["mode", "storageExpression"]);
+  const record = exactRecord(value, "ArgumentPassingFact", ["role", "mode", "storageExpression"]);
+  const role = requiredString(record, "role", "ArgumentPassingFact");
   const mode = requiredString(record, "mode", "ArgumentPassingFact");
   if (!isArgumentPassingMode(mode)) {
     throw new Error(`ArgumentPassingFact.mode '${mode}' is invalid.`);
   }
-  const storageExpression = optionalNode(record, "storageExpression", "ArgumentPassingFact");
-  return Object.freeze({
-    mode,
-    ...(storageExpression === undefined ? {} : { storageExpression }),
-  });
+  if (role === "declaration") {
+    exactRecord(value, "ArgumentPassingFact", ["role", "mode"]);
+    return Object.freeze({ role, mode });
+  }
+  if (role === "argument") {
+    return Object.freeze({ role, mode,
+      storageExpression: requiredNode(record, "storageExpression", "ArgumentPassingFact") });
+  }
+  throw new Error(`ArgumentPassingFact.role '${role}' is invalid.`);
 }
 
 function snapshotFunctionPointerFact(value: FunctionPointerFact): FunctionPointerFact {

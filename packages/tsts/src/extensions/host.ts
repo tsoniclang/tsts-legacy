@@ -6362,12 +6362,12 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
   let rendered: string;
   switch (declaration.kind) {
     case "class": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${declarationPrefix}class ${declarationName}${typeParameters}${renderProviderHeritage(declaration.heritage ?? [], "class", declarationContext)} {\n${renderProviderClassMembers(declaration, declarationContext)}\n}`;
       break;
     }
     case "interface": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${typePrefix}interface ${declarationName}${typeParameters}${renderProviderHeritage(declaration.heritage ?? [], "interface", declarationContext)} {\n${renderProviderMembers(declaration.members ?? [], declarationContext)}\n}`;
       break;
     }
@@ -6380,7 +6380,7 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
       break;
     }
     case "type": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${typePrefix}type ${declarationName}${typeParameters} = ${renderProviderTypeExpression(declaration.type!, declarationContext)};`;
       break;
     }
@@ -6587,7 +6587,7 @@ function getProviderPropertyNameText(name: ProviderPropertyName): string {
 
 function renderProviderSignatures(name: string, signatures: readonly ProviderSignatureDeclaration[], context: ProviderRenderContext, constructor = false): readonly string[] {
   return signatures.map((signature) => {
-    const typeParameters = renderProviderTypeParameters(signature.typeParameters ?? [], context);
+    const typeParameters = renderProviderTypeParameters(signature.typeParameters ?? [], context, "signature");
     const parameters = signature.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ");
     const returnType = constructor ? "" : `: ${renderProviderTypeExpression(signature.returnType ?? { kind: "void" }, context)}`;
     const accessibility = constructor && (signature.accessibility === "protected" ||
@@ -6596,15 +6596,19 @@ function renderProviderSignatures(name: string, signatures: readonly ProviderSig
   });
 }
 
-function renderProviderTypeParameters(typeParameters: readonly ProviderTypeParameterDeclaration[], context: ProviderRenderContext): string {
+function renderProviderTypeParameters(typeParameters: readonly ProviderTypeParameterDeclaration[], context: ProviderRenderContext, scope: "type" | "signature"): string {
   if (typeParameters.length === 0) {
     return "";
   }
   return `<${typeParameters.map((parameter) => {
+    if (scope === "signature" && parameter.variance !== undefined) {
+      throw new Error("Provider signature type parameters cannot declare type variance.");
+    }
+    const variance = parameter.variance === undefined ? "" : parameter.variance === "invariant" ? "in out " : `${parameter.variance} `;
     const constraints = parameter.constraints ?? [];
     const constraintText = constraints.length === 0 ? "" : ` extends ${constraints.map((constraint) => renderProviderTypeExpression(constraint, context)).join(" & ")}`;
     const defaultText = parameter.defaultType === undefined ? "" : ` = ${renderProviderTypeExpression(parameter.defaultType, context)}`;
-    return `${parameter.name}${constraintText}${defaultText}`;
+    return `${variance}${parameter.name}${constraintText}${defaultText}`;
   }).join(", ")}>`;
 }
 
@@ -6685,7 +6689,7 @@ function renderProviderTypeExpressionWorker(type: ProviderTypeExpression, parent
         type,
         marker,
       ));
-      const text = `${renderProviderTypeParameters(type.typeParameters ?? [], context)}(${type.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ")}) => ${renderProviderTypeExpression(type.returnType, context)}`;
+      const text = `${renderProviderTypeParameters(type.typeParameters ?? [], context, "signature")}(${type.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ")}) => ${renderProviderTypeExpression(type.returnType, context)}`;
       const marked = `(${renderProviderFunctionSignatureMarker(marker)}${text})`;
       return parentPrecedence > providerTypePrecedenceNone ? `(${marked})` : marked;
     }
