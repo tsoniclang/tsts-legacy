@@ -1,11 +1,12 @@
 import type { bool, byte, int, uint } from "../../go/scalars.js";
+import { observeBackingDiagnostic, observePublishedDiagnostic, withBackingWriteFit } from "./checker/backing-constraint-evidence.js";
 import type { GoConstraint, GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
 import type { Node } from "../ast/spine.js";
 import { Node_Name } from "../ast/spine.js";
 import { Node_ModifierFlags } from "../ast/ast.js";
 import type { Diagnostic } from "../ast/diagnostic.js";
-import { NewDiagnosticChain, Diagnostic_SetRelatedInfo, Diagnostic_AddRelatedInfo } from "../ast/diagnostic.js";
+import { NewDiagnosticChain, Diagnostic_SetRelatedInfo, Diagnostic_AddRelatedInfo, DiagnosticsCollection_Add } from "../ast/diagnostic.js";
 import { Checker_addDiagnostic } from "./checker.js";
 import { CombineSurrogatePairs } from "../stringutil/util.js";
 import { ModifierFlagsPrivate, ModifierFlagsProtected, ModifierFlagsIn, ModifierFlagsOut, ModifierFlagsConst, ModifierFlagsNonPublicAccessibilityModifier } from "../ast/modifierflags.js";
@@ -1127,10 +1128,12 @@ export function createDiagnosticChainFromErrorChain(chain: GoPtr<ErrorChain>, er
  */
 export function Checker_reportDiagnostic(receiver: GoPtr<Checker>, diagnostic: GoPtr<Diagnostic>, diagnosticOutput: GoPtr<GoSlice<GoPtr<Diagnostic>>>): void {
   if (diagnostic !== undefined) {
+    observeBackingDiagnostic(receiver!, diagnostic);
     if (diagnosticOutput !== undefined) {
       diagnosticOutput.push(diagnostic);
     } else {
-      Checker_addDiagnostic(receiver, diagnostic);
+      observePublishedDiagnostic(receiver!, diagnostic);
+      DiagnosticsCollection_Add(receiver!.diagnostics, diagnostic);
     }
   }
 }
@@ -1144,7 +1147,8 @@ export function Checker_reportDiagnostic(receiver: GoPtr<Checker>, diagnostic: G
  * }
  */
 export function Checker_checkTypeAssignableToAndOptionallyElaborate(receiver: GoPtr<Checker>, source: GoPtr<Type>, target: GoPtr<Type>, errorNode: GoPtr<Node>, expr: GoPtr<Node>, headMessage: GoPtr<Message>, diagnosticOutput: GoPtr<GoSlice<GoPtr<Diagnostic>>>): bool {
-  return Checker_checkTypeRelatedToAndOptionallyElaborate(receiver, source, target, receiver!.assignableRelation, errorNode, expr, headMessage, diagnosticOutput);
+  return withBackingWriteFit(receiver!, expr, source, target, () =>
+    Checker_checkTypeRelatedToAndOptionallyElaborate(receiver, source, target, receiver!.assignableRelation, errorNode, expr, headMessage, diagnosticOutput));
 }
 
 /**
@@ -4867,7 +4871,7 @@ export function Checker_compareSignaturesIdentical(receiver: GoPtr<Checker>, sou
         return TernaryFalse;
       }
     }
-    src = Checker_instantiateSignatureEx(receiver, source, mapper, true as bool);
+    src = Checker_instantiateSignatureEx(receiver, source, mapper, true as bool, source!.constructorClass);
   }
   let result: Ternary = TernaryTrue;
   if (!ignoreThisTypes) {

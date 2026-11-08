@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, providerVirtualDeclarationFactKey } from "../index.js";
@@ -67,8 +68,8 @@ test("provider constructor overloads preserve selected physical access and deriv
   const source = checked.getSourceFileQueries(sourceFile);
   const constructions = findNodes(sourceFile, checked.ast.children, checked.ast.is.IsNewExpression);
   assert.equal(constructions.length, 1);
-  const selected = source.checker.getResolvedCallInfo(constructions[0]);
-  const declaration = source.checker.getSignatureDeclaration(selected?.selectedSignature);
+  const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(constructions[0]));
+  const declaration = source.checker.getSignatureDeclaration(selected?.selection.application.instantiatedSignature);
   assert.equal(checked.sourceFacts?.getFact(declaration, providerVirtualDeclarationFactKey)?.signatureId,
     "Mixed::.ctor(number)");
 });

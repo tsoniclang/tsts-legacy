@@ -2,6 +2,7 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
+import type { ResolvedCheckerBackingConstraint } from "../internal/checker/types.js";
 import {
   Program_GetDefaultResolutionModeForFile,
   Program_GetSourceFileForResolvedModule,
@@ -26,10 +27,12 @@ export interface SourceFileQueries {
 
 export interface SourceProgramQueries {
   readonly ast: AstReader;
+  readonly programSourceFiles: readonly SourceFile[];
   readonly containsSourceFile: (sourceFile: GoPtr<SourceFile>) => boolean;
   readonly getSourceFiles: () => readonly GoPtr<SourceFile>[];
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
+  readonly getBackingConstraints: () => readonly ResolvedCheckerBackingConstraint[];
   readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
 }
 
@@ -55,14 +58,15 @@ export function createSourceProgramQueries(
     throw new Error("Source program queries require a compiler program.");
   }
   const ast = options.ast ?? createAstReader();
+  const programSourceFiles = Object.freeze((Program_GetSourceFiles(program) ?? [])
+    .filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined));
   const sourceFileQueries = new WeakMap<SourceFile, SourceFileQueries>();
   const moduleSourceFiles = new WeakMap<Node, SourceFile | null>();
   const included = (sourceFile: SourceFile): boolean => options.includeSourceFile?.(sourceFile) !== false;
   const containsSourceFile = (sourceFile: GoPtr<SourceFile>): boolean =>
     sourceFile !== undefined && Program_GetSourceFile(program, ast.getFileName(sourceFile)) === sourceFile;
   const getSourceFiles = (): readonly GoPtr<SourceFile>[] =>
-    (Program_GetSourceFiles(program) ?? []).filter((sourceFile) =>
-      sourceFile !== undefined && included(sourceFile));
+    programSourceFiles.filter(included);
   const getSourceFile = (fileName: string): GoPtr<SourceFile> => {
     const sourceFile = Program_GetSourceFile(program, fileName);
     return sourceFile !== undefined && included(sourceFile)
@@ -129,10 +133,22 @@ export function createSourceProgramQueries(
   };
   return Object.freeze({
     ast,
+    programSourceFiles,
     containsSourceFile,
     getSourceFiles,
     getSourceFile,
     getSourceFileQueries,
+    getBackingConstraints() {
+      const visited = new Set<readonly ResolvedCheckerBackingConstraint[]>();
+      const constraints: ResolvedCheckerBackingConstraint[] = [];
+      for (const file of programSourceFiles) {
+        const vector = getSourceFileQueries(file).checker.getBackingConstraints();
+        if (visited.has(vector)) continue;
+        visited.add(vector);
+        constraints.push(...vector);
+      }
+      return Object.freeze(constraints);
+    },
     resolveModuleSourceFile,
   });
 }

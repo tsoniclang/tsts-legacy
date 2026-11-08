@@ -1,5 +1,5 @@
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
-import { configuredSourcePrimitiveOperand } from "../../../extensions/compiler-integration.js";
+import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
@@ -132,6 +132,7 @@ import { Checker_checkClassExpression, Checker_checkClassExpressionDeferred, Che
 import {
   Checker_checkTypeParameterDeferred, Checker_resolveUntypedCall, Checker_resolveUntypedCallWithEvidence,
   Checker_getResolvedSignature, Checker_getSignatureFromDeclaration, Checker_getReturnTypeOfSignature,
+  Checker_finalizeResolvedCallEvidence,
   Checker_getReturnTypeFromAnnotation, Checker_unwrapReturnType,
   Checker_isUnwrappedReturnTypeUndefinedVoidOrAny, Checker_isIndirectCall, Checker_instantiateTypeWithSingleGenericCallSignature,
   Checker_checkGeneratorInstantiationAssignabilityToReturnType, Checker_getIterationTypesOfGeneratorFunctionReturnType,
@@ -1417,6 +1418,9 @@ export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<
   const t = Checker_instantiateTypeWithSingleGenericCallSignature(receiver, node, uninstantiatedType, checkMode);
   if (isConstEnumObjectType(t)) {
     Checker_checkConstEnumAccess(receiver, node, t);
+  }
+  if (checkMode === CheckModeNormal && receiver!.flowLoopStack.length === 0 && IsCallOrNewExpression(node)) {
+    Checker_finalizeResolvedCallEvidence(receiver, node, t);
   }
   receiver!.currentNode = saveCurrentNode;
   return t;
@@ -2884,7 +2888,7 @@ function isIterativelyCheckableNonLogicalBinaryExpression(node: GoPtr<Node>): bo
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkBinaryLikeExpression","kind":"method","status":"implemented","sigHash":"058951d0c451f4334faaa90f108eb88c838ea7af7a55bddace4da2ff77570115","bodyHash":"35a4d3d98cecf55f83774842062fdfe4dbc8bb5d764df060a73c2c94e942e66b"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Configured primitive shift operands retain their existing exact declaration facts instead of inheriting backing number/bigint incompatibilities; the Host remains the sole native operator-admission owner and ordinary number/bigint checking is unchanged."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retain the already-checked original operator operands and Diagnostic relation through the shared iterative and ordinary binary worker; ordinary checker admission is unchanged and only the Host may prove a backed constraint."}
  *
  * Go source:
  * func (c *Checker) checkBinaryLikeExpression(left *ast.Node, operatorToken *ast.Node, right *ast.Node, checkMode CheckMode, errorNode *ast.Node) *Type {
@@ -3119,33 +3123,19 @@ export function Checker_checkBinaryLikeExpression(receiver: GoPtr<Checker>, left
   return Checker_checkBinaryLikeExpressionWithTypes(receiver, left, operatorToken, right, checkMode, errorNode, leftType, rightType);
 }
 
-function Checker_checkBinaryLikeExpressionWithSelectedTypes(
-  receiver: GoPtr<Checker>,
-  left: GoPtr<Node>,
-  operatorToken: GoPtr<Node>,
-  right: GoPtr<Node>,
-  checkMode: CheckMode,
-  errorNode: GoPtr<Node>,
-): { readonly result: GoPtr<Type>; readonly leftType: GoPtr<Type>; readonly rightType: GoPtr<Type> } {
-  const operator = operatorToken!.Kind;
-  if (operator === KindEqualsToken && (left!.Kind === KindObjectLiteralExpression || left!.Kind === KindArrayLiteralExpression)) {
-    const rightType = Checker_checkExpressionEx(receiver, right, checkMode);
-    return Object.freeze({
-      result: Checker_checkDestructuringAssignment(receiver, left, rightType, checkMode, right!.Kind === KindThisKeyword),
-      leftType: undefined,
-      rightType,
-    });
-  }
-  const leftType = Checker_checkExpressionEx(receiver, left, checkMode);
-  const rightType = Checker_checkExpressionEx(receiver, right, checkMode);
-  return Object.freeze({
-    result: Checker_checkBinaryLikeExpressionWithTypes(receiver, left, operatorToken, right, checkMode, errorNode, leftType, rightType),
-    leftType,
-    rightType,
-  });
+function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>, initialLeftType: GoPtr<Type>, initialRightType: GoPtr<Type>): GoPtr<Type> {
+  const operation = () => checkBinaryLikeExpressionTypeRelation(receiver, left, operatorToken, right,
+    checkMode, errorNode, initialLeftType, initialRightType);
+  return left !== undefined && right !== undefined && errorNode !== undefined && initialLeftType !== undefined && initialRightType !== undefined
+    ? withBackingConstraint(receiver!, operatorToken!.Kind === KindEqualsToken
+      ? { kind: "write-fit", site: errorNode, application: activeBackingCandidate(receiver!),
+          source: checkedComponent(right, initialRightType), destination: checkedComponent(left, initialLeftType) }
+      : { kind: "operator", site: errorNode, application: activeBackingCandidate(receiver!), operation: errorNode,
+          left: checkedComponent(left, initialLeftType), right: checkedComponent(right, initialRightType) }, operation)
+    : operation();
 }
 
-function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>, initialLeftType: GoPtr<Type>, initialRightType: GoPtr<Type>): GoPtr<Type> {
+function checkBinaryLikeExpressionTypeRelation(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>, initialLeftType: GoPtr<Type>, initialRightType: GoPtr<Type>): GoPtr<Type> {
   const operator = operatorToken!.Kind;
   let leftType = initialLeftType;
   let rightType = initialRightType;
@@ -3202,18 +3192,6 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
       }
       const leftOk = Checker_checkArithmeticOperandType(receiver, left, leftType, The_left_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type, true as bool);
       const rightOk = Checker_checkArithmeticOperandType(receiver, right, rightType, The_right_hand_side_of_an_arithmetic_operation_must_be_of_type_any_number_bigint_or_an_enum_type, true as bool);
-      const shift = IsShiftOperator(operator) || operator === KindLessThanLessThanEqualsToken
-        || operator === KindGreaterThanGreaterThanEqualsToken || operator === KindGreaterThanGreaterThanGreaterThanEqualsToken;
-      const originalSymbol = (node: Node): GoPtr<Symbol> => {
-        const symbol = Checker_GetSymbolAtLocation(receiver, node);
-        return symbol !== undefined && (symbol.Flags & SymbolFlagsAlias) !== 0
-          ? Checker_resolveAlias(receiver, symbol) : symbol;
-      };
-      const configuredLeft = shift ? configuredSourcePrimitiveOperand(receiver!.program, left, originalSymbol) : undefined;
-      const configuredRight = shift ? configuredSourcePrimitiveOperand(receiver!.program, right, originalSymbol) : undefined;
-      const configuredShift = configuredLeft !== undefined && configuredRight !== undefined
-        && (configuredLeft.runtimeBase === "number" || configuredLeft.runtimeBase === "bigint")
-        && (configuredRight.runtimeBase === "number" || configuredRight.runtimeBase === "bigint");
       let resultType: GoPtr<Type>;
       if (
         (Checker_isTypeAssignableToKind(receiver, leftType, TypeFlagsAnyOrUnknown) && Checker_isTypeAssignableToKind(receiver, rightType, TypeFlagsAnyOrUnknown)) ||
@@ -3224,7 +3202,7 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
         switch (operator) {
           case KindGreaterThanGreaterThanGreaterThanToken:
           case KindGreaterThanGreaterThanGreaterThanEqualsToken:
-            if (!configuredShift) Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, undefined);
+            Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, undefined);
             break;
           case KindAsteriskAsteriskToken:
           case KindAsteriskAsteriskEqualsToken:
@@ -3234,8 +3212,6 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
             break;
         }
         resultType = receiver!.bigintType;
-      } else if (configuredShift) {
-        resultType = configuredLeft.runtimeBase === "bigint" ? receiver!.bigintType : receiver!.numberType;
       } else {
         Checker_reportOperatorError(receiver, leftType, operator, rightType, errorNode, (leftOperand, rightOperand) => Checker_bothAreBigIntLike(receiver, leftOperand, rightOperand));
         resultType = receiver!.errorType;

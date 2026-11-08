@@ -230,6 +230,26 @@
       "reason": "Additive transactional journal for exact TS-Go overload-selection evidence; it owns no upstream Go unit."
     },
     {
+      "match": "packages/tsts/src/internal/checker/checker/selected-call-inference-evidence.ts",
+      "category": "extension-internal",
+      "reason": "Observes exact original inference contributions inside the existing checker transaction without owning a Go inference decision."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/backing-constraint-evidence.ts",
+      "category": "extension-internal",
+      "reason": "Retains original checked relation components and exact Diagnostic ownership; only the Host Source owner may discharge a proved backed constraint."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/selected-call-contracts.ts",
+      "category": "extension-internal",
+      "reason": "Defines the neutral original application and constraint fact records, distinct from an applicable instantiated result."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/original-signature-evidence.ts",
+      "category": "extension-internal",
+      "reason": "One pure reader of existing original Signature and parameter declaration fields, with no parameter or return Type resolution."
+    },
+    {
       "match": "packages/tsts/src/internal/checker/checker/source-type-identity.ts",
       "category": "extension-internal",
       "reason": "Additive target-neutral identity helper for compiler-owned source types; it owns no upstream Go unit."

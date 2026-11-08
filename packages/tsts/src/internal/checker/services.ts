@@ -870,6 +870,7 @@ export function runWithoutResolvedSignatureCaching<T>(c: GoPtr<Checker>, node: G
     readonly resolvedSignature: GoPtr<Signature>;
     readonly checkedCallSelectionSeed: SignatureLinks["checkedCallSelectionSeed"];
     readonly resolvedCallSelectionEvidence: SignatureLinks["resolvedCallSelectionEvidence"];
+    readonly resolvedCallEvidenceSignature: SignatureLinks["resolvedCallEvidenceSignature"];
     readonly resolvedCallEvidence: SignatureLinks["resolvedCallEvidence"];
   }> = new globalThis.Map();
   const cachedTypes: Map<ValueSymbolLinks, GoPtr<Type>> = new globalThis.Map();
@@ -882,11 +883,13 @@ export function runWithoutResolvedSignatureCaching<T>(c: GoPtr<Checker>, node: G
         resolvedSignature: signatureLinks.resolvedSignature,
         checkedCallSelectionSeed: signatureLinks.checkedCallSelectionSeed,
         resolvedCallSelectionEvidence: signatureLinks.resolvedCallSelectionEvidence,
+        resolvedCallEvidenceSignature: signatureLinks.resolvedCallEvidenceSignature,
         resolvedCallEvidence: signatureLinks.resolvedCallEvidence,
       });
       signatureLinks.resolvedSignature = undefined;
       signatureLinks.checkedCallSelectionSeed = undefined;
       signatureLinks.resolvedCallSelectionEvidence = undefined;
+      signatureLinks.resolvedCallEvidenceSignature = undefined;
       signatureLinks.resolvedCallEvidence = undefined;
       if (IsFunctionExpressionOrArrowFunction(current)) {
         const symbolLinks = LinkStore_Get<GoPtr<Symbol>, ValueSymbolLinks>(c!.valueSymbolLinks as unknown as LinkStore<GoPtr<Symbol>, ValueSymbolLinks>, Checker_getSymbolOfDeclaration(c, current))!;
@@ -903,6 +906,7 @@ export function runWithoutResolvedSignatureCaching<T>(c: GoPtr<Checker>, node: G
       signatureLinks.resolvedSignature = snapshot.resolvedSignature;
       signatureLinks.checkedCallSelectionSeed = snapshot.checkedCallSelectionSeed;
       signatureLinks.resolvedCallSelectionEvidence = snapshot.resolvedCallSelectionEvidence;
+      signatureLinks.resolvedCallEvidenceSignature = snapshot.resolvedCallEvidenceSignature;
       signatureLinks.resolvedCallEvidence = snapshot.resolvedCallEvidence;
     }
     for (const [symbolLinks, resolvedType] of cachedTypes) {

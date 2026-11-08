@@ -1,4 +1,4 @@
-import type { bool, int } from "../../go/scalars.js";
+import type { bool, int, uint } from "../../go/scalars.js";
 import type { GoError, GoMap, GoPtr, GoSeq2, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
 import type { Context } from "../../go/context.js";
@@ -1253,6 +1253,10 @@ export function Program_GetTypeChecker(receiver: GoPtr<Program>, ctx: Context): 
     return checkerPool_getCheckerNonExclusive(receiver!.compilerCheckerPool);
   }
   return receiver!.checkerPool!.GetChecker(ctx, undefined);
+}
+
+export function Program_GetTypeCheckerById(receiver: GoPtr<Program>, ctx: Context, checkerId: uint): [GoPtr<Checker>, () => void] {
+  return receiver!.checkerPool!.GetCheckerById(ctx, checkerId);
 }
 
 /**

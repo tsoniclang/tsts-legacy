@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -26,34 +27,34 @@ test("checked source exposes exact constructor selection through the direct call
   assert.equal(constructions.length, 1);
   const construction = constructions[0];
   const syntax = source.ast.as.AsNewExpression(construction);
-  const selected = source.checker.getResolvedCallInfo(construction);
+  const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
 
-  assert.equal(selected?.outcome, "applicable");
-  assert.equal(selected?.sourceSelectedSignatureKind, "resolved");
+  assert.equal(selected?.kind, "applicable");
+  assert.equal(selected?.kind, "applicable");
   assert.ok(
-    selected?.sourceCallee.expression === syntax?.Expression,
+    selected?.selection.callee.expression === syntax?.Expression,
     "Constructor evidence must retain the exact authored callee expression.",
   );
-  assert.equal(selected?.sourceSelectedSignatureParameters.length, 1);
-  assert.equal(selected?.sourceSelectedSignatureParameters[0]?.parameterName, "value");
+  assert.equal(selected?.selection.parameters.length, 1);
+  assert.equal(selected?.selection.parameters[0]?.parameterName, "value");
   assert.equal(
-    source.checker.typeToString(selected?.sourceSelectedSignatureParameters[0]?.selectedType),
+    source.checker.typeToString(selected?.selection.parameters[0]?.selectedType),
     "number",
   );
-  assert.equal(selected?.sourceArguments.length, 1);
-  assert.equal(source.checker.typeToString(selected?.sourceResultType), "Box");
-  assert.equal(selected?.sourceReceiver, undefined);
-  const repeated = source.checker.getResolvedCallInfo(construction);
+  assert.equal(selected?.selection.argumentValues.length, 1);
+  assert.equal(source.checker.typeToString(selected?.resultType), "Box");
+  assert.equal(selected?.selection.application.receiver === undefined, true);
+  const repeated = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
   assert.ok(
     repeated === selected,
     "Repeated constructor queries must retain the exact resolved call result.",
   );
   assert.ok(
-    repeated?.selectedSignature === selected?.selectedSignature,
+    repeated?.selection.application.instantiatedSignature === selected?.selection.application.instantiatedSignature,
     "Repeated constructor queries must retain the exact selected signature.",
   );
   assert.ok(
-    repeated?.sourceResultType === selected?.sourceResultType,
+    repeated?.resultType === selected?.resultType,
     "Repeated constructor queries must retain the exact result type.",
   );
 });
@@ -172,7 +173,7 @@ test("type-shape tuple queries are total for primitive and tuple source types", 
   const primitiveType = source.checker.getTypeAtLocation(primitive);
   const tupleType = source.checker.getTypeAtLocation(tuple);
   assert.equal(source.typeShape.isTuple(primitiveType), false);
-  assert.deepEqual(source.typeShape.getTupleElementTypes(primitiveType), []);
+  assert.equal(source.typeShape.getTupleElementTypes(primitiveType).length === 0, true);
   assert.equal(source.typeShape.isTuple(tupleType), true);
   assert.deepEqual(
     source.typeShape.getTupleElementTypes(tupleType).map((type) => source.checker.typeToString(type)),
@@ -262,7 +263,7 @@ test("type-shape substitution evidence exposes the exact compiler-owned base typ
   const baseType = source.typeShape.getSubstitutionBaseType(substitution);
   assert.ok(baseType !== undefined);
   assert.equal(source.typeShape.typeToString(baseType), "T");
-  assert.equal(source.typeShape.getSubstitutionBaseType(baseType), undefined);
+  assert.equal(source.typeShape.getSubstitutionBaseType(baseType) === undefined, true);
 });
 
 test("type-shape signature evidence expands inferred tuple-rest parameters exactly", () => {
