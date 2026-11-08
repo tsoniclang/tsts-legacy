@@ -48,6 +48,8 @@ test("operator constraints retain the exact diagnostic and both original operand
   assert.equal(constraint.diagnostic.root === source.diagnostics[0] &&
     constraint.diagnostic.diagnostic === source.diagnostics[0] && constraint.diagnostic.candidate === undefined, true,
   "an operation has no fabricated call candidate or recoded error");
+  assert.equal(constraint.diagnostic.rootCoverage.kind === "complete" &&
+    constraint.diagnostic.rootCoverage.purpose.kind === "other", true, "an operator is never alternative-call applicability");
 });
 
 test("return and initializer fits retain their actual original annotation slots", () => {
@@ -125,6 +127,12 @@ test("conditional overloads retain all observed candidates and the exact aggrega
   const selection = queries.checker.getResolvedCallInfo(call);
   assert.ok(selection?.kind === "conditional-candidates");
   assert.equal(selection.candidates.length, 2, "no arbitrary error candidate becomes a winning selection");
+  assert.equal(selection.declarationOrder.kind, "available");
+  if (selection.declarationOrder.kind !== "available") throw new Error("The original overload declarations must have complete order evidence.");
+  assert.equal(selection.declarationOrder.signatures.length, 2);
+  const declarations = findNodes(file, source.ast.children, source.ast.is.IsFunctionDeclaration);
+  assert.equal(selection.declarationOrder.signatures.every((signature, ordinal) =>
+    signature.declaration === declarations[ordinal]), true, "original declaration order, not checker betterness");
   assert.equal(selection.candidates[0]?.application.signature !== selection.candidates[1]?.application.signature, true);
   assert.equal(selection.diagnostics.length > 0 && selection.diagnostics.every(diagnostic => source.diagnostics.includes(diagnostic)), true,
     "the outer call diagnostic is the actual published object, not a span/code reconstruction");
@@ -139,12 +147,58 @@ test("conditional overloads retain all observed candidates and the exact aggrega
   }
 });
 
+test("declaration-order facts do not inherit specialized checker betterness order", () => {
+  const { source, file, queries } = checked(`
+    declare function choose(value: Wide): void;
+    declare function choose(value: "specialized"): void;
+    choose(4);
+  `);
+  const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
+  const selection = queries.checker.getResolvedCallInfo(call);
+  assert.ok(selection?.kind === "conditional-candidates" && selection.declarationOrder.kind === "available");
+  const declarations = findNodes(file, source.ast.children, source.ast.is.IsFunctionDeclaration);
+  assert.equal(selection.declarationOrder.signatures.every((signature, ordinal) =>
+    signature.declaration === declarations[ordinal]), true);
+  assert.equal(selection.candidates[0]?.application.signature.declaration === declarations[1], true,
+    "the factual declaration vector is independent of actual Native specialized-first attempts");
+});
+
+test("declaration order retains an earlier original even when arity prevents its observed application", () => {
+  const { source, file, queries } = checked(`
+    declare function choose(value: Wide, required: string): void;
+    declare function choose(value: string): void;
+    choose(4);
+  `);
+  const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
+  const selection = queries.checker.getResolvedCallInfo(call);
+  assert.ok(selection?.kind === "conditional-candidates" && selection.declarationOrder.kind === "available");
+  assert.equal(selection.declarationOrder.signatures.length, 2);
+  const earlier = selection.declarationOrder.signatures[0];
+  assert.equal(selection.candidates.every(candidate => candidate.application.signature !== earlier), true,
+    "an unobserved earlier application remains an explicit Source proof obligation, not a fabricated failed winner");
+});
+
+test("unrelated methods in one interface do not become one declaration-ordered overload group", () => {
+  const { source, file, queries } = checked(`
+    interface Methods { first(value: Wide): void; second(value: string): void; }
+    declare const choose: Methods["first"] & Methods["second"];
+    choose(4);
+  `);
+  const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
+  const selection = queries.checker.getResolvedCallInfo(call);
+  assert.ok(selection?.kind === "conditional-candidates");
+  assert.equal(selection.candidates.length, 2);
+  assert.equal(selection.declarationOrder.kind, "unavailable",
+    "the factual member order cannot replace an absent common original overload owner");
+});
+
 test("call diagnostic coverage refuses an unrelated child beneath the same original root", () => {
   const { source, file, queries } = checked(`
     declare function select(value: Wide): void;
     declare function select(value: string): void;
     select(4);
     export const unrelated: string = 5;
+    select(missingName);
   `);
   const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
   const selection = queries.checker.getResolvedCallInfo(call);
@@ -157,19 +211,52 @@ test("call diagnostic coverage refuses an unrelated child beneath the same origi
   const coverage = checkerDiagnosticCoverage(checker, root);
   assert.equal(coverage.kind, "complete");
   if (coverage.kind !== "complete") throw new Error("The original call relation must have complete native ownership.");
+  assert.equal(coverage.purpose.kind === "alternative-applicability" && coverage.purpose.invocation === call, true);
   assert.equal(coverage.obligations.length > 0 && coverage.obligations.every(obligation =>
-    obligation.application?.invocation === call && obligation.diagnostic !== root), true,
+    obligation.kind === "applicability" && obligation.application?.invocation === call && obligation.diagnostic !== root), true,
   "the exact overload wrapper is distinct from its actually observed relation obligation");
   const unrelated = source.diagnostics.find(diagnostic => diagnostic !== undefined && diagnostic !== root && Diagnostic_Code(diagnostic) === 2322);
   assert.ok(unrelated !== undefined);
-  const length = root.messageChain.length;
-  root.messageChain.push(unrelated);
-  try {
-    assert.equal(checkerDiagnosticCoverage(checker, root).kind, "unavailable",
-      "proving one candidate cannot authorize an unobserved child under the original aggregate diagnostic");
-  } finally {
-    root.messageChain.length = length;
+  const argumentError = source.diagnostics.find(diagnostic => Diagnostic_Code(diagnostic) === 2304);
+  assert.ok(argumentError !== undefined);
+  for (const corrupting of [unrelated, argumentError]) {
+    const length = root.messageChain.length;
+    root.messageChain.push(corrupting);
+    try {
+      assert.equal(checkerDiagnosticCoverage(checker, root).kind, "unavailable",
+        "an actual argument-expression/unrelated child never becomes an alternative-applicability obligation");
+    } finally {
+      root.messageChain.length = length;
+    }
   }
+  const note = root.relatedInformation[0];
+  assert.ok(note !== undefined);
+  const length = note.messageChain.length;
+  note.messageChain.push(argumentError);
+  try {
+    assert.equal(checkerDiagnosticCoverage(checker, root).kind, "unavailable", "structural notes do not authorize unobserved children");
+  } finally {
+    note.messageChain.length = length;
+  }
+});
+
+test("a deferred argument body error keeps the actual call aggregate unavailable", () => {
+  const { source, file, queries } = checked(`
+    declare function choose(value: Wide): void;
+    declare function choose(value: string): void;
+    choose({ read() { return missingName; } });
+  `);
+  const call = findNodes(file, source.ast.children, source.ast.is.IsCallExpression)[0];
+  const selection = queries.checker.getResolvedCallInfo(call);
+  assert.ok(selection?.kind === "conditional-candidates");
+  assert.equal(source.diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 2304), true);
+  const aggregate = selection.diagnostics.find(diagnostic => Diagnostic_Code(diagnostic) === 2769);
+  assert.ok(aggregate !== undefined, "the original failing call actually published its aggregate");
+  assert.equal(selection.candidates.some(candidate => candidate.constraints.some(constraint =>
+    constraint.diagnostic.root === aggregate)), true);
+  assert.equal(selection.candidates.every(candidate => candidate.diagnosticCoverage.every(coverage =>
+    coverage.root !== aggregate || coverage.kind === "unavailable")), true,
+  "an actual deferred argument-body diagnostic is not a same-invocation applicability relation");
 });
 
 test("a partial failed applicability pass cannot claim a complete observed argument map", () => {

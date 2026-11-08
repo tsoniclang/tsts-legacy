@@ -19,6 +19,11 @@ export interface ResolvedCallTypeArgumentEvidence {
 }
 
 export interface ResolvedOriginalSignatureEvidence {
+  readonly constructorClass: Node | undefined;
+  readonly composite: {
+    readonly isUnion: boolean;
+    readonly signatures: readonly Signature[];
+  } | undefined;
   readonly declaration: Node | undefined;
   readonly target: Signature | undefined;
   readonly parameters: readonly {
@@ -92,7 +97,11 @@ export type ResolvedCheckerDiagnosticCoverage =
       readonly obligations: readonly {
         readonly diagnostic: Diagnostic;
         readonly application: ResolvedCallApplicationEvidence | undefined;
-      }[] }
+        readonly kind: "applicability" | "backing";
+      }[];
+      readonly purpose:
+        | { readonly kind: "alternative-applicability"; readonly invocation: Node; readonly notes: readonly Diagnostic[] }
+        | { readonly kind: "other" } }
   | { readonly kind: "unavailable"; readonly root: Diagnostic };
 
 export type ResolvedCheckerBackingConstraint = {
@@ -129,6 +138,9 @@ export interface ResolvedCheckedCallCandidateEvidence {
 export type ResolvedCallSelectionEvidence = {
   readonly call: Node;
   readonly optionalChain: boolean;
+  readonly declarationOrder:
+    | { readonly kind: "available"; readonly signatures: readonly Signature[] }
+    | { readonly kind: "unavailable" };
 } & (
   | { readonly kind: "applicable"; readonly selection: ResolvedCheckedCallCandidateEvidence & {
       readonly application: ResolvedCallApplicationEvidence & { readonly instantiatedSignature: Signature };

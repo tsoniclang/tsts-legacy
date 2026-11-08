@@ -10,7 +10,15 @@ export function readOriginalSignature(signature: Signature): ResolvedOriginalSig
   const declaration = (parameter: Symbol | undefined): Node | undefined => parameter?.ValueDeclaration
     ?? parameter?.Declarations?.find(node => node !== undefined);
   const restIndex = (signature.flags & SignatureFlagsHasRestParameter) !== 0 ? signature.parameters.length - 1 : -1;
-  return Object.freeze({ declaration: signature.declaration, target: signature.target,
+  return Object.freeze({ constructorClass: signature.constructorClass,
+    composite: signature.composite === undefined ? undefined : Object.freeze({
+      isUnion: signature.composite.isUnion,
+      signatures: Object.freeze(signature.composite.signatures.map(part => {
+        if (part === undefined) throw new Error("An original composite signature requires every actual constituent.");
+        return part;
+      })),
+    }),
+    declaration: signature.declaration, target: signature.target,
     parameters: Object.freeze(signature.parameters.map((parameter, index) => {
       const original = declaration(parameter);
       return Object.freeze({ index, declaration: original, rest: index === restIndex,

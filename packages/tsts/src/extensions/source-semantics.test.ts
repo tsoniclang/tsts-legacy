@@ -789,7 +789,7 @@ test("source-semantics qualified source facts require exact module receiver iden
   );
 });
 
-test("source-semantics records exact typed pointer operations and rejects unwriteable storage", () => {
+test("source-semantics records exact pointer observations without Source writable-storage admission", () => {
   const { extended, program, index } = createProgram(`
     import type { int, ptr } from "@example/native/types.js";
     import {
@@ -899,86 +899,39 @@ test("source-semantics records exact typed pointer operations and rejects unwrit
   assert.equal(direct?.operation, "address-of", JSON.stringify(extended.extensionHost.diagnostics.all().map(
     diagnostic => ({ code: diagnostic.publicCode, message: diagnostic.message }),
   )));
-  assert.equal(direct?.locationIdentity, direct?.storageExpression);
-  assert.equal(direct?.explicitPointeeTypeNode, undefined);
+  assert.equal(direct?.pointee.kind === "available" && direct.pointee.explicitTypeNode === undefined, true);
   assert.equal(aliased?.operation, "address-of");
+  assert.equal(aliased?.exportName, "addressOf", "the marker spelling is original, not its imported alias");
   assert.equal(indexed?.operation, "address-of");
   assert.equal(allocated?.operation, "allocate");
-  assert.equal(allocated?.locationIdentity, allocated?.call);
-  assert.equal(allocated?.explicitPointeeTypeNode?.Kind, KindTypeReference);
+  assert.equal(allocated?.pointee.kind === "available" && allocated.pointee.explicitTypeNode?.Kind === KindTypeReference, true);
   assert.equal(loaded?.operation, "load");
   assert.equal(stored?.operation, "store");
   assert.equal(equal?.operation, "equal-pointer");
   assert.equal(nilEqual?.operation, "equal-pointer");
   assert.equal(hash?.operation, "hash-pointer");
   assert.equal(bound?.operation, "bind-pointer");
-  assert.equal(
-    bound?.operation === "bind-pointer" ? bound.locationIdentity : undefined,
-    bound?.operation === "bind-pointer" ? bound.identityExpression : undefined,
-  );
-  assert.equal(
-    bound?.operation === "bind-pointer"
-      ? bound.readExpression
-      : undefined,
-    Node_Arguments(bound?.call)?.[1],
-  );
-  assert.equal(
-    bound?.operation === "bind-pointer"
-      ? bound.writeExpression
-      : undefined,
-    Node_Arguments(bound?.call)?.[2],
-  );
   assert.equal(projected?.operation, "project-pointer");
-  assert.equal(
-    projected?.operation === "project-pointer"
-      ? projected.pointerExpression
-      : undefined,
-    Node_Arguments(projected?.call)?.[0],
-  );
-  assert.equal(
-    projected?.operation === "project-pointer"
-      ? projected.fromSourceExpression
-      : undefined,
-    Node_Arguments(projected?.call)?.[1],
-  );
-  assert.equal(
-    equal?.operation === "equal-pointer" ? equal.leftExpression : undefined,
-    Node_Arguments(equal?.call)?.[0],
-  );
-  assert.equal(
-    equal?.operation === "equal-pointer" ? equal.rightExpression : undefined,
-    Node_Arguments(equal?.call)?.[1],
-  );
-  assert.equal(
-    extended.extensionHost.facts.get(rejectedCall, pointerOperationFactKey),
-    undefined,
-  );
-  assert.equal(
-    extended.extensionHost.facts.get(
-      rejectedExpressionCall,
-      pointerOperationFactKey,
-    ),
-    undefined,
-  );
-  assert.equal(
-    extended.extensionHost.facts.get(
-      rejectedConstantCall,
-      pointerOperationFactKey,
-    ),
-    undefined,
-  );
-  assert.equal(
-    extended.extensionHost.facts.get(localCall, pointerOperationFactKey),
-    undefined,
-  );
-  assert.deepEqual(
-    extended.extensionHost.diagnostics.all().map((diagnostic) => diagnostic.publicCode),
-    [
-      "TSTS_SOURCE_SEMANTICS_0002",
-      "TSTS_SOURCE_SEMANTICS_0002",
-      "TSTS_SOURCE_SEMANTICS_0002",
-    ],
-  );
+  for (const fact of [direct, aliased, indexed, allocated, loaded, stored, equal, nilEqual, hash, bound, projected]) {
+    assert.equal(fact !== undefined && fact.pointee.kind === "available", true, "every original selected pointee remains available");
+    assert.equal(fact?.selection.kind === "observed" && fact.selection.value.kind === "applicable", true);
+    assert.equal(fact?.arguments.every((argument, ordinal) => argument === Node_Arguments(fact.call)?.[ordinal]), true);
+    assert.equal(fact?.typeArguments.every((argument, ordinal) => argument === Node_TypeArguments(fact.call)?.[ordinal]), true);
+  }
+  assert.equal(bound?.arguments[1] === Node_Arguments(bound?.call)?.[1], true);
+  assert.equal(bound?.arguments[2] === Node_Arguments(bound?.call)?.[2], true);
+  assert.equal(projected?.arguments[0] === Node_Arguments(projected?.call)?.[0], true);
+  assert.equal(projected?.arguments[1] === Node_Arguments(projected?.call)?.[1], true);
+  assert.equal(equal?.arguments[0] === Node_Arguments(equal?.call)?.[0], true);
+  assert.equal(equal?.arguments[1] === Node_Arguments(equal?.call)?.[1], true);
+  for (const original of [rejectedCall, rejectedExpressionCall, rejectedConstantCall]) {
+    const fact = extended.extensionHost.facts.get(original, pointerOperationFactKey);
+    assert.equal(fact?.operation, "address-of");
+    assert.equal(fact?.arguments[0] === Node_Arguments(original)?.[0], true, "Source receives the exact original storage operand");
+    assert.equal(fact?.selection.kind === "observed", true);
+  }
+  assert.equal(extended.extensionHost.facts.get(localCall, pointerOperationFactKey) === undefined, true);
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode), []);
 });
 
 test("imported pointer storage retains canonical declaration identity and mutability", () => {
@@ -1005,14 +958,106 @@ test("imported pointer storage retains canonical declaration identity and mutabi
   assert.equal(first?.operation, "address-of");
   assert.equal(second?.operation, "address-of");
   assert.ok(first?.operation === "address-of" && second?.operation === "address-of");
-  assert.equal(first.storageDeclaration?.Kind, KindVariableDeclaration);
-  assert.equal(first.storageDeclaration, second.storageDeclaration);
-  assert.equal(first.storageSymbol, second.storageSymbol);
-  assert.equal(GetSourceFileOfNode(first.storageDeclaration), Program_GetSourceFile(program, "/src/values.ts"));
-  assert.equal(facts[2], undefined);
-  assert.equal(facts[3], undefined);
-  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode),
-    ["TSTS_SOURCE_SEMANTICS_0002", "TSTS_SOURCE_SEMANTICS_0002"]);
+  const checker = extended.extensionHost.getCompilerQueryContext().getSourceFileQueries(index).checker;
+  const firstStorage = checker.getResolvedStorageInfo(first.arguments[0]);
+  const secondStorage = checker.getResolvedStorageInfo(second.arguments[0]);
+  assert.equal(firstStorage?.declaration?.Kind, KindVariableDeclaration);
+  assert.equal(firstStorage?.declaration !== undefined && firstStorage.declaration === secondStorage?.declaration, true);
+  assert.equal(firstStorage?.symbol !== undefined && firstStorage.symbol === secondStorage?.symbol, true);
+  assert.equal(GetSourceFileOfNode(firstStorage?.declaration) === Program_GetSourceFile(program, "/src/values.ts"), true);
+  assert.equal(firstStorage?.writable && secondStorage?.writable, true);
+  for (const ordinal of [2, 3]) {
+    const fact = facts[ordinal];
+    assert.equal(fact?.operation, "address-of", "readonly storage remains a recognized marker for the Host place owner");
+    assert.equal(fact?.arguments[0] === Node_Arguments(fact?.call)?.[0], true);
+    assert.equal(checker.getResolvedStorageInfo(fact?.arguments[0])?.writable, false);
+  }
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode), []);
+});
+
+test("recognized pointer markers retain an explicitly missing selected pointee", () => {
+  const { extended, program, index } = createProgram(`
+    import { addressOf } from "@example/native/lang.js";
+    let value = 1;
+    const pointer = addressOf(value);
+  `, new Map([["/src/node_modules/@example/native/lang.d.ts", "export declare function addressOf(storage: unknown): unknown;"]]));
+  assertCleanProgram(program, index);
+  finalizeSourceSemantics(extended);
+  const call = getCallExpression(index, "addressOf", 0);
+  const fact = extended.extensionHost.facts.get(call, pointerOperationFactKey);
+  assert.equal(fact?.operation, "address-of");
+  assert.equal(fact?.selection.kind === "observed" && fact.selection.value.kind === "applicable", true);
+  assert.equal(fact?.arguments[0] === Node_Arguments(call)?.[0], true);
+  assert.equal(fact?.pointee.kind === "unavailable" && fact.pointee.reason === "missing", true);
+  assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode), []);
+});
+
+test("recognized pointer markers retain conditional and untyped observations", () => {
+  for (const [declaration, expected] of [
+    ["export declare function addressOf(value: string): string;", "conditional-candidates"],
+    ["export declare const addressOf: any;", "untyped"],
+  ] as const) {
+    const { extended, program, index } = createProgram(`
+      import { addressOf } from "@example/native/lang.js";
+      const pointer = addressOf(4);
+    `, new Map([["/src/node_modules/@example/native/lang.d.ts", declaration]]));
+    Program_GetSemanticDiagnostics(program, Background(), index);
+    finalizeSourceSemantics(extended);
+    const call = getCallExpression(index, "addressOf", 0);
+    const fact = extended.extensionHost.facts.get(call, pointerOperationFactKey);
+    assert.equal(fact?.operation, "address-of");
+    assert.equal(fact?.selection.kind === "observed" && fact.selection.value.kind === expected, true, expected);
+    assert.equal(fact?.pointee.kind === "unavailable" && fact.pointee.reason === "not-applicable", true);
+    assert.deepEqual(extended.extensionHost.diagnostics.all().map(diagnostic => diagnostic.publicCode), []);
+  }
+});
+
+test("unresolved and cyclic aliases do not publish configured marker or primitive subjects", () => {
+  for (const mode of ["missing", "cyclic"] as const) {
+    const files = new Map([
+      ["/src/node_modules/@example/native/types.d.ts", mode === "missing"
+        ? "export {};" : "export { int } from './types-cycle.js';"],
+      ["/src/node_modules/@example/native/types-cycle.d.ts", "export { int } from './types.js';"],
+      ["/src/node_modules/@example/native/lang.d.ts", mode === "missing"
+        ? "export {};" : "export { addressOf } from './lang-cycle.js';"],
+      ["/src/node_modules/@example/native/lang-cycle.d.ts", "export { addressOf } from './lang.js';"],
+    ]);
+    const { extended, program, index } = createProgram(`
+      import type { int } from "@example/native/types.js";
+      import { addressOf } from "@example/native/lang.js";
+      let value: int;
+      addressOf(value);
+    `, files);
+    const filesWithDiagnostics = [index];
+    for (const path of [
+      "/src/node_modules/@example/native/types.d.ts",
+      "/src/node_modules/@example/native/lang.d.ts",
+      ...(mode === "cyclic" ? ["/src/node_modules/@example/native/types-cycle.d.ts", "/src/node_modules/@example/native/lang-cycle.d.ts"] : []),
+    ]) {
+      const file = Program_GetSourceFile(program, path);
+      assert.ok(file !== undefined, path + ": the original alias declaration file is loaded");
+      filesWithDiagnostics.push(file);
+    }
+    const diagnostics = filesWithDiagnostics.flatMap(file => Program_GetSemanticDiagnostics(program, Background(), file));
+    assert.equal(diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === (mode === "cyclic" ? 2303 : 2305)), true,
+      mode + ": the actual original alias diagnostic remains at its owning import/export declaration");
+    finalizeSourceSemantics(extended);
+    const checker = extended.extensionHost.getCompilerQueryContext().getSourceFileQueries(index).checker;
+    for (const statement of Node_Statements(index) ?? []) {
+      if (statement?.Kind !== KindImportDeclaration) continue;
+      const bindings = Node_ImportClause(statement);
+      const named = bindings === undefined ? undefined : AsImportClause(bindings)?.NamedBindings;
+      for (const specifier of Node_Elements(named) ?? []) {
+        const symbol = Node_Symbol(specifier);
+        assert.equal(symbol !== undefined, true);
+        assert.equal(checker.getAliasedSymbol(symbol) === undefined, true, mode + ": unresolved target is not a public Symbol");
+      }
+    }
+    const call = getCallExpression(index, "addressOf", 0);
+    assert.equal(extended.extensionHost.facts.get(call, pointerOperationFactKey) === undefined, true);
+    assert.equal(extended.extensionHost.facts.get(Node_Expression(call), sourceMarkerFactKey) === undefined, true);
+    assert.equal(extended.extensionHost.facts.get(Node_Type(getVariableDeclaration(index, "value")), sourcePrimitiveFactKey) === undefined, true);
+  }
 });
 
 test("source-semantics records opaque raw-pointer identity operations by declaration identity", () => {

@@ -356,7 +356,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getResolvedSymbolOrNil: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSymbolOrNil(checker, node)),
     getAliasedSymbol: (symbol) =>
-      withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_GetAliasedSymbol(checker, symbol)),
+      withCheckerForSymbol(program, symbol, defaultOptions, (checker) => {
+        const target = Checker_GetAliasedSymbol(checker, symbol);
+        return target === checker?.unknownSymbol ? undefined : target;
+      }),
     getTypeOfSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_getTypeOfSymbol(checker, symbol)),
     getWriteTypeOfSymbol: (symbol) =>

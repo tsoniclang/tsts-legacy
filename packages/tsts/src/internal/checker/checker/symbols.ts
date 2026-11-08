@@ -14483,7 +14483,7 @@ export function Checker_resolveIntersectionTypeMembers(receiver: GoPtr<Checker>,
       let signatures = Checker_getSignaturesOfType(receiver, type_, SignatureKindConstruct);
       if (signatures.length !== 0 && mixinCount > 0) {
         signatures = Map(signatures, (signature: GoPtr<Signature>): GoPtr<Signature> => {
-          const clone = Checker_cloneSignature(receiver, signature);
+          const clone = Checker_cloneSignature(receiver, signature, signature!.constructorClass);
           clone!.resolvedReturnType = Checker_includeMixinType(receiver, Checker_getReturnTypeOfSignature(receiver, signature), types, mixinFlags, i);
           return clone;
         });

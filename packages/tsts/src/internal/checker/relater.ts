@@ -4871,7 +4871,7 @@ export function Checker_compareSignaturesIdentical(receiver: GoPtr<Checker>, sou
         return TernaryFalse;
       }
     }
-    src = Checker_instantiateSignatureEx(receiver, source, mapper, true as bool);
+    src = Checker_instantiateSignatureEx(receiver, source, mapper, true as bool, source!.constructorClass);
   }
   let result: Ternary = TernaryTrue;
   if (!ignoreThisTypes) {

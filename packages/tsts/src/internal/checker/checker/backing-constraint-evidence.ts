@@ -1,9 +1,9 @@
 import type { Diagnostic } from "../../ast/diagnostic.js";
 import type { Node } from "../../ast/spine.js";
-import { Node_Initializer, Node_Type } from "../../ast/ast.js";
+import { Node_Arguments, Node_Initializer, Node_Type } from "../../ast/ast.js";
 import { IsReturnStatement, IsTypeParameterDeclaration } from "../../ast/generated/predicates.js";
 import { AsTypeParameterDeclaration } from "../../ast/generated/casts.js";
-import { GetContainingFunction, HasInitializer } from "../../ast/utilities.js";
+import { GetContainingFunction, HasInitializer, IsCallOrNewExpression } from "../../ast/utilities.js";
 import type {
   ResolvedCallApplicationEvidence,
   ResolvedCheckedComponentEvidence,
@@ -38,6 +38,11 @@ interface DiagnosticEdges {
   readonly related: readonly (Diagnostic | undefined)[];
 }
 
+interface InvocationObservation {
+  readonly invocation: Node;
+  readonly diagnostics: Set<Diagnostic>;
+}
+
 export interface BackingConstraintEvidenceState {
   readonly frames: ConstraintFrame[];
   readonly records: ConstraintRecord[];
@@ -48,6 +53,11 @@ export interface BackingConstraintEvidenceState {
   readonly origins: Map<Diagnostic, ConstraintRecord[]>;
   readonly envelopes: Map<Diagnostic, DiagnosticEdges>;
   readonly notes: Map<Diagnostic, Diagnostic[]>;
+  readonly noteTrees: Map<Diagnostic, ReadonlyMap<Diagnostic, DiagnosticEdges>>;
+  readonly applicability: Set<ConstraintRecord>;
+  readonly applicabilityRoots: Map<Diagnostic, Node>;
+  readonly invocationFrames: InvocationObservation[];
+  readonly invocationDiagnostics: Map<Node, Set<Diagnostic>>;
   revision: number;
   cachedRevision: number;
   cached: readonly ResolvedCheckerBackingConstraint[];
@@ -56,7 +66,8 @@ export interface BackingConstraintEvidenceState {
 function stateFor(checker: Checker): BackingConstraintEvidenceState {
   return checker.backingConstraintEvidenceState ??= { frames: [], records: [], candidates: [],
     roots: new Map(), invocations: new Map(), diagnosticCaptures: [],
-    origins: new Map(), envelopes: new Map(), notes: new Map(),
+    origins: new Map(), envelopes: new Map(), notes: new Map(), noteTrees: new Map(),
+    applicability: new Set(), applicabilityRoots: new Map(), invocationFrames: [], invocationDiagnostics: new Map(),
     revision: 0, cachedRevision: -1, cached: Object.freeze([]) };
 }
 
@@ -98,6 +109,52 @@ export function withBackingCandidate<Output>(
   }
 }
 
+export function withBackingApplicabilityConstraint<Output>(
+  checker: Checker,
+  body: ConstraintBody,
+  diagnostics: readonly (Diagnostic | undefined)[] | undefined,
+  operation: () => Output,
+): Output {
+  const state = stateFor(checker);
+  const firstRecord = state.records.length;
+  const firstDiagnostic = diagnostics?.length ?? 0;
+  const result = withBackingConstraint(checker, body, operation);
+  if (body.application !== undefined) {
+    for (const diagnostic of diagnostics?.slice(firstDiagnostic) ?? []) {
+      if (diagnostic === undefined) continue;
+      const tree = diagnosticTree(diagnostic);
+      for (const record of state.records.slice(firstRecord)) {
+        if (record.body === body && tree.has(record.diagnostic)) state.applicability.add(record);
+      }
+    }
+    state.revision++;
+  }
+  return result;
+}
+
+export function beginBackingInvocation(checker: Checker, invocation: Node): InvocationObservation {
+  const state = stateFor(checker);
+  let diagnostics = state.invocationDiagnostics.get(invocation);
+  if (diagnostics === undefined) state.invocationDiagnostics.set(invocation, diagnostics = new Set());
+  const observation = { invocation, diagnostics };
+  state.invocationFrames.push(observation);
+  return observation;
+}
+
+export function endBackingInvocation(checker: Checker, observation: InvocationObservation | undefined): void {
+  if (observation === undefined) return;
+  if (stateFor(checker).invocationFrames.pop() !== observation) {
+    throw new Error("Call diagnostic observations must settle in exact stack order.");
+  }
+}
+
+export function retainCallApplicabilityDiagnostics(checker: Checker, invocation: Node,
+  diagnostics: readonly Diagnostic[]): void {
+  const state = stateFor(checker);
+  for (const diagnostic of diagnostics) state.applicabilityRoots.set(diagnostic, invocation);
+  state.revision++;
+}
+
 export function activeBackingCandidate(checker: Checker): ResolvedCallApplicationEvidence | undefined {
   return checker.backingConstraintEvidenceState?.candidates.at(-1);
 }
@@ -118,6 +175,18 @@ export function observePublishedDiagnostic(checker: Checker, diagnostic: Diagnos
   if (diagnostic === undefined) return;
   for (const capture of checker.backingConstraintEvidenceState?.diagnosticCaptures ?? []) {
     if (!capture.includes(diagnostic)) capture.push(diagnostic);
+  }
+  const state = checker.backingConstraintEvidenceState;
+  if (state !== undefined) {
+    for (const frame of state.invocationFrames) frame.diagnostics.add(diagnostic);
+    for (let current = checker.currentNode; current?.Parent !== undefined; current = current.Parent) {
+      const parent = current.Parent;
+      if (!IsCallOrNewExpression(parent) || !(Node_Arguments(parent) ?? []).includes(current)) continue;
+      let diagnostics = state.invocationDiagnostics.get(parent);
+      if (diagnostics === undefined) state.invocationDiagnostics.set(parent, diagnostics = new Set());
+      diagnostics.add(diagnostic);
+    }
+    state.revision++;
   }
 }
 
@@ -149,7 +218,11 @@ export function retainBackingDiagnosticNotes(checker: Checker, diagnostic: Diagn
   notes: readonly (Diagnostic | undefined)[]): void {
   const state = stateFor(checker);
   const existing = state.notes.get(diagnostic) ?? [];
-  for (const note of notes) if (note !== undefined && !existing.includes(note)) existing.push(note);
+  for (const note of notes) {
+    if (note === undefined) continue;
+    if (!existing.includes(note)) existing.push(note);
+    state.noteTrees.set(note, diagnosticTree(note));
+  }
   state.notes.set(diagnostic, existing);
   state.revision++;
 }
@@ -161,12 +234,22 @@ export function checkerDiagnosticCoverage(checker: Checker, root: Diagnostic): R
   const obligations = new Set<ConstraintRecord>();
   const visited = new Set<Diagnostic>();
   const authorized = new Set<Diagnostic>();
+  const notes = new Set<Diagnostic>();
   const same = (actual: readonly (Diagnostic | undefined)[], expected: readonly (Diagnostic | undefined)[]): boolean =>
     actual.length === expected.length && actual.every((entry, index) => entry === expected[index]);
   const matches = (diagnostic: Diagnostic, edges: DiagnosticEdges): boolean => {
     const notes = state.notes.get(diagnostic) ?? [];
     return same(diagnostic.messageChain, edges.messages) && same(diagnostic.relatedInformation,
       [...edges.related, ...notes.filter(note => !edges.related.includes(note))]);
+  };
+  const inspectNotes = (diagnostic: Diagnostic): boolean => {
+    for (const note of state.notes.get(diagnostic) ?? []) {
+      const tree = state.noteTrees.get(note);
+      if (tree === undefined) return false;
+      for (const [node, edges] of tree) if (!matches(node, edges)) return false;
+      notes.add(note);
+    }
+    return true;
   };
   const inspect = (diagnostic: Diagnostic): boolean => {
     if (visited.has(diagnostic)) return false;
@@ -175,7 +258,7 @@ export function checkerDiagnosticCoverage(checker: Checker, root: Diagnostic): R
     if (records !== undefined) {
       for (const record of records) {
         for (const [node, edges] of record.tree) {
-          if (!matches(node, edges)) return false;
+          if (!matches(node, edges) || !inspectNotes(node)) return false;
           authorized.add(node);
         }
         obligations.add(record);
@@ -183,14 +266,28 @@ export function checkerDiagnosticCoverage(checker: Checker, root: Diagnostic): R
       return true;
     }
     const envelope = state.envelopes.get(diagnostic);
-    return envelope !== undefined && matches(diagnostic, envelope) && envelope.messages.length !== 0
+    return envelope !== undefined && matches(diagnostic, envelope) && inspectNotes(diagnostic) && envelope.messages.length !== 0
       && envelope.messages.every(child => child !== undefined && inspect(child))
       && envelope.related.every(child => child !== undefined
         && (authorized.has(child) || state.notes.get(diagnostic)?.includes(child)));
   };
   if (!inspect(root)) return unavailable();
+  const invocation = state.applicabilityRoots.get(root);
+  const alternative = invocation !== undefined && obligations.size !== 0 && [...obligations].every(record =>
+    state.applicability.has(record) && record.body.application?.invocation === invocation);
+  if (alternative) {
+    for (const diagnostic of state.invocationDiagnostics.get(invocation) ?? []) {
+      if (state.applicabilityRoots.get(diagnostic) !== invocation) return unavailable();
+      if (diagnostic !== root && !inspect(diagnostic)) return unavailable();
+    }
+    if (![...obligations].every(record => state.applicability.has(record) && record.body.application?.invocation === invocation)) return unavailable();
+  }
   return Object.freeze({ kind: "complete", root, obligations: Object.freeze([...obligations].map(record =>
-    Object.freeze({ diagnostic: record.diagnostic, application: record.body.application }))) });
+    Object.freeze({ diagnostic: record.diagnostic, application: record.body.application,
+      kind: state.applicability.has(record) ? "applicability" as const : "backing" as const }))),
+    purpose: alternative
+      ? Object.freeze({ kind: "alternative-applicability", invocation, notes: Object.freeze([...notes]) })
+      : Object.freeze({ kind: "other" }) });
 }
 
 export function withBackingWriteFit<Output>(
@@ -219,14 +316,17 @@ export function withBackingTypeArgumentFit<Output>(
   parameter: Type | undefined,
   target: Type | undefined,
   application: ResolvedCallApplicationEvidence | undefined,
+  diagnostics: readonly (Diagnostic | undefined)[] | undefined,
   operation: () => Output,
 ): Output {
   const declaration = parameter?.symbol?.Declarations?.find(node => node !== undefined && IsTypeParameterDeclaration(node));
   const annotation = declaration === undefined ? undefined : AsTypeParameterDeclaration(declaration)?.Constraint;
   if (argument === undefined || source === undefined || target === undefined || annotation === undefined) return operation();
-  return withBackingConstraint(checker, { kind: "write-fit", site: argument, application,
+  const body: ConstraintBody = { kind: "write-fit", site: argument, application,
     source: Object.freeze({ ...checkedComponent(argument, source, "annotation"), application }),
-    destination: Object.freeze({ ...checkedComponent(annotation, target, "annotation"), application }) }, operation);
+    destination: Object.freeze({ ...checkedComponent(annotation, target, "annotation"), application }) };
+  return application === undefined ? withBackingConstraint(checker, body, operation)
+    : withBackingApplicabilityConstraint(checker, body, diagnostics, operation);
 }
 
 export function observeBackingDiagnostic(checker: Checker, diagnostic: Diagnostic | undefined): void {

@@ -2524,7 +2524,7 @@ export function Checker_createSignatureForJSXIntrinsic(receiver: GoPtr<Checker>,
   // declaration := factory.createFunctionTypeNode(...)
   const parameterSymbol = Checker_newSymbol(receiver, SymbolFlagsFunctionScopedVariable as SymbolFlags, "props");
   (LinkStore_Get(receiver!.valueSymbolLinks, parameterSymbol) as GoPtr<ValueSymbolLinks>)!.resolvedType = result;
-  return Checker_newSignature(receiver, SignatureFlagsNone, undefined, [], undefined, [parameterSymbol], elementType, undefined, 1);
+  return Checker_newSignature(receiver, SignatureFlagsNone, undefined, [], undefined, [parameterSymbol], elementType, undefined, 1, undefined);
 }
 
 /**

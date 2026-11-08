@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Background } from "../go/context.js";
 import { createCompilerSessionFromFiles } from "../index.js";
-import { Node_Text } from "../internal/ast/ast.js";
-import { KindCallExpression, KindVariableDeclaration } from "../internal/ast/generated/kinds.js";
+import { Node_Symbol, Node_Text } from "../internal/ast/ast.js";
+import { KindCallExpression, KindClassDeclaration, KindVariableDeclaration } from "../internal/ast/generated/kinds.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import { Checker_GetPropertyOfType, Checker_GetReturnTypeOfSignature } from "../internal/checker/exports.js";
-import { Checker_cloneSignature, Checker_getResolvedSignature } from "../internal/checker/checker/signatures.js";
+import { Checker_cloneSignature, Checker_createSignatureInstantiation, Checker_getResolvedSignature, Checker_getSignaturesOfType } from "../internal/checker/checker/signatures.js";
+import { SignatureKindConstruct } from "../internal/checker/types.js";
+import { readOriginalSignature } from "../internal/checker/original-signature-evidence.js";
 import { CheckModeNormal } from "../internal/checker/checker/state.js";
 import { Checker_cloneSymbol, Checker_getTypeOfSymbol, Checker_getWriteTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
@@ -77,7 +79,7 @@ test("actual signature and transient symbol provenance survives cold query views
       ];
       for (const read of reverse ? [...reads].reverse() : reads) read();
     }
-    const clone = Checker_cloneSignature(current.checker, signature);
+    const clone = Checker_cloneSignature(current.checker, signature, signature.constructorClass);
     const propertyClone = Checker_cloneSymbol(current.checker, property);
     assert.ok(clone !== undefined && propertyClone !== undefined);
     assert.equal(clone !== signature && clone.checkerId === current.checker.id &&
@@ -113,5 +115,86 @@ test("foreign or absent signature provenance fails exact pool membership while b
   } finally {
     foreign.done();
     current.done();
+  }
+});
+
+test("original constructor class provenance precedes calls and survives derived clones and composites", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/constructors.ts", "/src/reader.ts"],
+    files: {
+      "/src/reader.ts": "export const untouched = true;",
+      "/src/constructors.ts": `
+        class Base<Value> { constructor(readonly value: Value) {} }
+        class Derived<Value> extends Base<Value> {}
+        class Empty {}
+        class Explicit { constructor(readonly value: number) {} }
+        class Left { readonly left = true; constructor(value: number) {} }
+        class Right { readonly right = true; constructor(value: number) {} }
+        declare const nonclass: new(value: number) => { value: number };
+        declare const mixed: typeof Left | typeof Right;
+      `,
+    },
+    compilerOptions: { noLib: true, strict: true, target: "esnext", module: "esnext", checkers: 2 },
+  });
+  assert.equal(session.ensureChecked().length, 0);
+  const source = session.checkSource();
+  const file = source.getSourceFile("/src/constructors.ts");
+  const reader = source.getSourceFile("/src/reader.ts");
+  assert.ok(file !== undefined && reader !== undefined);
+  assert.equal(findNodesByKind(file, KindCallExpression).length, 0, "no invocation seeds constructor ownership");
+  const [checker, done] = Program_GetTypeCheckerForFile(session.program,
+    WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), file);
+  assert.ok(checker !== undefined);
+  try {
+    const declarations = findNodesByKind(file, KindClassDeclaration);
+    const classes = new Map(declarations.map(declaration => [Node_Text(Node_Name(declaration)), declaration]));
+    for (const name of ["Base", "Derived", "Empty", "Explicit"]) {
+      const declaration = classes.get(name);
+      assert.ok(declaration !== undefined);
+      const type = Checker_getTypeOfSymbol(checker, Node_Symbol(declaration));
+      const signatures = Checker_getSignaturesOfType(checker, type, SignatureKindConstruct);
+      assert.equal(signatures.length > 0, true, name);
+      for (const signature of signatures) {
+        assert.ok(signature !== undefined);
+        const cold = createTypeCheckerQueries(session.program, { sourceFile: reader });
+        const original = readOriginalSignature(signature);
+        cold.getReturnTypeOfSignature(signature);
+        assert.equal(readOriginalSignature(signature).constructorClass === original.constructorClass, true,
+          "a cold foreign view does not seed or replace original constructor provenance");
+        assert.equal(original?.constructorClass === declaration, true, name + ": actual class producer, not caller/declaration guess");
+        assert.equal(original?.composite === undefined, true);
+        const clone = Checker_cloneSignature(checker, signature, signature.constructorClass);
+        assert.equal(clone !== undefined && readOriginalSignature(clone).constructorClass === declaration, true);
+        if (signature.typeParameters.length !== 0) {
+          const instantiated = Checker_createSignatureInstantiation(checker, signature,
+            signature.typeParameters.map(() => checker.stringType), signature.constructorClass);
+          assert.equal(instantiated !== undefined && readOriginalSignature(instantiated).constructorClass === declaration, true);
+        }
+        if (name === "Derived") {
+          assert.equal(original?.declaration?.Parent === classes.get("Base"), true, "inherited declaration remains Base");
+          assert.equal(original?.target !== undefined && original.target.constructorClass === classes.get("Base"), true);
+        }
+      }
+    }
+    const variables = findNodesByKind(file, KindVariableDeclaration);
+    const nonclass = variables.find(declaration => Node_Text(Node_Name(declaration)) === "nonclass");
+    const nonclassSignatures = Checker_getSignaturesOfType(checker, Checker_getTypeOfSymbol(checker, Node_Symbol(nonclass)), SignatureKindConstruct);
+    assert.equal(nonclassSignatures.length > 0 && nonclassSignatures.every(signature =>
+      signature !== undefined && readOriginalSignature(signature).constructorClass === undefined), true);
+    const mixed = variables.find(declaration => Node_Text(Node_Name(declaration)) === "mixed");
+    const composites = Checker_getSignaturesOfType(checker, Checker_getTypeOfSymbol(checker, Node_Symbol(mixed)), SignatureKindConstruct);
+    assert.equal(composites.length > 0, true);
+    for (const signature of composites) {
+      assert.ok(signature !== undefined);
+      const original = readOriginalSignature(signature);
+      assert.equal(original.constructorClass === undefined && original.composite?.isUnion === true, true);
+      assert.equal(original.composite?.signatures.length, 2);
+      const owners = original.composite?.signatures.map(part => readOriginalSignature(part).constructorClass);
+      assert.equal(owners?.includes(classes.get("Left")) && owners.includes(classes.get("Right")), true,
+        "a composite retains actual per-arm constructors, never its first class as a singular owner");
+    }
+  } finally {
+    done();
   }
 });

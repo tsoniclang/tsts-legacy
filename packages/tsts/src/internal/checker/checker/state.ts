@@ -2428,10 +2428,10 @@ export function NewChecker(program: Program, tracer: GoPtr<Tracer>): [GoPtr<Chec
   checker.markerSubTypeForCheck = Checker_newTypeParameter(checker, undefined);
   Type_AsTypeParameter(checker.markerSubTypeForCheck)!.constraint = checker.markerSuperTypeForCheck;
   checker.noTypePredicate = { kind: TypePredicateKindIdentifier, parameterIndex: 0 as int, parameterName: "<<unresolved>>", t: checker.anyType };
-  checker.anySignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.anyType, undefined, 0);
-  checker.unknownSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.errorType, undefined, 0);
-  checker.resolvingSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.anyType, undefined, 0);
-  checker.silentNeverSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.silentNeverType, undefined, 0);
+  checker.anySignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.anyType, undefined, 0, undefined);
+  checker.unknownSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.errorType, undefined, 0, undefined);
+  checker.resolvingSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.anyType, undefined, 0, undefined);
+  checker.silentNeverSignature = Checker_newSignature(checker, SignatureFlagsNone, undefined, [], undefined, [], checker.silentNeverType, undefined, 0, undefined);
   checker.cachedArgumentsReferenced = new globalThis.Map();
   checker.enumNumberIndexInfo = { keyType: checker.numberType, valueType: checker.stringType, isReadonly: true, declaration: undefined, indexSymbol: undefined, components: [] };
   checker.anyBaseTypeIndexInfo = { keyType: checker.stringType, valueType: checker.anyType, isReadonly: false, declaration: undefined, indexSymbol: undefined, components: [] };

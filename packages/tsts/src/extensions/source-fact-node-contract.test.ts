@@ -53,6 +53,27 @@ test("argument passing facts retain one role and exact required original occurre
   assert.equal(Object.isFrozen(declaration) && Object.isFrozen(argument), true);
   assert.equal(argumentPassingFactKey.equals(declaration, argument), false, "different roles never compare equal");
   assert.equal(argumentPassingFactKey.equals(argument, otherArgument), false, "same mode does not replace original identity");
+  const pointer = pointerOperationFactKey.snapshot({
+    operation: "address-of", exportName: "addressOf", call: storageExpression,
+    arguments: [storageExpression], typeArguments: [],
+    selection: { kind: "unavailable", reason: "unvisited" },
+    pointee: { kind: "unavailable", reason: "unvisited" },
+  });
+  const samePointer = pointerOperationFactKey.snapshot(pointer);
+  const differentPointer = pointerOperationFactKey.snapshot({ ...pointer, arguments: [otherExpression] });
+  assert.equal(Object.isFrozen(pointer) && Object.isFrozen(pointer.arguments) && Object.isFrozen(pointer.selection), true);
+  assert.equal(pointerOperationFactKey.equals(pointer, samePointer), true);
+  assert.equal(pointerOperationFactKey.equals(pointer, differentPointer), false);
+  const snapshotPointer = (value: unknown): unknown =>
+    pointerOperationFactKey.snapshot(value as Parameters<typeof pointerOperationFactKey.snapshot>[0]);
+  for (const malformed of [
+    { operation: "address-of", call: storageExpression, pointeeType: {}, resultType: {}, storageExpression },
+    { ...pointer, selection: { kind: "unavailable" } },
+    { ...pointer, selection: { kind: "unavailable", reason: "unvisited", value: {} } },
+    { ...pointer, pointee: { kind: "unavailable", reason: "missing", type: {} } },
+  ]) {
+    assert.throws(() => snapshotPointer(malformed), /PointerOperationFact/u);
+  }
   assert.equal(argumentPassingFactKey.equals(argument, argumentPassingFactKey.snapshot(argument)), true);
   const snapshot = argumentPassingFactKey.snapshot as (value: unknown) => unknown;
   for (const malformed of [
@@ -94,21 +115,20 @@ test("authored source fact payloads reject arbitrary identity objects", () => {
     () => pointerOperationFactKey.snapshot({
       operation: "allocate",
       call: invalidNode,
-      pointeeType: invalidType,
-      resultType: invalidType,
-      initialExpression: invalidNode,
-      initialType: invalidType,
-      locationIdentity: invalidNode,
+      exportName: "allocatePointer",
+      arguments: [invalidNode],
+      typeArguments: [],
+      selection: { kind: "unavailable", reason: "unvisited" },
+      pointee: { kind: "available", type: invalidType, explicitTypeNode: undefined },
     }),
     () => pointerOperationFactKey.snapshot({
       operation: "equal-pointer",
       call: invalidNode,
-      pointeeType: invalidType,
-      resultType: invalidType,
-      leftExpression: invalidNode,
-      leftType: invalidType,
-      rightExpression: invalidNode,
-      rightType: invalidType,
+      exportName: "equalPointer",
+      arguments: [invalidNode, invalidNode],
+      typeArguments: [],
+      selection: { kind: "unavailable", reason: "unvisited" },
+      pointee: { kind: "available", type: invalidType, explicitTypeNode: undefined },
     }),
     () => rawPointerOperationFactKey.snapshot({
       operation: "bind-raw-pointer",
