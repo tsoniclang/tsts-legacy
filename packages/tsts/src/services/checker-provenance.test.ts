@@ -5,13 +5,14 @@ import { createCompilerSessionFromFiles } from "../index.js";
 import { Node_Symbol, Node_Text } from "../internal/ast/ast.js";
 import { KindCallExpression, KindClassDeclaration, KindVariableDeclaration } from "../internal/ast/generated/kinds.js";
 import { Node_Name } from "../internal/ast/spine.js";
+import { SymbolFlagsFunctionScopedVariable, SymbolFlagsOptional, type SymbolFlags } from "../internal/ast/symbolflags.js";
 import { Checker_GetPropertyOfType, Checker_GetReturnTypeOfSignature } from "../internal/checker/exports.js";
-import { Checker_cloneSignature, Checker_createSignatureInstantiation, Checker_getResolvedSignature, Checker_getSignaturesOfType } from "../internal/checker/checker/signatures.js";
-import { SignatureKindConstruct } from "../internal/checker/types.js";
+import { Checker_cloneSignature, Checker_createSignatureInstantiation, Checker_getResolvedSignature, Checker_getSignaturesOfType, Checker_newParameter, Checker_newSignature } from "../internal/checker/checker/signatures.js";
+import { SignatureFlagsHasRestParameter, SignatureKindConstruct } from "../internal/checker/types.js";
 import { readOriginalSignature } from "../internal/checker/original-signature-evidence.js";
 import { CheckModeNormal } from "../internal/checker/checker/state.js";
-import { Checker_cloneSymbol, Checker_getTypeOfSymbol, Checker_getWriteTypeOfSymbol } from "../internal/checker/checker/symbols.js";
-import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
+import { Checker_cloneSymbol, Checker_getTypeOfSymbol, Checker_getWriteTypeOfSymbol, Checker_newSymbol } from "../internal/checker/checker/symbols.js";
+import { Checker_createArrayType, Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
 import { Program_GetTypeChecker, Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
@@ -114,6 +115,39 @@ test("foreign or absent signature provenance fails exact pool membership while b
     assert.equal(original.checkerId === undefined, true, "ordinary shared-symbol reads never mutate producer metadata");
   } finally {
     foreign.done();
+    current.done();
+  }
+});
+
+test("original signature facts preserve declarationless checker parameters without inventing syntax", () => {
+  const current = fixture();
+  try {
+    const required = Checker_newParameter(current.checker, "required", current.checker.stringType);
+    const optional = Checker_newSymbol(current.checker,
+      (SymbolFlagsFunctionScopedVariable | SymbolFlagsOptional) as SymbolFlags, "optional");
+    const rest = Checker_newParameter(current.checker, "rest",
+      Checker_createArrayType(current.checker, current.checker.stringType));
+    const receiver = Checker_newParameter(current.checker, "this", current.checker.stringType);
+    assert.ok(required !== undefined && optional !== undefined && rest !== undefined && receiver !== undefined);
+    const parameters = [required, optional, rest];
+    const signature = Checker_newSignature(current.checker, SignatureFlagsHasRestParameter,
+      undefined, [], receiver, parameters, undefined, undefined, 1, undefined);
+    assert.ok(signature !== undefined);
+    const original = readOriginalSignature(signature);
+    assert.equal(original.parameters.length, parameters.length, "every genuine checker-created parameter is retained");
+    for (const [index, parameter] of original.parameters.entries()) {
+      assert.equal(parameter.index === index && parameter.declaration === undefined &&
+        parameter.optional === (index === 1) && parameter.rest === (index === 2), true,
+      `parameter ${index}: genuine absence, optional flag and rest position are independent facts`);
+    }
+    assert.equal(original.declaration === undefined && original.receiver !== undefined &&
+      original.receiver.declaration === undefined, true, "no original parameter, receiver or body declaration is fabricated");
+    assert.equal(signature.checkerId === current.checker.id && signature.resolvedReturnType === undefined &&
+      signature.parameters.every((parameter, index) => parameter === parameters[index]), true,
+    "factual reads do not replace the producer, parameter vector or unobserved result");
+    assert.equal(Object.isFrozen(original) && Object.isFrozen(original.parameters) &&
+      original.parameters.every(parameter => Object.isFrozen(parameter)), true, "the complete factual snapshot is immutable");
+  } finally {
     current.done();
   }
 });
