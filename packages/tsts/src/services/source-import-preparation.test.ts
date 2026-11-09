@@ -18,6 +18,7 @@ interface FixtureOptions {
   readonly allowJs?: boolean;
   readonly types?: readonly string[];
   readonly noResolve?: boolean;
+  readonly moduleDetection?: "legacy" | "auto" | "force";
 }
 
 function fixture(files: ReadonlyMap<string, string>, roots: readonly string[], options: FixtureOptions = {}) {
@@ -67,6 +68,7 @@ test("source import preparation preserves all eight authored reference families 
   const inputs = new Map([
     ["/src/package.json", '{"type":"module"}'], ["/src/main.ts", main],
     ["/src/ambient.d.ts", "declare const ambient: number;"],
+    ["/src/node_modules/@types/ambient/package.json", '{"name":"@types/ambient","version":"1.0.0","types":"index.d.ts"}'],
     ["/src/node_modules/@types/ambient/index.d.ts", "declare const ambientPackage: number;"],
     ["/libs/lib.es5.d.ts", "interface MinimalLibrary {}"],
     ["/src/import.ts", "export const value = 1;"], ["/src/export.ts", "export const value = 2;"],
@@ -121,26 +123,34 @@ test("source import preparation omits nonliteral calls and retains their literal
 });
 
 test("source import preparation derives statement, ambient, expression and directive placement from the genuine parser", () => {
-  const input = fixture(new Map([
+  const ambientModule = [
+    'declare module "declared" {', 'import type { Value } from "owned";', 'export type { Value } from "owned";',
+    'import selected = require("owned");', 'type Selected = import("owned").Value;', '}',
+  ].join("\n");
+  const inputs = new Map([
     ["/src/top.mts", [
       'import type { Value } from "owned";', 'export type { Value } from "owned";',
       'type Selected = import("owned").Value;', 'function load() { return import("owned"); }',
     ].join("\n")],
     ["/src/ambient.ts", [
       '/// <reference path="./directive.d.ts" />', '/// <reference types="ambient" />', '/// <reference lib="es5" />',
-      'declare module "declared" {', 'import type { Value } from "owned";', 'export type { Value } from "owned";',
-      'import selected = require("owned");', 'type Selected = import("owned").Value;', '}',
+      ambientModule,
     ].join("\n")],
+    ["/src/augmentation-export.ts", `export {};\n${ambientModule}`],
+    ["/src/augmentation-import.ts", `import type { Value } from "owned";\n${ambientModule}`],
     ["/src/static.cts", 'import selected = require("owned");'],
     ["/src/calls.js", 'function load(name) { require(name); import(name); return require("owned"); }'],
     ["/src/docs.js", '/** @import { Value } from "owned" */\nconst value = 1;'],
     ["/src/directive.d.ts", "declare const directive: number;"],
+    ["/src/node_modules/@types/ambient/package.json", '{"name":"@types/ambient","version":"1.0.0","types":"index.d.ts"}'],
     ["/src/node_modules/@types/ambient/index.d.ts", "declare const ambient: number;"],
     ["/libs/lib.es5.d.ts", "interface MinimalLibrary {}"],
     ["/src/node_modules/owned/package.json", '{"name":"owned","version":"1.0.0","types":"index.d.ts"}'],
     ["/src/node_modules/owned/index.d.ts", "export type Value = number;"],
-  ]), ["/src/top.mts", "/src/ambient.ts", "/src/static.cts", "/src/calls.js", "/src/docs.js"],
-  { noLib: false, lib: [], allowJs: true });
+  ]);
+  const roots = ["/src/top.mts", "/src/ambient.ts", "/src/augmentation-export.ts", "/src/augmentation-import.ts",
+    "/src/static.cts", "/src/calls.js", "/src/docs.js"];
+  const input = fixture(inputs, roots, { noLib: false, lib: [], allowJs: true, moduleDetection: "legacy" });
   const result = prepareSourceImports(input);
   const expected: readonly { readonly fileName: string; readonly references: readonly (readonly string[])[] }[] = [
     { fileName: "/src/top.mts", references: [["import", "statement"], ["export", "statement"],
@@ -148,12 +158,15 @@ test("source import preparation derives statement, ambient, expression and direc
     { fileName: "/src/ambient.ts", references: [["reference-path", "directive"], ["reference-types", "directive"],
       ["reference-lib", "directive"], ["import", "ambient-module"], ["export", "ambient-module"],
       ["require", "ambient-module"], ["import-type", "expression"]] },
+    { fileName: "/src/augmentation-export.ts", references: [["import-type", "expression"]] },
+    { fileName: "/src/augmentation-import.ts", references: [["import", "statement"], ["import-type", "expression"]] },
     { fileName: "/src/static.cts", references: [["require", "statement"]] },
     { fileName: "/src/calls.js", references: [["require", "expression"]] },
     { fileName: "/src/docs.js", references: [["import-type", "statement"]] },
   ];
   assert.deepEqual(result.files.map(candidate => candidate.fileName).sort(), [
-    "/src/top.mts", "/src/ambient.ts", "/src/static.cts", "/src/calls.js", "/src/docs.js", "/src/directive.d.ts",
+    "/src/top.mts", "/src/ambient.ts", "/src/augmentation-export.ts", "/src/augmentation-import.ts",
+    "/src/static.cts", "/src/calls.js", "/src/docs.js", "/src/directive.d.ts",
     "/src/node_modules/@types/ambient/index.d.ts", "/libs/lib.es5.d.ts", "/src/node_modules/owned/index.d.ts",
   ].sort(), "the complete placement-control file domain is fixed independently");
   for (const original of expected) {
@@ -163,8 +176,13 @@ test("source import preparation derives statement, ambient, expression and direc
   const activationOccurrences = result.files.flatMap(candidate => candidate.references
     .filter(reference => (reference.kind === "import" || reference.kind === "export") && reference.placement === "statement")
     .map(reference => [candidate.fileName, reference.kind, reference.specifier]));
-  assert.deepEqual(activationOccurrences, [["/src/top.mts", "import", "owned"], ["/src/top.mts", "export", "owned"]],
+  assert.deepEqual(activationOccurrences, [["/src/top.mts", "import", "owned"], ["/src/top.mts", "export", "owned"],
+    ["/src/augmentation-import.ts", "import", "owned"]],
     "same-spelled ambient exports/imports, type expressions, calls, directives and JS doc imports do not broaden the original activation domain");
+  const forced = prepareSourceImports(fixture(inputs, ["/src/ambient.ts"], { noLib: false, lib: [], allowJs: true }));
+  assert.deepEqual(file(forced, "/src/ambient.ts").references.map(reference => [reference.kind, reference.placement]),
+    [["reference-path", "directive"], ["reference-types", "directive"], ["reference-lib", "directive"], ["import-type", "expression"]],
+    "actual NodeNext default Force makes this nondeclaration source an augmentation, unlike the explicit Legacy script");
 });
 
 test("source import preparation retains the SDK declaration-file classification for project, resolved and library files", () => {
@@ -331,10 +349,19 @@ test("source import preparation retains invalid configuration instead of returni
 test("source import preparation preserves the actual none resolution mode and disabled directive policy", () => {
   const input = fixture(new Map([["/src/main.ts", 'import "./dep";'], ["/src/dep.ts", "export {};"],
   ]), ["/src/main.ts"]);
-  const config = ParseCommandLine(["--noLib", "--module", "commonjs", "--moduleResolution", "classic", "/src/main.ts"], input.host);
-  if (config === undefined) throw new Error("The SDK did not parse the classic-mode control.");
+  const commonJs = ["--noLib", "--module", "commonjs", "--moduleResolution", "classic"];
+  const config = ParseCommandLine([...commonJs, "--resolvePackageJsonExports", "false",
+    "--resolvePackageJsonImports", "false", "/src/main.ts"], input.host);
+  if (config === undefined) throw new Error("The SDK did not parse the explicit mode-insensitive control.");
+  assert.equal(config.Errors.length, 0, "the actual registered false package-map flags are valid command-line input");
   const result = prepareSourceImports({ host: input.host, config });
   assert.deepEqual(file(result, "/src/main.ts").references.map(facts), [["import", "./dep", "none", "/src/dep.ts"]]);
+  const defaults = ParseCommandLine([...commonJs, "/src/main.ts"], input.host);
+  if (defaults === undefined) throw new Error("The SDK did not parse the default package-map opposite.");
+  assert.equal(defaults.Errors.length, 0, "the actual CommonJS/Classic input remains valid before mode normalization");
+  const defaultResult = prepareSourceImports({ host: input.host, config: defaults });
+  assert.deepEqual(file(defaultResult, "/src/main.ts").references.map(facts), [["import", "./dep", "require", "/src/dep.ts"]],
+    "actual Classic normalizes to Bundler and default package maps preserve the CommonJS syntax mode");
   const skipped = prepareSourceImports(fixture(new Map([["/src/main.mts", [
     '/// <reference types="disabled-type-resolution" />', '/// <reference lib="es5" />', "export {};",
   ].join("\n")]]), ["/src/main.mts"], { noResolve: true }));
