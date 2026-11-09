@@ -1,9 +1,9 @@
 import type { FileReference, Node } from "../internal/ast/ast.js";
 import { Node_Text, SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports, SourceFile_JSDiagnostics, SourceFile_JSDocDiagnostics, SourceFile_Path, SourceFile_as_ast_HasFileName } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
-import { IsExportDeclaration, IsExternalModuleReference, IsImportDeclaration, IsImportTypeNode, IsJSDocImportTag, IsLiteralTypeNode } from "../internal/ast/generated/predicates.js";
+import { IsExportDeclaration, IsExternalModuleReference, IsImportDeclaration, IsImportEqualsDeclaration, IsImportTypeNode, IsJSImportDeclaration, IsLiteralTypeNode, IsModuleBlock, IsModuleDeclaration, IsSourceFile } from "../internal/ast/generated/predicates.js";
 import { Node_End } from "../internal/ast/spine.js";
-import { IsImportCall, IsRequireCall, WalkUpParenthesizedExpressions } from "../internal/ast/utilities.js";
+import { IsAmbientModule, IsImportCall, IsRequireCall, WalkUpParenthesizedExpressions } from "../internal/ast/utilities.js";
 import { getModeForTypeReferenceDirectiveInFile, getModeForUsageLocation, processAllProgramFiles } from "../internal/compiler/fileloader.js";
 import type { CompilerHost } from "../internal/compiler/host.js";
 import { projectReferenceFileMapper_getCompilerOptionsForFile } from "../internal/compiler/projectreferencefilemapper.js";
@@ -21,9 +21,13 @@ export interface SourceImportPreparationInput {
   readonly config: ParsedCommandLine;
 }
 
-export interface SourceImportPreparationReference {
-  readonly kind: "import" | "export" | "import-type" | "dynamic-import" | "require"
-    | "reference-path" | "reference-types" | "reference-lib";
+type SourceReferenceSyntax =
+  | { readonly kind: "import" | "export"; readonly placement: "statement" | "ambient-module" }
+  | { readonly kind: "import-type" | "require"; readonly placement: "statement" | "ambient-module" | "expression" }
+  | { readonly kind: "dynamic-import"; readonly placement: "expression" }
+  | { readonly kind: "reference-path" | "reference-types" | "reference-lib"; readonly placement: "directive" };
+
+export type SourceImportPreparationReference = SourceReferenceSyntax & {
   readonly specifier: string;
   readonly start: number;
   readonly length: number;
@@ -31,10 +35,11 @@ export interface SourceImportPreparationReference {
   readonly resolution:
     | { readonly kind: "resolved"; readonly fileName: string }
     | { readonly kind: "unresolved" };
-}
+};
 
 export interface SourceImportPreparationFile {
   readonly fileName: string;
+  readonly declarationFile: boolean;
   readonly references: readonly SourceImportPreparationReference[];
 }
 
@@ -44,13 +49,29 @@ export interface SourceImportPreparation {
   readonly diagnostics: readonly Diagnostic[];
 }
 
-function referenceKind(node: Node): SourceImportPreparationReference["kind"] {
+function statementPlacement(statement: Node): "statement" | "ambient-module" {
+  const owner = statement.Parent;
+  if (owner === undefined) throw new Error("The parser returned a source-import statement without its parent.");
+  if (IsSourceFile(owner)) return "statement";
+  const declaration = owner.Parent;
+  if (IsModuleBlock(owner) && declaration !== undefined && IsModuleDeclaration(declaration) && IsAmbientModule(declaration)) return "ambient-module";
+  throw new Error("The parser returned a source-import statement outside its source file or ambient module.");
+}
+
+function referenceSyntax(node: Node): SourceReferenceSyntax {
   const parent = node.Parent;
-  if (IsImportDeclaration(parent)) return "import";
-  if (IsExportDeclaration(parent)) return "export";
-  if (IsExternalModuleReference(parent) || IsRequireCall(parent, true)) return "require";
-  if (IsImportCall(WalkUpParenthesizedExpressions(parent))) return "dynamic-import";
-  if (IsJSDocImportTag(parent) || IsLiteralTypeNode(parent) && IsImportTypeNode(parent?.Parent)) return "import-type";
+  if (parent === undefined) throw new Error("The parser returned a source-import occurrence without its parent.");
+  if (IsImportDeclaration(parent)) return { kind: "import", placement: statementPlacement(parent) };
+  if (IsExportDeclaration(parent)) return { kind: "export", placement: statementPlacement(parent) };
+  if (IsJSImportDeclaration(parent)) return { kind: "import-type", placement: statementPlacement(parent) };
+  if (IsExternalModuleReference(parent)) {
+    const declaration = parent.Parent;
+    if (declaration === undefined || !IsImportEqualsDeclaration(declaration)) throw new Error("The parser returned a require reference without an import-equals declaration.");
+    return { kind: "require", placement: statementPlacement(declaration) };
+  }
+  if (IsRequireCall(parent, true)) return { kind: "require", placement: "expression" };
+  if (IsImportCall(WalkUpParenthesizedExpressions(parent))) return { kind: "dynamic-import", placement: "expression" };
+  if (IsLiteralTypeNode(parent) && IsImportTypeNode(parent?.Parent)) return { kind: "import-type", placement: "expression" };
   throw new Error("The parser returned an unsupported source-import parent.");
 }
 
@@ -112,7 +133,7 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       const mode = getModeForUsageLocation(fileName, metadata, node, options);
       const resolved = processed.resolvedModules.get(path)?.get({ Name: specifier, Mode: mode });
       const start = GetTokenPosOfNode(node, sourceFile, false);
-      references.push(Object.freeze({ kind: referenceKind(node), specifier, start,
+      references.push(Object.freeze({ ...referenceSyntax(node), specifier, start,
         length: Node_End(node) - start, mode: referenceMode(mode), resolution: resolution(resolved?.ResolvedFileName) }));
     }
     const addReference = (reference: FileReference | undefined,
@@ -141,7 +162,7 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
           }
         }
       }
-      references.push(Object.freeze({ kind, specifier: reference.FileName,
+      references.push(Object.freeze({ kind, placement: "directive", specifier: reference.FileName,
         start: TextRange_Pos(reference), length: TextRange_End(reference) - TextRange_Pos(reference),
         mode, resolution: resolution(resolvedFileName) }));
     };
@@ -149,7 +170,7 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
     for (const reference of sourceFile.TypeReferenceDirectives) addReference(reference, "reference-types");
     for (const reference of sourceFile.LibReferenceDirectives) addReference(reference, "reference-lib");
     references.sort((left, right) => left.start - right.start || left.length - right.length);
-    files.push(Object.freeze({ fileName, references: Object.freeze(references) }));
+    files.push(Object.freeze({ fileName, declarationFile: sourceFile.IsDeclarationFile, references: Object.freeze(references) }));
   }
   return Object.freeze({ roots: Object.freeze(roots), files: Object.freeze(files), diagnostics: Object.freeze(diagnostics) });
 }

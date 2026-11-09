@@ -37,7 +37,7 @@ function fixture(files: ReadonlyMap<string, string>, roots: readonly string[], o
   } };
   const [config, diagnostics] = GetParsedCommandLineOfConfigFile("/src/tsconfig.json", undefined, undefined, host, undefined);
   assert.equal(config !== undefined, true, "the real SDK parsed the fixture configuration");
-  assert.equal(diagnostics.length, 0, "configuration acquisition has no unrelated failures");
+  assert.equal((diagnostics ?? []).length, 0, "configuration acquisition has no unrelated failures, including genuine Go nil diagnostics");
   if (config === undefined) throw new Error("The fixture configuration was not parsed.");
   return { host, config, parsed };
 }
@@ -89,7 +89,10 @@ test("source import preparation preserves all eight authored reference families 
     ["dynamic-import", "./dynamic.js", "import", "/src/dynamic.ts"],
   ];
   assert.deepEqual(file(result, "/src/main.ts").references.map(facts), expected);
+  assert.deepEqual(file(result, "/src/main.ts").references.map(reference => reference.placement),
+    ["directive", "directive", "directive", "statement", "statement", "expression", "expression"]);
   assert.deepEqual(file(result, "/src/main.cjs").references.map(facts), [["require", "./required.cjs", "require", "/src/required.cjs"]]);
+  assert.deepEqual(file(result, "/src/main.cjs").references.map(reference => reference.placement), ["expression"]);
   const bytes = Buffer.from(main);
   for (const reference of file(result, "/src/main.ts").references) {
     const token = reference.kind.startsWith("reference-") ? reference.specifier : `"${reference.specifier}"`;
@@ -115,6 +118,82 @@ test("source import preparation omits nonliteral calls and retains their literal
     ["dynamic-import", "./dep.js", "import", "/src/dep.js"], ["require", "./dep.js", "require", "/src/dep.js"],
   ]);
   assert.equal(result.diagnostics.length, 0);
+});
+
+test("source import preparation derives statement, ambient, expression and directive placement from the genuine parser", () => {
+  const input = fixture(new Map([
+    ["/src/top.mts", [
+      'import type { Value } from "owned";', 'export type { Value } from "owned";',
+      'type Selected = import("owned").Value;', 'function load() { return import("owned"); }',
+    ].join("\n")],
+    ["/src/ambient.ts", [
+      '/// <reference path="./directive.d.ts" />', '/// <reference types="ambient" />', '/// <reference lib="es5" />',
+      'declare module "declared" {', 'import type { Value } from "owned";', 'export type { Value } from "owned";',
+      'import selected = require("owned");', 'type Selected = import("owned").Value;', '}',
+    ].join("\n")],
+    ["/src/static.cts", 'import selected = require("owned");'],
+    ["/src/calls.js", 'function load(name) { require(name); import(name); return require("owned"); }'],
+    ["/src/docs.js", '/** @import { Value } from "owned" */\nconst value = 1;'],
+    ["/src/directive.d.ts", "declare const directive: number;"],
+    ["/src/node_modules/@types/ambient/index.d.ts", "declare const ambient: number;"],
+    ["/libs/lib.es5.d.ts", "interface MinimalLibrary {}"],
+    ["/src/node_modules/owned/package.json", '{"name":"owned","version":"1.0.0","types":"index.d.ts"}'],
+    ["/src/node_modules/owned/index.d.ts", "export type Value = number;"],
+  ]), ["/src/top.mts", "/src/ambient.ts", "/src/static.cts", "/src/calls.js", "/src/docs.js"],
+  { noLib: false, lib: [], allowJs: true });
+  const result = prepareSourceImports(input);
+  const expected: readonly { readonly fileName: string; readonly references: readonly (readonly string[])[] }[] = [
+    { fileName: "/src/top.mts", references: [["import", "statement"], ["export", "statement"],
+      ["import-type", "expression"], ["dynamic-import", "expression"]] },
+    { fileName: "/src/ambient.ts", references: [["reference-path", "directive"], ["reference-types", "directive"],
+      ["reference-lib", "directive"], ["import", "ambient-module"], ["export", "ambient-module"],
+      ["require", "ambient-module"], ["import-type", "expression"]] },
+    { fileName: "/src/static.cts", references: [["require", "statement"]] },
+    { fileName: "/src/calls.js", references: [["require", "expression"]] },
+    { fileName: "/src/docs.js", references: [["import-type", "statement"]] },
+  ];
+  assert.deepEqual(result.files.map(candidate => candidate.fileName).sort(), [
+    "/src/top.mts", "/src/ambient.ts", "/src/static.cts", "/src/calls.js", "/src/docs.js", "/src/directive.d.ts",
+    "/src/node_modules/@types/ambient/index.d.ts", "/libs/lib.es5.d.ts", "/src/node_modules/owned/index.d.ts",
+  ].sort(), "the complete placement-control file domain is fixed independently");
+  for (const original of expected) {
+    assert.deepEqual(file(result, original.fileName).references.map(reference => [reference.kind, reference.placement]),
+      original.references, `${original.fileName} retains every expected kind/placement pair and excludes its opposites`);
+  }
+  const activationOccurrences = result.files.flatMap(candidate => candidate.references
+    .filter(reference => (reference.kind === "import" || reference.kind === "export") && reference.placement === "statement")
+    .map(reference => [candidate.fileName, reference.kind, reference.specifier]));
+  assert.deepEqual(activationOccurrences, [["/src/top.mts", "import", "owned"], ["/src/top.mts", "export", "owned"]],
+    "same-spelled ambient exports/imports, type expressions, calls, directives and JS doc imports do not broaden the original activation domain");
+});
+
+test("source import preparation retains the SDK declaration-file classification for project, resolved and library files", () => {
+  const input = fixture(new Map([
+    ["/src/main.ts", 'import type { Value } from "package-declaration"; import "./implementation.js";'],
+    ["/src/project.d.ts", "declare interface ProjectDeclaration {}"],
+    ["/src/implementation.ts", "export declare const implementation: number;"],
+    ["/src/node_modules/package-declaration/package.json", '{"name":"package-declaration","version":"1.0.0","types":"index.d.ts"}'],
+    ["/src/node_modules/package-declaration/index.d.ts", "export type Value = number;"],
+    ["/libs/lib.es5.d.ts", "interface MinimalLibrary {}"],
+  ]), ["/src/main.ts", "/src/project.d.ts"], { noLib: false, lib: ["es5"] });
+  const result = prepareSourceImports(input);
+  const expected = [
+    ["/libs/lib.es5.d.ts", true], ["/src/implementation.ts", false], ["/src/main.ts", false],
+    ["/src/node_modules/package-declaration/index.d.ts", true], ["/src/project.d.ts", true],
+  ];
+  assert.deepEqual(result.files.map(candidate => [candidate.fileName, candidate.declarationFile])
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0]))), expected,
+  "the complete independent domain distinguishes project declarations, reached declarations and libs from genuine source files");
+  for (const candidate of result.files) {
+    const original = input.parsed.find(source => SourceFile_FileName(source) === candidate.fileName);
+    if (original === undefined) throw new Error("The declaration flag lacks its actual parsed SDK source file.");
+    assert.equal(candidate.declarationFile, original.IsDeclarationFile,
+      `${candidate.fileName} retains the SDK flag instead of a Host suffix or role guess`);
+  }
+  assert.deepEqual(result.files.filter(candidate => !candidate.declarationFile).map(candidate => candidate.fileName).sort(),
+    ["/src/implementation.ts", "/src/main.ts"], "the original project-source filter excludes all three genuine declaration origins");
+  assert.equal(result.roots.some(root => root.fileName === "/src/project.d.ts" && root.state === "loaded"), true,
+    "a project declaration is still a loaded root, not a missing or dropped file");
 });
 
 test("source import preparation preserves complete deterministic shared and cyclic closure once", () => {
