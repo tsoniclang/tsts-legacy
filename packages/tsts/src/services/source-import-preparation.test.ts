@@ -131,7 +131,12 @@ test("source import preparation preserves complete deterministic shared and cycl
   assert.deepEqual(file(first, "/src/main.mts").references.map(reference => reference.specifier), ["./left.mjs", "./right.mjs", "./left.mjs"]);
   assert.equal(input.parsed.length, 4, "shared and cyclic sources are actually parsed once, not just deduplicated afterward");
   assert.equal(new Set(input.parsed.map(SourceFile_FileName)).size, 4);
-  assert.equal(Object.isFrozen(first) && Object.isFrozen(first.files) && Object.isFrozen(first.diagnostics), true);
+  assert.equal(Object.isFrozen(first) && Object.isFrozen(first.roots) && Object.isFrozen(first.files) && Object.isFrozen(first.diagnostics), true);
+  for (const root of first.roots) {
+    assert.equal(Object.isFrozen(root), true);
+    assert.equal(Reflect.defineProperty(root, "state", { value: "missing" }), false,
+      "the actual frozen root status rejects mutation");
+  }
   for (const candidate of first.files) {
     assert.equal(Object.isFrozen(candidate) && Object.isFrozen(candidate.references), true);
     for (const reference of candidate.references) {
@@ -193,20 +198,28 @@ test("source import preparation retains actual resolver diagnostics and duplicat
     "the actual SDK resolver reports ambiguous project-root attribution");
 });
 
-test("source import preparation preserves genuine parser, missing-root and directive diagnostics", () => {
+test("source import preparation preserves parser identity and factual loaded, empty and missing roots without inclusion messages", () => {
   const input = fixture(new Map([["/src/main.mts", [
     '/// <reference types="absent-types" />', '/// <reference lib="absent-library" />', "const = ;",
-  ].join("\n")]]), ["/src/main.mts", "/src/missing.ts"], { noLib: false, lib: [] });
+  ].join("\n")], ["/src/empty.ts", ""]]), ["/src/main.mts", "/src/missing.ts", "/src/empty.ts"], { noLib: false, lib: [] });
   const result = prepareSourceImports(input);
-  assert.equal(result.diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 6053), true, "missing root stays an actual SDK diagnostic");
-  assert.equal(result.diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 2688), true, "missing type directive is not silently ignored");
-  assert.equal(result.diagnostics.some(diagnostic => Diagnostic_Code(diagnostic) === 2726), true, "missing library directive is not silently ignored");
+  assert.deepEqual(result.roots, [
+    { fileName: "/src/main.mts", state: "loaded" },
+    { fileName: "/src/missing.ts", state: "missing" },
+    { fileName: "/src/empty.ts", state: "loaded" },
+  ], "root facts retain configuration order and distinguish a genuine empty file from an unread root");
+  assert.equal(result.files.some(candidate => candidate.fileName === "/src/missing.ts"), false);
+  assert.equal(result.files.some(candidate => candidate.fileName === "/src/empty.ts"), true);
+  assert.equal(result.diagnostics.some(diagnostic => [6053, 2688, 2726, 2727].includes(Diagnostic_Code(diagnostic))), false,
+    "Program-owned inclusion messages are left to the one real check");
   const parsed = input.parsed.find(source => SourceFile_FileName(source) === "/src/main.mts");
   assert.equal(parsed !== undefined, true);
   const parserDiagnostics = SourceFile_Diagnostics(parsed) ?? [];
   assert.equal(parserDiagnostics.length > 0, true, "the actual SDK parser observed the malformed declaration");
   assert.equal(parserDiagnostics.every(diagnostic => diagnostic !== undefined && result.diagnostics.includes(diagnostic)), true,
     "every genuine parser diagnostic is retained by identity, not rebuilt or suppressed");
+  assert.equal(result.diagnostics.every(diagnostic => parserDiagnostics.includes(diagnostic)), true,
+    "preparation did not manufacture another diagnostic owner");
   assert.deepEqual(file(result, "/src/main.mts").references.map(reference => reference.resolution.kind), ["unresolved", "unresolved"]);
 });
 

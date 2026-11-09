@@ -1,23 +1,19 @@
 import type { FileReference, Node } from "../internal/ast/ast.js";
 import { Node_Text, SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports, SourceFile_JSDiagnostics, SourceFile_JSDocDiagnostics, SourceFile_Path, SourceFile_as_ast_HasFileName } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
-import { NewCompilerDiagnostic, NewDiagnostic } from "../internal/ast/diagnostic.js";
 import { IsExportDeclaration, IsExternalModuleReference, IsImportDeclaration, IsImportTypeNode, IsJSDocImportTag, IsLiteralTypeNode } from "../internal/ast/generated/predicates.js";
 import { Node_End } from "../internal/ast/spine.js";
 import { IsImportCall, IsRequireCall, WalkUpParenthesizedExpressions } from "../internal/ast/utilities.js";
 import { getModeForTypeReferenceDirectiveInFile, getModeForUsageLocation, processAllProgramFiles } from "../internal/compiler/fileloader.js";
 import type { CompilerHost } from "../internal/compiler/host.js";
-import { processingDiagnosticKindExplainingFileInclude, processingDiagnostic_asIncludeExplainingDiagnostic } from "../internal/compiler/processingDiagnostic.js";
 import { projectReferenceFileMapper_getCompilerOptionsForFile } from "../internal/compiler/projectreferencefilemapper.js";
 import type { ResolutionMode } from "../internal/core/compileroptions.js";
 import { ResolutionModeCommonJS, ResolutionModeESM } from "../internal/core/compileroptions.js";
-import { TSTrue } from "../internal/core/tristate.js";
 import { TextRange_End, TextRange_Pos } from "../internal/core/text.js";
-import { Cannot_find_lib_definition_for_0, Cannot_find_type_definition_file_for_0 } from "../internal/diagnostics/generated/messages.js";
 import { GetTokenPosOfNode } from "../internal/scanner/scanner.js";
 import { GetLibFileName } from "../internal/tsoptions/enummaps.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
-import { ParsedCommandLine_GetConfigFileParsingDiagnostics } from "../internal/tsoptions/parsedcommandline.js";
+import { ParsedCommandLine_FileNames, ParsedCommandLine_GetConfigFileParsingDiagnostics } from "../internal/tsoptions/parsedcommandline.js";
 import { ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
 
 export interface SourceImportPreparationInput {
@@ -43,6 +39,7 @@ export interface SourceImportPreparationFile {
 }
 
 export interface SourceImportPreparation {
+  readonly roots: readonly { readonly fileName: string; readonly state: "loaded" | "missing" }[];
   readonly files: readonly SourceImportPreparationFile[];
   readonly diagnostics: readonly Diagnostic[];
 }
@@ -81,13 +78,6 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
     }
   };
   for (const diagnostic of ParsedCommandLine_GetConfigFileParsingDiagnostics(input.config)) addDiagnostic(diagnostic);
-  for (const diagnostic of processed.includeProcessor?.processingDiagnostics ?? []) {
-    if (diagnostic?.kind === processingDiagnosticKindExplainingFileInclude) {
-      const inclusion = processingDiagnostic_asIncludeExplainingDiagnostic(diagnostic);
-      if (inclusion === undefined) throw new Error("The file loader omitted an inclusion diagnostic.");
-      addDiagnostic(NewCompilerDiagnostic(inclusion.message, ...inclusion.args));
-    }
-  }
   for (const resolutions of processed.resolvedModules.values()) {
     for (const resolved of resolutions?.values() ?? []) {
       for (const diagnostic of resolved?.ResolutionDiagnostics ?? []) addDiagnostic(diagnostic);
@@ -100,6 +90,10 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   }
   const canonicalPath = (fileName: string): string => ToPath(fileName,
     input.host.GetCurrentDirectory(), input.host.FS().UseCaseSensitiveFileNames());
+  const roots = ParsedCommandLine_FileNames(input.config).map(fileName => Object.freeze({
+    fileName,
+    state: processed.filesByPath.get(canonicalPath(fileName)) === undefined ? "missing" : "loaded",
+  } satisfies SourceImportPreparation["roots"][number]));
   for (const sourceFile of processed.files) {
     if (sourceFile === undefined) throw new Error("The syntax-only file loader returned an absent source file.");
     const fileName = SourceFile_FileName(sourceFile);
@@ -135,10 +129,6 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
         mode = referenceMode(actualMode);
         const resolutions = processed.typeResolutionsInFile.get(path);
         resolvedFileName = resolutions?.get({ Name: reference.FileName, Mode: actualMode })?.ResolvedFileName;
-        if (resolutions?.has({ Name: reference.FileName, Mode: actualMode }) &&
-          (resolvedFileName === undefined || resolvedFileName === "")) {
-          addDiagnostic(NewDiagnostic(sourceFile, reference, Cannot_find_type_definition_file_for_0, reference.FileName));
-        }
       } else {
         const [name, known] = GetLibFileName(reference.FileName);
         if (known) {
@@ -149,9 +139,6 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
               break;
             }
           }
-        }
-        if (resolvedFileName === undefined && options?.NoLib !== TSTrue) {
-          addDiagnostic(NewDiagnostic(sourceFile, reference, Cannot_find_lib_definition_for_0, reference.FileName));
         }
       }
       references.push(Object.freeze({ kind, specifier: reference.FileName,
@@ -164,5 +151,5 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
     references.sort((left, right) => left.start - right.start || left.length - right.length);
     files.push(Object.freeze({ fileName, references: Object.freeze(references) }));
   }
-  return Object.freeze({ files: Object.freeze(files), diagnostics: Object.freeze(diagnostics) });
+  return Object.freeze({ roots: Object.freeze(roots), files: Object.freeze(files), diagnostics: Object.freeze(diagnostics) });
 }
