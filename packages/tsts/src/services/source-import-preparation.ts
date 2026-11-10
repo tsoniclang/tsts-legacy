@@ -124,11 +124,14 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
     const options = projectReferenceFileMapper_getCompilerOptionsForFile(
       processed.projectReferenceFileMapper, SourceFile_as_ast_HasFileName(sourceFile));
     const references: SourceImportPreparationReference[] = [];
+    const referenceNodes = new Set<Node>();
     for (const diagnostic of SourceFile_Diagnostics(sourceFile)) addDiagnostic(diagnostic);
     for (const diagnostic of SourceFile_JSDiagnostics(sourceFile) ?? []) addDiagnostic(diagnostic);
     for (const diagnostic of SourceFile_JSDocDiagnostics(sourceFile) ?? []) addDiagnostic(diagnostic);
     for (const node of SourceFile_Imports(sourceFile) ?? []) {
       if (node === undefined) throw new Error("The parser returned an absent source-import occurrence.");
+      if (referenceNodes.has(node)) continue;
+      referenceNodes.add(node);
       const specifier = Node_Text(node);
       const mode = getModeForUsageLocation(fileName, metadata, node, options);
       const resolved = processed.resolvedModules.get(path)?.get({ Name: specifier, Mode: mode });

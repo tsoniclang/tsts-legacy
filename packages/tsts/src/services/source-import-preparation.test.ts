@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { prepareSourceImports } from "../index.js";
 import type { SourceImportPreparation, SourceImportPreparationFile, SourceImportPreparationReference } from "../index.js";
 import type { SourceFile } from "../internal/ast/ast.js";
-import { SourceFile_Diagnostics, SourceFile_FileName } from "../internal/ast/ast.js";
+import { SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
 import { TextRange_End, TextRange_Pos } from "../internal/core/text.js";
 import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
@@ -73,6 +73,13 @@ test("source import preparation preserves all eight authored reference families 
     return range;
   });
   const main = authored.map(occurrence => occurrence.prefix + occurrence.token + occurrence.suffix).join("\n");
+  const repeatedToken = '"./required.cjs"';
+  const repeatedPrefix = "require(";
+  const repeatedStatement = `${repeatedPrefix}${repeatedToken});`;
+  const repeated = `${repeatedStatement}\n${repeatedStatement}`;
+  const repeatedRanges = [0, Buffer.byteLength(`${repeatedStatement}\n`)].map(start => ({
+    start: start + Buffer.byteLength(repeatedPrefix), length: Buffer.byteLength(repeatedToken),
+  }));
   const inputs = new Map([
     ["/src/package.json", '{"type":"module"}'], ["/src/main.ts", main],
     ["/src/ambient.d.ts", "declare const ambient: number;"],
@@ -82,11 +89,12 @@ test("source import preparation preserves all eight authored reference families 
     ["/src/import.ts", "export const value = 1;"], ["/src/export.ts", "export const value = 2;"],
     ["/src/type.ts", "export type Selected = number;"], ["/src/dynamic.ts", "export const dynamic = 3;"],
     ["/src/main.cjs", 'const loaded = require("./required.cjs");'], ["/src/required.cjs", "exports.value = 4;"],
+    ["/src/repeated.cjs", repeated],
   ]);
-  const input = fixture(inputs, ["/src/main.ts", "/src/main.cjs"], { noLib: false, lib: [], allowJs: true });
+  const input = fixture(inputs, ["/src/main.ts", "/src/main.cjs", "/src/repeated.cjs"], { noLib: false, lib: [], allowJs: true });
   const result = prepareSourceImports(input);
   const expectedFiles = ["/libs/lib.es5.d.ts", "/src/ambient.d.ts", "/src/node_modules/@types/ambient/index.d.ts",
-    "/src/import.ts", "/src/export.ts", "/src/type.ts", "/src/dynamic.ts", "/src/main.ts", "/src/required.cjs", "/src/main.cjs"];
+    "/src/import.ts", "/src/export.ts", "/src/type.ts", "/src/dynamic.ts", "/src/main.ts", "/src/required.cjs", "/src/main.cjs", "/src/repeated.cjs"];
   assert.deepEqual(result.files.map(candidate => candidate.fileName).sort(), [...expectedFiles].sort());
   assert.equal(result.diagnostics.length, 0);
   const expected = [
@@ -103,6 +111,19 @@ test("source import preparation preserves all eight authored reference families 
     ["directive", "directive", "directive", "statement", "statement", "expression", "expression"]);
   assert.deepEqual(file(result, "/src/main.cjs").references.map(facts), [["require", "./required.cjs", "require", "/src/required.cjs"]]);
   assert.deepEqual(file(result, "/src/main.cjs").references.map(reference => reference.placement), ["expression"]);
+  assert.deepEqual(file(result, "/src/repeated.cjs").references.map(facts), [
+    ["require", "./required.cjs", "require", "/src/required.cjs"],
+    ["require", "./required.cjs", "require", "/src/required.cjs"],
+  ], "equal specifiers in distinct authored calls are two occurrences, not one resolver-cache entry");
+  assert.deepEqual(file(result, "/src/repeated.cjs").references.map(reference => reference.placement), ["expression", "expression"]);
+  assert.deepEqual(file(result, "/src/repeated.cjs").references.map(reference => ({ start: reference.start, length: reference.length })),
+    repeatedRanges, "both distinct authored ranges survive repeated parser visits to either literal");
+  for (const [fileName, count] of [["/src/main.cjs", 1], ["/src/repeated.cjs", 2]] as const) {
+    const parsed = input.parsed.find(source => SourceFile_FileName(source) === fileName);
+    if (parsed === undefined) throw new Error(`The genuine authored require source ${fileName} was not parsed.`);
+    assert.equal(new Set(SourceFile_Imports(parsed)).size, count,
+      "the projected occurrence count is the actual distinct parser-node domain, not substring or specifier multiplicity");
+  }
   const parsedMain = input.parsed.find(source => SourceFile_FileName(source) === "/src/main.ts");
   if (parsedMain === undefined) throw new Error("The expected genuine main source was not parsed.");
   const directiveGroups = [parsedMain.ReferencedFiles, parsedMain.TypeReferenceDirectives, parsedMain.LibReferenceDirectives];
