@@ -8,6 +8,7 @@ import type { SourceImportPreparation, SourceImportPreparationFile, SourceImport
 import type { SourceFile } from "../internal/ast/ast.js";
 import { SourceFile_Diagnostics, SourceFile_FileName } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
+import { TextRange_End, TextRange_Pos } from "../internal/core/text.js";
 import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
 import { ParseCommandLine } from "../internal/tsoptions/commandlineparser.js";
 import { createCompilerHost, createInMemoryFileSystem } from "./embedding-host.js";
@@ -56,15 +57,22 @@ function facts(reference: SourceImportPreparationReference) {
 }
 
 test("source import preparation preserves all eight authored reference families and genuine resolution", () => {
-  const main = [
-    '/// <reference path="./ambient.d.ts" />',
-    '/// <reference types="ambient" />',
-    '/// <reference lib="es5" />',
-    'import { value } from "./import.js";',
-    'export { value } from "./export.js";',
-    'type Selected = import("./type.js").Selected;',
-    'const loaded = import("./dynamic.js");',
-  ].join("\n");
+  const authored = [
+    { prefix: '/// <reference path="', token: "./ambient.d.ts", suffix: '" />' },
+    { prefix: '/// <reference types="', token: "ambient", suffix: '" />' },
+    { prefix: '/// <reference lib="', token: "es5", suffix: '" />' },
+    { prefix: "import { value } from ", token: '"./import.js"', suffix: ";" },
+    { prefix: "export { value } from ", token: '"./export.js"', suffix: ";" },
+    { prefix: "type Selected = import(", token: '"./type.js"', suffix: ").Selected;" },
+    { prefix: "const loaded = import(", token: '"./dynamic.js"', suffix: ");" },
+  ];
+  let byteOffset = 0;
+  const expectedRanges = authored.map(occurrence => {
+    const range = { start: byteOffset + Buffer.byteLength(occurrence.prefix), length: Buffer.byteLength(occurrence.token) };
+    byteOffset += Buffer.byteLength(occurrence.prefix + occurrence.token + occurrence.suffix) + 1;
+    return range;
+  });
+  const main = authored.map(occurrence => occurrence.prefix + occurrence.token + occurrence.suffix).join("\n");
   const inputs = new Map([
     ["/src/package.json", '{"type":"module"}'], ["/src/main.ts", main],
     ["/src/ambient.d.ts", "declare const ambient: number;"],
@@ -95,12 +103,25 @@ test("source import preparation preserves all eight authored reference families 
     ["directive", "directive", "directive", "statement", "statement", "expression", "expression"]);
   assert.deepEqual(file(result, "/src/main.cjs").references.map(facts), [["require", "./required.cjs", "require", "/src/required.cjs"]]);
   assert.deepEqual(file(result, "/src/main.cjs").references.map(reference => reference.placement), ["expression"]);
-  const bytes = Buffer.from(main);
-  for (const reference of file(result, "/src/main.ts").references) {
-    const token = reference.kind.startsWith("reference-") ? reference.specifier : `"${reference.specifier}"`;
-    assert.equal(reference.start, bytes.indexOf(token), `${reference.kind} retains its actual authored byte start`);
-    assert.equal(reference.length, Buffer.byteLength(token), `${reference.kind} retains its complete authored byte range`);
+  const parsedMain = input.parsed.find(source => SourceFile_FileName(source) === "/src/main.ts");
+  if (parsedMain === undefined) throw new Error("The expected genuine main source was not parsed.");
+  const directiveGroups = [parsedMain.ReferencedFiles, parsedMain.TypeReferenceDirectives, parsedMain.LibReferenceDirectives];
+  assert.deepEqual(directiveGroups.map(group => group.length), [1, 1, 1], "every independently authored directive has one genuine parser record");
+  const prepared = file(result, "/src/main.ts").references;
+  for (const [index, group] of directiveGroups.entries()) {
+    const directive = group[0];
+    const expectedRange = expectedRanges[index];
+    const reference = prepared[index];
+    if (directive === undefined || expectedRange === undefined || reference === undefined) {
+      throw new Error("The complete authored directive range domain is absent.");
+    }
+    assert.deepEqual({ start: TextRange_Pos(directive), length: TextRange_End(directive) - TextRange_Pos(directive) },
+      expectedRange, `directive ${index} belongs to its own authored attribute, not an earlier equal substring`);
+    assert.equal(reference.start, TextRange_Pos(directive), `directive ${index} retains the genuine parser's own range start`);
+    assert.equal(reference.length, TextRange_End(directive) - TextRange_Pos(directive), `directive ${index} retains the genuine parser's own full range`);
   }
+  assert.deepEqual(prepared.map(reference => ({ start: reference.start, length: reference.length })), expectedRanges,
+    "the complete occurrence-specific UTF8 vector retains interior directive and quoted ordinary spans");
   assert.equal(input.parsed.every(source => !source.isBound.Load()), true,
     "every genuine parsed source remains unbound, without checked semantic state");
 });
