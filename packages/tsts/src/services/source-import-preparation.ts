@@ -90,8 +90,8 @@ function referenceMode(mode: ResolutionMode): SourceImportPreparationReference["
 
 function resolution(fileName: string | undefined): SourceImportPreparationReference["resolution"] {
   return fileName === undefined || fileName === ""
-    ? Object.freeze({ kind: "unresolved" })
-    : Object.freeze({ kind: "resolved", fileName });
+    ? { kind: "unresolved" }
+    : { kind: "resolved", fileName };
 }
 
 export function prepareSourceImports(input: SourceImportPreparationInput): SourceImportPreparation {
@@ -121,7 +121,7 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   // The directory of the SDK's library files as the caller's host states it: the loader's own default library
   // path, from the same two host values.
   const defaultLibraryPath = GetNormalizedAbsolutePath(input.host.DefaultLibraryPath(), input.host.GetCurrentDirectory());
-  const roots = ParsedCommandLine_FileNames(input.config).map(fileName => Object.freeze({
+  const roots = ParsedCommandLine_FileNames(input.config).map(fileName => ({
     fileName,
     state: processed.filesByPath.get(canonicalPath(fileName)) === undefined ? "missing" : "loaded",
   } satisfies SourceImportPreparation["roots"][number]));
@@ -154,8 +154,8 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       const mode = getModeForUsageLocation(fileName, metadata, node, options);
       const resolved = processed.resolvedModules.get(path)?.get({ Name: specifier, Mode: mode });
       const range = utf16Range(GetTokenPosOfNode(node, sourceFile, false), Node_End(node));
-      references.push(Object.freeze({ ...referenceSyntax(node), specifier, start: range.start,
-        length: range.length, mode: referenceMode(mode), resolution: resolution(resolved?.ResolvedFileName) }));
+      references.push({ ...referenceSyntax(node), specifier, start: range.start,
+        length: range.length, mode: referenceMode(mode), resolution: resolution(resolved?.ResolvedFileName) });
     }
     const addReference = (reference: FileReference | undefined,
       kind: "reference-path" | "reference-types" | "reference-lib"): void => {
@@ -190,15 +190,15 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
         }
       }
       const range = utf16Range(TextRange_Pos(reference), TextRange_End(reference));
-      references.push(Object.freeze({ kind, placement: "directive", specifier: reference.FileName,
+      references.push({ kind, placement: "directive", specifier: reference.FileName,
         start: range.start, length: range.length,
-        mode, resolution: resolution(resolvedFileName) }));
+        mode, resolution: resolution(resolvedFileName) });
     };
     for (const reference of sourceFile.ReferencedFiles) addReference(reference, "reference-path");
     for (const reference of sourceFile.TypeReferenceDirectives) addReference(reference, "reference-types");
     for (const reference of sourceFile.LibReferenceDirectives) addReference(reference, "reference-lib");
     references.sort((left, right) => left.start - right.start || left.length - right.length);
-    files.push(Object.freeze({ fileName, declarationFile: sourceFile.IsDeclarationFile, references: Object.freeze(references) }));
+    files.push({ fileName, declarationFile: sourceFile.IsDeclarationFile, references });
   }
-  return Object.freeze({ roots: Object.freeze(roots), files: Object.freeze(files), diagnostics: Object.freeze(diagnostics) });
+  return { roots, files, diagnostics };
 }
