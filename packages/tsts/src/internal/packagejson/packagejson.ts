@@ -254,7 +254,7 @@ export interface Fields {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/packagejson/packagejson.go::func::Parse","kind":"func","status":"implemented","sigHash":"4c992a9162975647c2c2d8ab3d90f1b0489695032a2311c82949afc07c4e45d3","bodyHash":"fa47abb81da5366c35b09cf693a9e82c424f521ee3c68a5f2b256a297aa43b12"}
- * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"The Go body unmarshals the bytes once into Fields with the pinned JSON library. Here the bytes are decoded once (keeping a leading byte-order mark, which JSON.parse rejects, and refusing ill-formed UTF-8, as the library does) and parsed once by JSON.parse, which takes the last of duplicate names as AllowDuplicateNames does; decodeFields builds the fields from that one parse. JSON.parse accepts two inputs the library refuses, and both are refused here before the fields are built: an escaped surrogate that is not half of an escaped pair, in any string token of the text, member names and the values of discarded duplicate names included (one pass over the string tokens of the accepted text, since the parsed value no longer holds a discarded duplicate); and a root that is an array, a string, a number or a boolean (null and an object are accepted, as by the library). An earlier form parsed the same bytes twice, each time with a decoder that removed a mark."}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"The Go body unmarshals the bytes once into Fields with the pinned JSON library. Here the bytes are decoded once (keeping a leading byte-order mark, which JSON.parse rejects, and refusing ill-formed UTF-8, as the library does) and parsed once by JSON.parse, which takes the last of duplicate names as AllowDuplicateNames does; decodeFields builds the fields from that one parse. JSON.parse accepts two inputs the library refuses, and both are refused here before the fields are built: an escaped surrogate that is not half of an escaped pair, in any string token of the text, member names and the values of discarded duplicate names included (one pass over the string tokens of the accepted text, since the parsed value no longer holds a discarded duplicate); and a root that is an array, a string, a number or a boolean (null and an object are accepted, as by the library). The order is the library's: an array root is refused before its strings are read; for any other root the string tokens are checked first, then the root's kind. An earlier form parsed the same bytes twice, each time with a decoder that removed a mark."}
  *
  * Go source:
  * func Parse(data []byte) (Fields, error) {
@@ -271,11 +271,16 @@ export function Parse(data: GoSlice<byte>): [Fields, GoError] {
   try {
     const text = new globalThis.TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new globalThis.Uint8Array(data as Array<number>));
     const value: unknown = globalThis.JSON.parse(text);
+    // The library's order: an array root is refused at its first token, before any string in it is read; for every
+    // other root the string tokens are read first, then the root's kind decides.
+    if (globalThis.Array.isArray(value)) {
+      return [{}, new globalThis.Error(`cannot unmarshal a JSON array into package.json fields`)];
+    }
     const unpaired = firstUnpairedSurrogateEscape(text);
     if (unpaired >= 0) {
       return [{}, new globalThis.Error(`invalid surrogate pair in a string at offset ${unpaired}`)];
     }
-    if (value !== null && (typeof value !== "object" || globalThis.Array.isArray(value))) {
+    if (value !== null && typeof value !== "object") {
       return [{}, new globalThis.Error(`cannot unmarshal a JSON ${jsonRootKind(value)} into package.json fields`)];
     }
     return [decodeFields(value), undefined];
@@ -370,9 +375,6 @@ function hexUnit(text: string, start: number): number {
 }
 
 function jsonRootKind(value: unknown): string {
-  if (globalThis.Array.isArray(value)) {
-    return "array";
-  }
   return typeof value === "string" ? "string" : typeof value === "number" ? "number" : "boolean";
 }
 

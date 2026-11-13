@@ -147,15 +147,19 @@ test("a discarded duplicate value is checked, and the retained value is still th
   assert.deepEqual(refused, {});
 });
 
-test("the string tokens are checked before the root's kind", () => {
-  // A root array holding a lone high escape has both errors. Parse checks the string tokens first, so the error is the
-  // token one, at the offset of the escape's backslash (2). (The pinned library, observed in run 24 row F8, names the root kind for this input: it refuses the
-  // array at its first token, before it reads the string. Only whether there is an error is read by Parse's callers.)
-  const [fields, error] = Parse(bytes('["\\ud800"]'));
-  assert.deepEqual(fields, {});
-  assert.match(String(error?.message), /^invalid surrogate pair in a string at offset 2$/);
-  const [, rootError] = Parse(bytes('["ok"]'));
-  assert.match(String(rootError?.message), /^cannot unmarshal a JSON array into package\.json fields$/);
+test("the order of the two errors is the pinned library's: an array root first, otherwise the string tokens", () => {
+  // Observed on the pin, run 24: F8 (an array holding a lone high escape) names the array; F9 (a string root that is
+  // a lone high escape) names the surrogate; F10 (an array holding a valid string) names the array.
+  const [arrayFields, arrayError] = Parse(bytes('["\\ud800"]'));
+  assert.deepEqual(arrayFields, {});
+  assert.match(String(arrayError?.message), /^cannot unmarshal a JSON array into package\.json fields$/);
+  const [stringFields, stringError] = Parse(bytes('"\\ud800"'));
+  assert.deepEqual(stringFields, {});
+  assert.match(String(stringError?.message), /^invalid surrogate pair in a string at offset 1$/);
+  const [, validArrayError] = Parse(bytes('["ok"]'));
+  assert.match(String(validArrayError?.message), /^cannot unmarshal a JSON array into package\.json fields$/);
+  const [, numberError] = Parse(bytes("1"));
+  assert.match(String(numberError?.message), /^cannot unmarshal a JSON number into package\.json fields$/);
 });
 
 test("a root that is not an object or null is refused with no fields", () => {
