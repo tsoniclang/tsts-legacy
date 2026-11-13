@@ -371,11 +371,16 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
     const rootFiles: GoSlice<string> = options.rootFiles !== undefined
       ? options.rootFiles.map(fileName => GetNormalizedAbsolutePath(fileName, options.currentDirectory))
       : [...inferRootFiles(files, GetSupportedExtensions(compilerOptions, []).flat())];
-    config = NewParsedCommandLine(compilerOptions, rootFiles, {
+    const supplied = NewParsedCommandLine(compilerOptions, rootFiles, {
       UseCaseSensitiveFileNames: fileSystem.UseCaseSensitiveFileNames(),
       CurrentDirectory: options.currentDirectory,
     });
-    config!.Errors = [...optionErrors];
+    if (supplied === undefined) {
+      throw new Error("NewParsedCommandLine returned no parsed command line.");
+    }
+    // The reader's errors are the parsed command line's errors (the constructor starts them empty).
+    supplied.Errors = [...optionErrors];
+    config = supplied;
   }
   return createCompilerSession({
     programOptions: {

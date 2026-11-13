@@ -182,6 +182,51 @@ export type { Node, SourceFile } from "./internal/ast/ast.js";
 export type { Diagnostic } from "./internal/ast/diagnostic.js";
 export type { Symbol } from "./internal/ast/symbol.js";
 export * from "./internal/ast/symbolflags.js";
+export type { NodeFlags } from "./internal/ast/generated/flags.js";
+export {
+  NodeFlagsNone,
+  NodeFlagsLet,
+  NodeFlagsConst,
+  NodeFlagsUsing,
+  NodeFlagsReparsed,
+  NodeFlagsSynthesized,
+  NodeFlagsOptionalChain,
+  NodeFlagsExportContext,
+  NodeFlagsContainsThis,
+  NodeFlagsHasImplicitReturn,
+  NodeFlagsHasExplicitReturn,
+  NodeFlagsDisallowInContext,
+  NodeFlagsYieldContext,
+  NodeFlagsDecoratorContext,
+  NodeFlagsAwaitContext,
+  NodeFlagsDisallowConditionalTypesContext,
+  NodeFlagsThisNodeHasError,
+  NodeFlagsJavaScriptFile,
+  NodeFlagsThisNodeOrAnySubNodesHasError,
+  NodeFlagsHasAsyncFunctions,
+  NodeFlagsPossiblyContainsDynamicImport,
+  NodeFlagsPossiblyContainsImportMeta,
+  NodeFlagsHasJSDoc,
+  NodeFlagsJSDoc,
+  NodeFlagsAmbient,
+  NodeFlagsInWithStatement,
+  NodeFlagsJsonFile,
+  NodeFlagsPossiblyContainsDeprecatedTag,
+  NodeFlagsUnreachable,
+  NodeFlagsReparserTransformedLiteral,
+  NodeFlagsBlockScoped,
+  NodeFlagsConstant,
+  NodeFlagsAwaitUsing,
+  NodeFlagsReachabilityCheckFlags,
+  NodeFlagsReachabilityAndEmitFlags,
+  NodeFlagsContextFlags,
+  NodeFlagsTypeExcludesFlags,
+  NodeFlagsPermanentlySetIncrementalFlags,
+  NodeFlagsIdentifierHasExtendedUnicodeEscape,
+  NodeFlagsIdentifierIsInJSDocNamespace,
+  NodeFlagsNestedNamespace,
+} from "./internal/ast/generated/flags.js";
+export * from "./internal/ast/tokenflags.js";
 export type { ContextFlags, Signature, Type } from "./internal/checker/types.js";
 export type {
   ResolvedCallApplicationEvidence,
