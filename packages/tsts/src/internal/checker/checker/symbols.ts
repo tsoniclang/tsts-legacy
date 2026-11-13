@@ -62,7 +62,7 @@ import { NaN as JsNumber_NaN, Number_IsInf, Number_IsNaN } from "../../jsnum/jsn
 import { FromString, Number_String } from "../../jsnum/string.js";
 import type { TypeMapper } from "../mapper.js";
 import { Checker_combineTypeMappers, appendTypeMapping, newTypeMapper, newSimpleTypeMapper } from "../mapper.js";
-import type { AccessFlags, AliasSymbolLinks, ContextFlags, DeclaredTypeLinks, DeferredSymbolLinks, IndexedAccessType, IndexFlags, IndexInfo, IndexType, InterfaceType, LateBoundLinks, MembersAndExportsLinks, MembersOrExportsResolutionKind, ModuleSymbolLinks, NodeLinks, ObjectFlags, Signature, SourceFileLinks, StructuredType, SymbolFormatFlags, SymbolReferenceLinks, Type, TypeAlias, TypeAliasLinks, TypeData, TypeFlags, TypeReference, UniqueESSymbolType, ValueSymbolLinks, SymbolNodeLinks, TypeNodeLinks, MappedSymbolLinks } from "../types.js";
+import type { AccessFlags, AliasSymbolLinks, ContextFlags, DeclaredTypeLinks, DeferredSymbolLinks, ExportTypeLinks, IndexedAccessType, IndexFlags, IndexInfo, IndexType, InterfaceType, LateBoundLinks, MembersAndExportsLinks, MembersOrExportsResolutionKind, ModuleSymbolLinks, NodeLinks, ObjectFlags, Signature, SourceFileLinks, StructuredType, SymbolFormatFlags, SymbolReferenceLinks, Type, TypeAlias, TypeAliasLinks, TypeData, TypeFlags, TypeReference, UniqueESSymbolType, ValueSymbolLinks, SymbolNodeLinks, TypeNodeLinks, MappedSymbolLinks } from "../types.js";
 import type { Checker, CheckMode, DeclarationSpaces, DiscriminatedContextualTypeKey, ExportCollisionTable, keyBuilder, MappedTypeNameTypeKind, NonExistentPropertyKey, ObjectLiteralDiscriminator, TypeResolution, TypeSystemEntity, TypeSystemPropertyName, WideningContext, CachedTypeKey } from "./state.js";
 import { SymbolFlagsNone, SymbolFlagsAll, SymbolFlagsAlias, SymbolFlagsClassMember, SymbolFlagsExportValue, SymbolFlagsLateBindingContainer, SymbolFlagsModule, SymbolFlagsModuleMember, SymbolFlagsReplaceableByMethod, SymbolFlagsType, SymbolFlagsValue, SymbolFlagsNamespace, SymbolFlagsTransient, SymbolFlagsBlockScopedVariable, SymbolFlagsClass, SymbolFlagsEnum, SymbolFlagsFunction, SymbolFlagsFunctionScopedVariable, SymbolFlagsAssignment, SymbolFlagsRegularEnum, SymbolFlagsConstEnum, SymbolFlagsVariable, SymbolFlagsInterface, SymbolFlagsTypeParameter, SymbolFlagsTypeAlias, SymbolFlagsGlobalLookup, SymbolFlagsMethod, SymbolFlagsProperty, SymbolFlagsOptional, SymbolFlagsSetAccessor, SymbolFlagsGetAccessor, SymbolFlagsAccessor, SymbolFlagsEnumMember, NodeFlagsAwaitUsing, NodeFlagsConstant, NodeFlagsNone, NodeFlagsOptionalChain, NodeFlagsInWithStatement, SymbolFlagsValueModule, SymbolFlagsNamespaceModule, SymbolFlagsConstEnumOnlyModule, SymbolFlagsObjectLiteral, SymbolFlagsBlockScoped, SymbolFlagsModuleExports, SymbolFlagsTypeLiteral, SymbolFlagsPrototype, SymbolFlagsPropertyOrAccessor } from "../../ast/generated/flags.js";
 import { NodeFlagsPossiblyContainsImportMeta, NodeFlagsBlockScoped } from "../../ast/generated/flags.js";
@@ -10268,9 +10268,26 @@ export function Checker_resolveExternalModuleSymbol(receiver: GoPtr<Checker>, mo
   return moduleSymbol;
 }
 
+// The symbol cloneTypeAsModuleType made for an import declaration or import call, made once. The Go body makes a new
+// one on every call: an alias's final target and its immediate target were two symbols, and every resolution of a
+// copy made a further copy, so no walk that remembers symbols by identity could close a ring that passes through one.
+function moduleTypeSymbolOfImport(receiver: GoPtr<Checker>, source: GoPtr<Symbol>, moduleType: GoPtr<Type>, referenceParent: GoPtr<Node>): GoPtr<Symbol> {
+  const links = (LinkStore_Get(receiver!.nodeLinks, referenceParent) as GoPtr<NodeLinks>)!;
+  if (links.moduleTypeSymbol !== undefined && moduleTypeSymbolSource(receiver, links.moduleTypeSymbol) === source) {
+    return links.moduleTypeSymbol;
+  }
+  links.moduleTypeSymbol = Checker_cloneTypeAsModuleType(receiver, source, moduleType, referenceParent);
+  return links.moduleTypeSymbol;
+}
+
+// The symbol a module-type symbol was made from (the link cloneTypeAsModuleType writes).
+function moduleTypeSymbolSource(receiver: GoPtr<Checker>, moduleTypeSymbol: GoPtr<Symbol>): GoPtr<Symbol> {
+  return LinkStore_Get<GoPtr<Symbol>, ExportTypeLinks>(receiver!.exportTypeLinks as GoPtr<LinkStore<GoPtr<Symbol>, ExportTypeLinks>>, moduleTypeSymbol)!.target;
+}
+
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveESModuleSymbol","kind":"method","status":"implemented","sigHash":"f1615f54cc3d30a16ee2016cd9adb905eb5bc943cb2fe5e85f9f5b6ddfca7b21","bodyHash":"d983f72f8a259ae1090a73e4460a1d5f7be6ad14467c98dddbafc07b33e191da"}
- * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Return the checker's unknown symbol unchanged when the module's export= alias does not resolve. For a namespace import or import call, in an ECMAScript-format file, of a CommonJS-format file, the pinned Go body passes the unknown symbol to cloneTypeAsModuleType, which makes a new declaration-less symbol named unknown on every call; no later identity test against unknownSymbol recognizes it, and resolveAliasWithDeprecationCheck then never returns. TypeScript returns the symbol unchanged on this path (its branch for a target that is neither a module nor a variable, which the Go body dropped together with its diagnostic)."}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Return the checker's unknown symbol unchanged when the module's export= alias does not resolve. For a namespace import or import call, in an ECMAScript-format file, of a CommonJS-format file, the pinned Go body passes the unknown symbol to cloneTypeAsModuleType, which makes a new declaration-less symbol named unknown on every call; no later identity test against unknownSymbol recognizes it, and resolveAliasWithDeprecationCheck then never returns. TypeScript returns the symbol unchanged on this path (its branch for a target that is neither a module nor a variable, which the Go body dropped together with its diagnostic). Second change: the symbol cloneTypeAsModuleType makes for an import declaration or import call is made once and kept on that node's links. The Go body makes a new one on every call, so an alias's final target and immediate target were two symbols and every resolution of such a symbol made a further one; with import * as x merged with a function and exported with export= in two files that name each other, the loop of getSymbolFlagsEx then meets a new symbol on every iteration, its seen set never matches, and the check of the import does not return."}
  *
  * Go source:
  * func (c *Checker) resolveESModuleSymbol(moduleSymbol *ast.Symbol, node *ast.Node, moduleSpecifier *ast.Node) *ast.Symbol {
@@ -10344,6 +10361,10 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
       namespaceImport = GetNamespaceDeclarationNode(referenceParent);
     }
     if (namespaceImport !== undefined || IsImportCall(referenceParent)) {
+      const made = (LinkStore_Get(receiver!.nodeLinks, referenceParent) as GoPtr<NodeLinks>)!.moduleTypeSymbol;
+      if (made !== undefined && moduleTypeSymbolSource(receiver, made) === symbol_) {
+        return made;
+      }
       let reference: GoPtr<Node>;
       if (IsImportCall(referenceParent)) {
         reference = Node_Arguments(referenceParent)![0];
@@ -10353,7 +10374,7 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
       const typ = Checker_getTypeOfSymbol(receiver, symbol_);
       const defaultOnlyType = Checker_getTypeWithSyntheticDefaultOnly(receiver, typ, symbol_, moduleSymbol, reference);
       if (defaultOnlyType !== undefined) {
-        return Checker_cloneTypeAsModuleType(receiver, symbol_, defaultOnlyType, referenceParent);
+        return moduleTypeSymbolOfImport(receiver, symbol_, defaultOnlyType, referenceParent);
       }
       const targetFile = moduleSymbol !== undefined ? Find(moduleSymbol!.Declarations ?? [], IsSourceFile) : undefined;
       const usageMode = Checker_getEmitSyntaxForModuleSpecifierExpression(receiver, reference);
@@ -10363,7 +10384,7 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
       }
       if (exportModuleDotExportsSymbol !== undefined) {
         if (Checker_hasSignatures(receiver, typ)) {
-          return Checker_cloneTypeAsModuleType(receiver, exportModuleDotExportsSymbol, typ, referenceParent);
+          return moduleTypeSymbolOfImport(receiver, exportModuleDotExportsSymbol, typ, referenceParent);
         }
         return exportModuleDotExportsSymbol;
       }
@@ -10376,7 +10397,7 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
         } else {
           moduleType = Checker_createDefaultPropertyWrapperForModule(receiver, symbol_, symbol_!.Parent, undefined);
         }
-        return Checker_cloneTypeAsModuleType(receiver, symbol_, moduleType, referenceParent);
+        return moduleTypeSymbolOfImport(receiver, symbol_, moduleType, referenceParent);
       }
     }
   }

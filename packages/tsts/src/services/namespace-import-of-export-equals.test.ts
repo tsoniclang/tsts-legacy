@@ -173,3 +173,39 @@ test("the opposite of a ring: a chain of twelve re-exports is neither refused no
   assert.deepEqual(checked.errors, ["u.mts(4,14): error TS2322: Type 'number' is not assignable to type 'string'."]);
   assert.deepEqual(checked.suggestions, []);
 });
+
+// A ring through symbols the checker makes for an import. Each member is an alias and a function at once, so the
+// module's exported value has call signatures and the checker makes a module-type symbol for every namespace import of
+// it. That symbol is made once per import declaration; when a new one was made on every resolution, no walk that
+// remembers symbols could close this ring.
+test("a ring of namespace imports, each merged with a function and exported with export =, is checked to the end and reported as circular", () => {
+  const circular = (extension: string): string[] => [
+    `m1.${extension}(1,13): error TS2303: Circular definition of import alias 'x'.`,
+    `m2.${extension}(1,13): error TS2303: Circular definition of import alias 'y'.`,
+  ];
+  const ring = (extension: string): Record<string, string> => ({
+    [`/case/m1.${extension}`]: "import * as x from \"./m2.cjs\";\ndeclare function x(): void;\nexport = x;\n",
+    [`/case/m2.${extension}`]: "import * as y from \"./m1.cjs\";\ndeclare function y(): void;\nexport = y;\n",
+  });
+  // An ECMAScript-format importer, and a CommonJS-format importer (the symbol is made for call signatures in both).
+  assert.deepEqual(check({ ...ring("cts"), "/case/u.mts": "import * as ns from \"./m1.cjs\";\nexport const v = ns;\n" }).errors, circular("cts"));
+  assert.deepEqual(check({ ...ring("cts"), "/case/u.cts": "import * as ns from \"./m1.cjs\";\nexport const v = ns;\n" }).errors, circular("cts"));
+  // The ring alone.
+  assert.deepEqual(check({ ...ring("cts"), "/case/u.mts": "export {};\n" }).errors, circular("cts"));
+});
+
+test("a use of a namespace import of a deprecated export = value is reported once, as a use of a default import of it is", () => {
+  const checked = check({
+    "/case/eq.d.cts": "/** @deprecated use another */\ndeclare const obj: { k: number };\nexport = obj;\n",
+    "/case/u.mts": "import * as ns from \"./eq.cjs\";\nimport d from \"./eq.cjs\";\nexport const v = [ns, d, ns.k];\n",
+  });
+  assert.deepEqual(checked.errors, []);
+  // Each use has one suggestion. When the import's final target and immediate target were two symbols, the walk over
+  // the second one added "'obj' is deprecated" at every use of ns.
+  assert.deepEqual(checked.suggestions, [
+    "eq.d.cts(3,10): suggestion TS6385: 'obj' is deprecated.",
+    "u.mts(3,19): suggestion TS6385: 'ns' is deprecated.",
+    "u.mts(3,23): suggestion TS6385: 'd' is deprecated.",
+    "u.mts(3,26): suggestion TS6385: 'ns' is deprecated.",
+  ]);
+});
