@@ -30,8 +30,8 @@ test("Parse mirrors upstream duplicate-name package.json behavior", () => {
 
 // Expected values are the pinned TS-Go packagejson.Parse's OBSERVED results on the same bytes, not derived here:
 // "R3" and "R3-2": R3's first and second sets (claude/packages/W3-2.step-and-marks.review.R3.evidence, go-parse.out
-// and second-set/go-parse.out); "W7-3", "W7-4" and "W7-5": W7's runs 21, 22 and 24 (SDK .temp/w7/manifest-probe,
-// go-parse.out, go-parse4.out and go-parse5.out). Each row: id, label, input bytes in hexadecimal, whether Parse reports an error, and the name and
+// and second-set/go-parse.out); "W7-3" to "W7-6": W7's runs 21, 22, 24 and 30 (SDK .temp/w7/manifest-probe,
+// go-parse.out, go-parse4.out, go-parse5.out and go-parse6.out). Each row: id, label, input bytes in hexadecimal, whether Parse reports an error, and the name and
 // types fields read back as [Valid, Null, Value].
 type PinnedRow = readonly [string, string, string, boolean, readonly [boolean, boolean, string], readonly [boolean, boolean, string]];
 const pinnedRows: readonly PinnedRow[] = [
@@ -123,6 +123,11 @@ const pinnedRows: readonly PinnedRow[] = [
   ["W7-5 8", "F8 root array holding a lone high escape", "5b225c7564383030225d", true, [false,false,""], [false,false,""]],
   ["W7-5 9", "F9 root string that is a lone high escape", "225c756438303022", true, [false,false,""], [false,false,""]],
   ["W7-5 10", "F10 root array holding a valid string", "5b226f6b225d", true, [false,false,""], [false,false,""]],
+  ["W7-6 1", "G1 array root with a trailing comma", "5b312c5d", true, [false,false,""], [false,false,""]],
+  ["W7-6 2", "G2 array root holding a lone high escape and a trailing comma", "5b225c7564383030222c5d", true, [false,false,""], [false,false,""]],
+  ["W7-6 3", "G3 array root that is not closed", "5b31", true, [false,false,""], [false,false,""]],
+  ["W7-6 4", "G4 object root with a trailing comma (opposite)", "7b226e616d65223a2278222c7d", true, [false,false,""], [false,false,""]],
+  ["W7-6 5", "G5 string root not closed", "22616263", true, [false,false,""], [false,false,""]],
 ];
 
 function field(value: { readonly Valid: boolean; readonly Null: boolean; readonly Value: string } | undefined): readonly [boolean, boolean, string] {
