@@ -286,7 +286,6 @@ test("getAliasStep over a module with export =: every binding form steps to the 
   assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "default as viaDefault").steps, [assignment, value]);
   assert.deepEqual(bindingOf("/case/xeq.mts", "NamespaceExport", "* as box").steps, [assignment, value]);
   assert.ok(ns.first?.kind === "symbol" && d.first?.kind === "symbol" && ns.first.symbol === d.first.symbol, "the namespace import and the default import step to one symbol");
-  assert.equal(ns.first?.kind === "symbol" && d.first?.kind === "symbol" && ns.first.symbol === d.first.symbol, true);
   assert.ok(stepsToSameSymbol(ns.checker.getAliasStep(ns.symbol), ns.first), "the step repeats to the same symbol");
 
   // A chain of two assignments: every hop is a step, for the namespace import as for the others.

@@ -375,13 +375,13 @@ test("receiver evidence identifies the intrinsic global object without spelling 
   for (const [index, node] of properties.entries()) {
     const info = memberAccess(queries.getResolvedPropertyAccessInfo(node));
     assert.equal(info?.receiver.intrinsic, expected[index]);
-    assert.equal(memberAccess(queries.getResolvedPropertyAccessInfo(node)), info);
+    assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(node)) === info, "a repeated read returns the cached record");
     assert.ok(Object.isFrozen(info?.receiver));
   }
   const element = findNodesByKind(index, KindElementAccessExpression)[0];
   const info = queries.getResolvedElementAccessInfo(element);
   assert.equal(info?.receiver.intrinsic, "global-object");
-  assert.equal(queries.getResolvedElementAccessInfo(element), info);
+  assert.ok(queries.getResolvedElementAccessInfo(element) === info, "a repeated element read returns the cached record");
 });
 
 test("property access info preserves compound read-write and optional-chain roles", () => {
@@ -568,7 +568,7 @@ test("named index access retains the exact index, writability and immutable sele
   const dynamic = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[3]));
   assert.ok(dynamic?.selectedIndex?.declaration);
   assert.equal(dynamic.selectedIndex.readonly, false);
-  assert.equal(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[4]))?.selectedIndex, undefined);
+  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[4]))?.selectedIndex === undefined, "a fixed member selects no index signature");
   const immutable = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[5]));
   assert.ok(immutable?.selectedIndex);
   assert.equal(immutable.selectedIndex.readonly, true);
@@ -576,7 +576,7 @@ test("named index access retains the exact index, writability and immutable sele
   const pattern = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[6]));
   assert.ok(pattern?.selectedIndex?.valueType);
   assert.equal(pattern.selectedIndex.valueType.flags & TypeFlagsNumber, TypeFlagsNumber);
-  assert.equal(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0])), mapped[0]);
+  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0])) === mapped[0], "a repeated read returns the cached record");
   assertCleanSemanticDiagnostics(program, index);
 });
 

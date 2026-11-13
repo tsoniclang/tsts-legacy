@@ -83,12 +83,12 @@ test("an access to the made default member through the import's own namespace bi
   for (const [text, binding] of [["n1.default", "* as n1"], ["n2.default", "* as n2"], ["(n2).default", "* as n2"], ["fn.default", "* as fn"], ["lib.default", "* as lib"]] as const) {
     const info = access(text);
     assert.equal(info?.kind, "module-exported-value", text);
-    assert.equal(info?.kind === "module-exported-value" ? info.target : undefined, program.stepOfBinding(binding), `${text} has the step of ${binding}`);
+    assert.ok(info?.kind === "module-exported-value" && info.target === program.stepOfBinding(binding), `${text} has the step of ${binding}`);
   }
   // The two modules of one exported type: one shared member symbol, two different boundaries, each its own module's.
   const one = access("n1.default");
   const two = access("n2.default");
-  assert.equal(program.checker.getSymbolAtLocation(program.nameOf(program.only("PropertyAccessExpression", "n1.default"))),
+  assert.ok(program.checker.getSymbolAtLocation(program.nameOf(program.only("PropertyAccessExpression", "n1.default"))) ===
     program.checker.getSymbolAtLocation(program.nameOf(program.only("PropertyAccessExpression", "n2.default"))), "the member symbol is one object");
   assert.deepEqual(program.declarationsOf(one?.kind === "module-exported-value" ? one.target : undefined), ["/case/one.d.cts:KindExportAssignment"]);
   assert.deepEqual(program.declarationsOf(two?.kind === "module-exported-value" ? two.target : undefined), ["/case/two.d.cts:KindExportAssignment"]);
@@ -106,7 +106,7 @@ test("an access to the made default member through any other receiver says that 
   // In each of these the value may be the namespace of two.cjs while the receiver's static type is the one of one.cjs.
   for (const text of ["reassigned.default", "copied.default", "chosen.default", "typed.default", "resolved.default"]) {
     const info = program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", text));
-    assert.deepEqual(info, { kind: "module-exported-value", target: undefined }, text);
+    assert.ok(info?.kind === "module-exported-value" && info.target === undefined, `${text}: a module's exported value, no module`);
   }
 });
 
@@ -123,17 +123,17 @@ test("a really declared default export and an ordinary member are members; the m
   const member = program.checker.getSymbolAtLocation(program.nameOf(program.only("PropertyAccessExpression", "n2.default")));
   assert.equal(member !== undefined && (member.Flags & SymbolFlagsAlias) !== 0, true);
   assert.deepEqual(program.declarationsOf(member), []);
-  assert.equal(program.checker.getAliasedSymbol(member), undefined);
-  assert.equal(program.checker.getAliasStep(member), undefined);
+  assert.ok(program.checker.getAliasedSymbol(member) === undefined, "the made member has no final target");
+  assert.ok(program.checker.getAliasStep(member) === undefined, "the made member has no alias step");
   // The element access that reads it: nothing. Before, its record's selected symbol was `first` in one.d.cts.
-  assert.equal(program.checker.getResolvedElementAccessInfo(program.only("ElementAccessExpression", "n2[\"default\"]")), undefined);
+  assert.ok(program.checker.getResolvedElementAccessInfo(program.only("ElementAccessExpression", "n2[\"default\"]")) === undefined, "the element access that reads the made member gives nothing");
   // The destructured property name denotes the same member symbol, and the alias queries give nothing for it.
   const binding = program.only("BindingElement", "default: destructured");
   let propertyName: Node | undefined;
   program.ast.forEachChild(binding, child => { if (propertyName === undefined && child !== undefined && program.ast.kindName(child) === "KindIdentifier") propertyName = child; });
   if (propertyName === undefined) throw new Error("The binding element has no property name.");
   const destructuredProperty = program.checker.getSymbolAtLocation(propertyName);
-  assert.equal(destructuredProperty, member);
-  assert.equal(program.checker.getAliasedSymbol(destructuredProperty), undefined);
+  assert.ok(destructuredProperty === member, "the destructured property name denotes the shared member symbol");
+  assert.ok(program.checker.getAliasedSymbol(destructuredProperty) === undefined, "the destructured property name has no final target");
   assert.equal(program.session.getDiagnostics("all").length, program.diagnostics, "the queries report no diagnostic");
 });
