@@ -4,6 +4,7 @@ import type { bool } from "../go/scalars.js";
 import { createCompilerSessionFromFiles, createInMemoryFileSystem, getBundledLibraryClosure } from "../index.js";
 import { FromMap } from "../internal/vfs/vfstest/vfstest.js";
 import { Parse as parsePackageJson } from "../internal/packagejson/packagejson.js";
+import { Unmarshal as unmarshalJson } from "../internal/json/json.js";
 import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
 import { createCompilerHost, prepareSourceImports } from "../index.js";
 
@@ -141,4 +142,19 @@ test("module resolution reads a package.json with no mark or one leading mark, a
       [resolved ? { kind: "resolved", fileName: "/src/node_modules/pkg/lib/main.d.ts" } : { kind: "unresolved" }],
       `${marks} leading mark(s) in the file`);
   }
+});
+
+// The JSON library's Unmarshal, as its remaining callers reach it (the build-info reader and the source-map reader;
+// the package.json parser decodes its bytes itself). The Go library reports a leading mark and ill-formed UTF-8 as errors.
+test("the JSON unmarshal accepts bytes without a mark and reports a leading mark and ill-formed UTF-8 as errors", () => {
+  const unmarshal = (bytes: Uint8Array): { readonly error: unknown; readonly out: Record<string, unknown> } => {
+    const out: Record<string, unknown> = {};
+    return { error: unmarshalJson(Array.from(bytes) as unknown as Parameters<typeof unmarshalJson>[0], out), out };
+  };
+  const ordinary = unmarshal(utf8("{\"version\":3,\"file\":\"caf\u00e9.js\"}"));
+  assert.equal(ordinary.error, undefined);
+  assert.equal(ordinary.out.file, "caf\u00e9.js");
+  assert.notEqual(unmarshal(utf8(mark + "{\"version\":3}")).error, undefined, "a leading mark is an error, not removed");
+  assert.notEqual(unmarshal(new Uint8Array([0x7b, 0x22, 0x66, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d])).error, undefined, "ill-formed UTF-8");
+  assert.notEqual(unmarshal(utf8("{\"version\":")).error, undefined, "truncated input");
 });
