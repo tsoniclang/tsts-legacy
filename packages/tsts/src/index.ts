@@ -158,6 +158,7 @@ export type {
   AstModifierKind,
   AstReader,
   AstRegularExpressionLiteralSyntax,
+  AstSourceRange,
   AstVariableDeclarationKind,
 } from "./services/ast-reader.js";
 export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "./services/compiler-session.js";

@@ -18,6 +18,7 @@ import {
   Node_TypeArguments,
   Node_TypeParameters,
   SourceFile_FileName,
+  SourceFile_GetPositionMap,
   SourceFile_Path,
   SourceFile_Text,
 } from "../internal/ast/ast.js";
@@ -43,11 +44,11 @@ import {
 } from "../internal/ast/modifierflags.js";
 import { GetCombinedNodeFlags, GetHeritageElements, GetSourceFileOfNode, HasModifier, IsConstAssertion, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, IsVarAwaitUsing, IsVarConst, IsVarLet, IsVarUsing, NodeIsSynthesized } from "../internal/ast/utilities.js";
 import { KindExtendsKeyword, KindImplementsKeyword } from "../internal/ast/generated/kinds.js";
-import {
-  ComputePositionMap,
-  PositionMap_UTF8ToUTF16,
-} from "../internal/ast/positionmap.js";
-import { GetTokenPosOfNode } from "../internal/scanner/scanner.js";
+import type { PositionMap } from "../internal/ast/positionmap.js";
+import { PositionMap_UTF8ToUTF16 } from "../internal/ast/positionmap.js";
+import { GetTokenPosOfNodeInView } from "../internal/scanner/scanner.js";
+import type { StringByteView } from "../go/unicode/utf8.js";
+import { GetStringByteView, StringByteViewAt, StringByteViewLen } from "../go/unicode/utf8.js";
 
 export type AstModifierKind =
   | "public"
@@ -77,6 +78,10 @@ export type AstAuthoredRange =
       readonly end: number;
     }
   | { readonly kind: "synthetic" };
+
+export type AstSourceRange =
+  | { readonly kind: "source"; readonly start: number; readonly end: number }
+  | { readonly kind: "unavailable" };
 
 export interface AstReader {
   readonly kind: (node: GoPtr<Node>) => Kind | undefined;
@@ -121,6 +126,13 @@ export interface AstReader {
   readonly end: (node: GoPtr<Node>) => number;
   /** Returns trivia-free UTF-16 offsets into the exact checked source text. */
   readonly authoredRange: (node: GoPtr<Node>) => AstAuthoredRange;
+  /**
+   * Converts a UTF-8 byte range of the exact checked source text to UTF-16 offsets into that text.
+   * Returns `unavailable` when there is no source file. Throws RangeError for an offset that is not a
+   * non-negative safe integer, for a start past the end, for an end past the text, and for an endpoint
+   * inside a UTF-8 character.
+   */
+  readonly sourceRange: (sourceFile: GoPtr<SourceFile>, startByte: number, endByte: number) => AstSourceRange;
   readonly getSourceFile: (node: GoPtr<Node>) => GoPtr<SourceFile>;
   readonly getFileName: (sourceFile: GoPtr<SourceFile>) => string;
   readonly getPath: (sourceFile: GoPtr<SourceFile>) => string;
@@ -194,6 +206,7 @@ export function createAstReader(): AstReader {
     pos: (node) => node === undefined ? -1 : Node_Pos(node),
     end: (node) => node === undefined ? -1 : Node_End(node),
     authoredRange,
+    sourceRange,
     getSourceFile: (node) => GetSourceFileOfNode(node),
     getFileName: (sourceFile) => sourceFile === undefined ? "" : SourceFile_FileName(sourceFile),
     getPath: (sourceFile) => sourceFile === undefined ? "" : SourceFile_Path(sourceFile),
@@ -233,7 +246,7 @@ function authoredRange(node: GoPtr<Node>): AstAuthoredRange {
   const positionMap = authoredPositionMap(sourceFile);
   const start = PositionMap_UTF8ToUTF16(
     positionMap,
-    GetTokenPosOfNode(node, sourceFile, false as bool),
+    GetTokenPosOfNodeInView(node, sourceFile, sourceByteView(sourceFile), false as bool),
   );
   const end = PositionMap_UTF8ToUTF16(positionMap, Node_End(node));
   if (start < 0 || end < start) {
@@ -242,20 +255,67 @@ function authoredRange(node: GoPtr<Node>): AstAuthoredRange {
   return Object.freeze({ kind: "authored", start, end });
 }
 
-const authoredPositionMaps = new WeakMap<SourceFile, NonNullable<ReturnType<typeof ComputePositionMap>>>();
+function sourceRange(sourceFile: GoPtr<SourceFile>, startByte: number, endByte: number): AstSourceRange {
+  if (!Number.isSafeInteger(startByte) || startByte < 0 || Object.is(startByte, -0)) {
+    throw new RangeError("sourceRange startByte must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(endByte) || endByte < 0 || Object.is(endByte, -0)) {
+    throw new RangeError("sourceRange endByte must be a non-negative safe integer");
+  }
+  if (startByte > endByte) {
+    throw new RangeError("sourceRange startByte is greater than endByte");
+  }
+  if (sourceFile === undefined) {
+    return { kind: "unavailable" };
+  }
+  const positionMap = authoredPositionMap(sourceFile);
+  const text = SourceFile_Text(sourceFile);
+  if (positionMap.asciiOnly) {
+    if (endByte > text.length) {
+      throw new RangeError("sourceRange endByte is past the end of the source text");
+    }
+    return { kind: "source", start: startByte, end: endByte };
+  }
+  const view = sourceByteView(sourceFile);
+  const byteLength = StringByteViewLen(text, view);
+  if (endByte > byteLength) {
+    throw new RangeError("sourceRange endByte is past the end of the source text");
+  }
+  if (startByte < byteLength && (StringByteViewAt(text, view, startByte) & 0xc0) === 0x80) {
+    throw new RangeError("sourceRange startByte is inside a UTF-8 character");
+  }
+  if (endByte < byteLength && (StringByteViewAt(text, view, endByte) & 0xc0) === 0x80) {
+    throw new RangeError("sourceRange endByte is inside a UTF-8 character");
+  }
+  return {
+    kind: "source",
+    start: PositionMap_UTF8ToUTF16(positionMap, startByte),
+    end: PositionMap_UTF8ToUTF16(positionMap, endByte),
+  };
+}
 
-function authoredPositionMap(
-  sourceFile: SourceFile,
-): NonNullable<ReturnType<typeof ComputePositionMap>> {
-  const existing = authoredPositionMaps.get(sourceFile);
+// The position map is the source file's own: computed once per file from its
+// whole text by SourceFile_GetPositionMap.
+function authoredPositionMap(sourceFile: SourceFile): PositionMap {
+  const map = SourceFile_GetPositionMap(sourceFile);
+  if (map === undefined) {
+    throw new Error("TS-Go position map construction returned no result.");
+  }
+  return map;
+}
+
+// The UTF-8 byte view of each source file's text, taken on the first request
+// that needs bytes and reused by every later authoredRange and sourceRange
+// request for that file.
+const sourceByteViews = new WeakMap<SourceFile, StringByteView>();
+
+function sourceByteView(sourceFile: SourceFile): StringByteView {
+  const existing = sourceByteViews.get(sourceFile);
   if (existing !== undefined) {
     return existing;
   }
-  const created = ComputePositionMap(SourceFile_Text(sourceFile));
-  if (created === undefined) {
-    throw new Error("TS-Go position map construction returned no result.");
-  }
-  authoredPositionMaps.set(sourceFile, created);
+  const created = GetStringByteView(SourceFile_Text(sourceFile));
+  sourceByteViews.set(sourceFile, created);
   return created;
 }
 

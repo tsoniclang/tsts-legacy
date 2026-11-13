@@ -286,6 +286,158 @@ test("public AST reader exposes trivia-free UTF-16 authored ranges", () => {
   assert.deepEqual(checked.ast.authoredRange(undefined), { kind: "synthetic" });
 });
 
+test("public AST reader converts UTF-8 byte ranges of the checked text to UTF-16 and refuses misuse", () => {
+  const ascii = "export const a = 1;\n";
+  const mixed = "// é€\u{1f600}\r\nexport const b = \"﻿\";\r\n";
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/ascii.ts", "/src/mixed.ts", "/src/empty.ts"],
+    files: { "/src/core.d.ts": core, "/src/ascii.ts": ascii, "/src/mixed.ts": mixed, "/src/empty.ts": "" },
+    compilerOptions: { noLib: true, module: "esnext", moduleResolution: "bundler" },
+  });
+  const checked = session.checkSource();
+  const asciiFile = checked.getSourceFile("/src/ascii.ts");
+  const mixedFile = checked.getSourceFile("/src/mixed.ts");
+  assert.equal(checked.ast.getSourceText(asciiFile), ascii);
+  assert.equal(checked.ast.getSourceText(mixedFile), mixed);
+  assert.equal(ascii.length, 20);
+  assert.equal(mixed.length, 32);
+  const emptyFile = checked.getSourceFile("/src/empty.ts");
+  assert.equal(emptyFile === undefined, false);
+  assert.equal(checked.ast.getSourceText(emptyFile), "");
+
+  const source = (file: typeof asciiFile, text: string, startByte: number, endByte: number, start: number, end: number, slice: string): void => {
+    const label = `${startByte},${endByte}`;
+    assert.deepEqual(checked.ast.sourceRange(file, startByte, endByte), { kind: "source", start, end }, label);
+    assert.equal(text.slice(start, end), slice, label);
+  };
+  source(asciiFile, ascii, 0, 20, 0, 20, ascii);
+  source(asciiFile, ascii, 7, 12, 7, 12, "const");
+  source(asciiFile, ascii, 5, 5, 5, 5, "");
+  source(asciiFile, ascii, 20, 20, 20, 20, "");
+  source(mixedFile, mixed, 0, 39, 0, 32, mixed);
+  source(mixedFile, mixed, 3, 5, 3, 4, "é");
+  source(mixedFile, mixed, 5, 8, 4, 5, "€");
+  source(mixedFile, mixed, 8, 12, 5, 7, "\u{1f600}");
+  source(mixedFile, mixed, 12, 14, 7, 9, "\r\n");
+  source(mixedFile, mixed, 14, 20, 9, 15, "export");
+  source(mixedFile, mixed, 32, 35, 27, 28, "﻿");
+  source(mixedFile, mixed, 39, 39, 32, 32, "");
+  source(emptyFile, "", 0, 0, 0, 0, "");
+
+  const startNumber = "sourceRange startByte must be a non-negative safe integer";
+  const endNumber = "sourceRange endByte must be a non-negative safe integer";
+  const order = "sourceRange startByte is greater than endByte";
+  const past = "sourceRange endByte is past the end of the source text";
+  const startInside = "sourceRange startByte is inside a UTF-8 character";
+  const endInside = "sourceRange endByte is inside a UTF-8 character";
+  const misuse: readonly (readonly [typeof asciiFile, number, number, string])[] = [
+    [mixedFile, -1, 3, startNumber], [mixedFile, 1.5, 3, startNumber], [mixedFile, Number.NaN, 3, startNumber],
+    [mixedFile, -0, 3, startNumber], [mixedFile, 0, Number.POSITIVE_INFINITY, endNumber], [mixedFile, 0, 2 ** 53, endNumber],
+    [mixedFile, 5, 3, order], [mixedFile, 0, 40, past], [asciiFile, 0, 21, past],
+    [mixedFile, 4, 5, startInside], [mixedFile, 6, 8, startInside], [mixedFile, 7, 8, startInside],
+    [mixedFile, 9, 12, startInside], [mixedFile, 10, 12, startInside], [mixedFile, 11, 12, startInside],
+    [mixedFile, 8, 9, endInside], [mixedFile, 8, 10, endInside], [mixedFile, 8, 11, endInside],
+    [mixedFile, 33, 35, startInside], [mixedFile, 32, 34, endInside],
+    [undefined, -1, 0, startNumber], [undefined, 5, 3, order],
+    [emptyFile, 0, 1, past],
+  ];
+  for (const [file, startByte, endByte, message] of misuse) {
+    assert.throws(() => checked.ast.sourceRange(file, startByte, endByte),
+      (error: unknown) => error instanceof RangeError && error.message === message, `${startByte},${endByte}`);
+  }
+  assert.deepEqual(checked.ast.sourceRange(undefined, 0, 0), { kind: "unavailable" });
+  assert.deepEqual(checked.ast.sourceRange(undefined, 3, 9), { kind: "unavailable" });
+});
+
+test("public AST reader maps every character boundary of non-ASCII source texts", () => {
+  // `mixed` has its non-ASCII characters in a comment. `literals` has them only
+  // inside a string literal and a template literal, with ASCII statements after.
+  const mixed = "// é€\u{1f600}\r\nexport const b = 1;\r\n";
+  const literals = "export const s = \"é\";\nexport const u = `€\u{1f600}`;\nexport const t = 1;\n";
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/mixed.ts", "/src/literals.ts"],
+    files: { "/src/core.d.ts": core, "/src/mixed.ts": mixed, "/src/literals.ts": literals },
+    compilerOptions: { noLib: true, module: "esnext", moduleResolution: "bundler" },
+  });
+  const checked = session.checkSource();
+  const mixedFile = checked.getSourceFile("/src/mixed.ts");
+  const literalsFile = checked.getSourceFile("/src/literals.ts");
+  const encoder = new globalThis.TextEncoder();
+  const decoder = new globalThis.TextDecoder("utf-8", { fatal: true });
+
+  const cases: ReadonlyArray<readonly [typeof mixedFile, string, number, number]> = [
+    [mixedFile, mixed, 35, 30],
+    [literalsFile, literals, 71, 66],
+  ];
+  for (const [file, text, byteLength, boundaryCount] of cases) {
+    assert.equal(checked.ast.getSourceText(file), text);
+    const bytes = encoder.encode(text);
+    assert.equal(bytes.length, byteLength);
+    let boundaries = 0;
+    for (let startByte = 0; startByte <= bytes.length; startByte++) {
+      if (startByte < bytes.length && (bytes[startByte]! & 0xc0) === 0x80) {
+        continue;
+      }
+      boundaries++;
+      const range = checked.ast.sourceRange(file, startByte, bytes.length);
+      assert.equal(
+        range.kind === "source" ? text.slice(range.start, range.end) : undefined,
+        decoder.decode(bytes.subarray(startByte)),
+        `${startByte},${bytes.length}`,
+      );
+    }
+    assert.equal(boundaries, boundaryCount);
+  }
+
+  // The statement after the literals: bytes 51..70 are UTF-16 units 46..65.
+  const lastStatement = checked.ast.sourceRange(literalsFile, 51, 70);
+  assert.deepEqual(lastStatement, { kind: "source", start: 46, end: 65 });
+  assert.equal(literals.slice(46, 65), "export const t = 1;");
+  const one = findNode(literalsFile, checked.ast, (node) => checked.ast.is.IsNumericLiteral(node));
+  assert.deepEqual(checked.ast.authoredRange(one), { kind: "authored", start: 63, end: 64 });
+  assert.equal(literals.slice(63, 64), "1");
+});
+
+test("public AST reader skips a shebang, comments and conflict markers to the token start", () => {
+  const mixed = [
+    "#!/usr/bin/env node é",
+    "// line é€",
+    "/* block \u{1f600} */ /** doc é */",
+    "<<<<<<< ours",
+    "export const a = 1;",
+    "=======",
+    "export const b = 2;",
+    ">>>>>>> theirs",
+    "export const c = 3; // tail é",
+    "",
+  ].join("\n");
+  const ascii = mixed.replace(/[^\x00-\x7f]/gu, "e");
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/mixed.ts", "/src/ascii.ts"],
+    files: { "/src/core.d.ts": core, "/src/mixed.ts": mixed, "/src/ascii.ts": ascii },
+    compilerOptions: { noLib: true, module: "esnext", moduleResolution: "bundler" },
+  });
+  const checked = session.checkSource();
+  // UTF-16 offsets of the two statements that are not inside a conflict section.
+  const cases: ReadonlyArray<readonly [string, string, number, number]> = [
+    ["/src/mixed.ts", mixed, 74, 137],
+    ["/src/ascii.ts", ascii, 73, 136],
+  ];
+  for (const [fileName, text, startA, startC] of cases) {
+    const file = checked.getSourceFile(fileName);
+    assert.equal(checked.ast.getSourceText(file), text);
+    assert.equal(text.indexOf("export const a = 1;"), startA, fileName);
+    assert.equal(text.indexOf("export const c = 3;"), startC, fileName);
+    const statements = collectNodes(file, checked.ast, (node) => checked.ast.is.IsVariableStatement(node));
+    assert.equal(statements.length, 2, `${fileName}: the statement between ======= and >>>>>>> is trivia`);
+    assert.deepEqual(checked.ast.authoredRange(statements[0]), { kind: "authored", start: startA, end: startA + 19 }, fileName);
+    assert.deepEqual(checked.ast.authoredRange(statements[1]), { kind: "authored", start: startC, end: startC + 19 }, fileName);
+  }
+});
+
 test("public AST reader exposes exact authored type nodes", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",

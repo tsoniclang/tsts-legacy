@@ -250,6 +250,11 @@
       "reason": "One pure reader of existing original Signature and parameter declaration fields, with no parameter or return Type resolution."
     },
     {
+      "match": "packages/tsts/src/internal/checker/call-declaration-order.ts",
+      "category": "extension-internal",
+      "reason": "Orders the original signatures of one resolved call by their actual bound declarations (the declaring symbol's Declarations, or the member list of their class, interface or type literal) for selected-call evidence; it reads existing declarations only and owns no upstream Go unit."
+    },
+    {
       "match": "packages/tsts/src/internal/checker/checker/source-type-identity.ts",
       "category": "extension-internal",
       "reason": "Additive target-neutral identity helper for compiler-owned source types; it owns no upstream Go unit."

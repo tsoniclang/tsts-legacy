@@ -1,12 +1,10 @@
 import type { bool, int } from "../../go/scalars.js";
 import type { GoPtr, GoSlice } from "../../go/compat.js";
-import { DecodeRuneInStringAt, RuneSelf, StringByteAt, StringByteLen } from "../../go/unicode/utf8.js";
+import { DecodeRuneInStringViewAt, GetStringByteView, RuneSelf, StringByteViewAt, StringByteViewLen } from "../../go/unicode/utf8.js";
 
 // Go strings are immutable UTF-8 byte sequences; `len(s)` is a byte length,
 // `s[i]` reads a byte, and slices like `s[i:]` operate on byte offsets. We
 // mirror that contract by operating over the UTF-8 byte view of the JS string.
-const byteLen = StringByteLen;
-const byteAt = StringByteAt;
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/ast/positionmap.go::type::PositionMap","kind":"type","status":"implemented","sigHash":"af42c60e448ed6f9beb9d484a182432f29f3f0756d741f9de9565477889ba3bf","bodyHash":"93e2eea0070b4da82e80eaad61950136ca088819c05d8f39d199cb5ca6474979"}
@@ -48,6 +46,7 @@ export interface positionMapEntry {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/ast/positionmap.go::func::ComputePositionMap","kind":"func","status":"implemented","sigHash":"fff86f76341e89022ab461dc09de223a2c9e92843e134094017d124b9fd2c221","bodyHash":"0e718a3bcab5bea0b8a36e8348be3f3195be41f2ee72b897913a3f85a5e9ef15"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Take one UTF-8 byte view of the text and read every byte and rune through it, instead of taking a view for each byte and each rune through the string helpers; the entries and the asciiOnly flag are identical to the TS-Go body."}
  *
  * Go source:
  * func ComputePositionMap(text string) *PositionMap {
@@ -76,14 +75,15 @@ export function ComputePositionMap(text: string): GoPtr<PositionMap> {
   const entries: GoSlice<positionMapEntry> = [];
   let delta: int = 0;
   let i: int = 0;
-  const n: int = byteLen(text);
+  const view = GetStringByteView(text);
+  const n: int = StringByteViewLen(text, view);
   while (i < n) {
-    const b: int = byteAt(text, i);
+    const b: int = StringByteViewAt(text, view, i);
     if (b < RuneSelf) {
       i++;
       continue;
     }
-    const [r, size] = DecodeRuneInStringAt(text, i);
+    const [r, size] = DecodeRuneInStringViewAt(text, view, i);
     let utf16Size: int = 1;
     if (r >= 0x10000) {
       utf16Size = 2;
