@@ -208,6 +208,40 @@ test("getAliasStep by binding form: a namespace import, a default import, export
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
+// A namespace import, in an ECMAScript-format file, of a CommonJS-format file: the checker's own target is a symbol it
+// makes for that import declaration (it carries the synthetic default). The step is the module itself, as for every
+// other form; the made symbol is what getAliasedSymbol returns, and it has the module's declarations.
+test("getAliasStep over a CommonJS-format module without export =: a namespace import from each of two files, import = require, a default import and export * as all step to the module", () => {
+  const program = open({
+    "/case/lib.cts": "export const a = 1;\n",
+    "/case/one.mts": "import * as n1 from \"./lib.cjs\";\nimport d1 from \"./lib.cjs\";\nexport const use = [n1, d1];\n",
+    "/case/two.mts": "import * as n2 from \"./lib.cjs\";\nexport * as boxed from \"./lib.cjs\";\nexport const use = n2;\n",
+    "/case/three.cts": "import r = require(\"./lib.cjs\");\nimport * as n3 from \"./lib.cjs\";\nexport const use = [r, n3];\n",
+  });
+  const { bindingOf, describe } = walker(program);
+  const diagnosticsBefore = program.session.getDiagnostics("all").length;
+  const module = ["final /case/lib.cts:KindSourceFile:export const a = 1;\n"];
+  const bindings = [
+    bindingOf("/case/one.mts", "NamespaceImport", "* as n1"), bindingOf("/case/two.mts", "NamespaceImport", "* as n2"),
+    bindingOf("/case/three.cts", "NamespaceImport", "* as n3"), bindingOf("/case/one.mts", "ImportClause", "d1"),
+    bindingOf("/case/two.mts", "NamespaceExport", "* as boxed"), bindingOf("/case/three.cts", "ImportEqualsDeclaration", "import r = require(\"./lib.cjs\");"),
+  ];
+  for (const binding of bindings) assert.deepEqual(binding.steps, module);
+
+  // The final targets of the two ECMAScript-format namespace imports are the symbols made for those two imports:
+  // the module's declarations, two different objects, neither of them the step. The comparison that holds for every
+  // form is by declaration.
+  const [n1, n2, n3] = bindings;
+  if (n1 === undefined || n2 === undefined || n3 === undefined) throw new Error("unreachable");
+  assert.equal(describe(n1.target), describe(n3.target));
+  assert.equal(describe(n1.target), describe(n2.target));
+  assert.notEqual(n1.target, n2.target);
+  assert.equal(n1.first?.kind === "symbol" && n1.first.symbol !== n1.target, true);
+  assert.equal(n1.checker.getAliasedSymbol(n1.symbol), n1.target, "the symbol made for one import is made once");
+
+  assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
+});
+
 // The export = assignment is the nearest boundary of every binding over such a module and is never skipped. The
 // checker's own immediate target lands past it for a namespace import, export * as and a named member (it resolves the
 // chain behind the assignment before it answers); the query answers with the assignment instead.
@@ -270,10 +304,12 @@ test("getAliasStep over a module with export =: every binding form steps to the 
     "the boundary is the same assignment symbol the other forms step to");
   assert.equal(absent.target, undefined);
 
-  // The final target of a namespace import, in an ECMAScript-format file, of a CommonJS-format file is a copy the
-  // checker makes for the import: equal declarations, never the step's own target object. Targets compare by declaration.
+  // The final target of a namespace import, in an ECMAScript-format file, of a CommonJS-format file is a symbol the
+  // checker makes for that import declaration: the value's declarations, not the value's own symbol. What the two
+  // queries return is compared by declaration.
   assert.deepEqual(declarations(ns.target), declarations(d.target));
   assert.notEqual(ns.target, d.target);
+  assert.equal(ns.checker.getAliasedSymbol(ns.symbol), ns.target, "the symbol made for one import is made once");
 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });

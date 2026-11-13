@@ -202,9 +202,10 @@ export interface ResolvedSourceObjectLiteralElementInfo {
  * - import specifier, export specifier: the module's export of that name, or the local entity that a
  *   local `export { a }` names;
  * - default import: the module's default export;
- * - `import x = require(...)`, namespace import, `export * as ns`: the module, or, for a module with
- *   `export =`, the symbol of that assignment (an alias when the assignment names an entity; declared by
- *   the assignment either way). The assignment is never skipped;
+ * - `import x = require(...)`, namespace import, `export * as ns`: the module itself, or, for a module
+ *   with `export =`, the symbol of that assignment (an alias when the assignment names an entity; declared
+ *   by the assignment either way). The assignment is never skipped, and the symbol the checker makes for
+ *   a namespace import of a CommonJS-format file is never the answer;
  * - `import x = N.v`: the named entity.
  *
  * "exported-value-member": an import or export specifier that names a member of the value a module
@@ -251,9 +252,11 @@ export interface TypeCheckerQueries {
    * module without `export =`). A member of a circular alias chain has a step: following the steps from it
    * returns to a symbol already visited, which is how a caller finds the cycle's members.
    *
-   * getAliasedSymbol gives the final target of the whole chain. For a namespace import, in an
-   * ECMAScript-format file, of a CommonJS-format file, that final target is a copy made for the import
-   * (equal declarations, a different object on each computation): compare targets by declaration.
+   * Compare what the two alias queries return by declaration, never by symbol identity. getAliasedSymbol
+   * gives the final target of the whole chain, and for a namespace import, in an ECMAScript-format file,
+   * of a CommonJS-format file that target is a symbol made for that import declaration: it has the
+   * target's declarations and is a different object for each import declaration. Steps are symbols of
+   * modules and declarations, but one export reached by two bindings is not promised to be one object.
    *
    * Cost: a step that did not resolve is not remembered. Each further call for that alias runs the step
    * again and creates its diagnostic again. Ask once per binding and keep the answer; never once per use.
@@ -418,11 +421,15 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         const namespaceForm = IsNamespaceImport(declaration) || IsNamespaceExport(declaration);
         const memberForm = (IsImportSpecifier(declaration) || IsExportSpecifier(declaration))
           && !ModuleExportNameIsDefault(Node_PropertyNameOrName(declaration));
-        const exportAssignment = namespaceForm || memberForm ? exportAssignmentOfReferencedModule(checker, declaration) : undefined;
-        if (exportAssignment !== undefined && namespaceForm) return { kind: "symbol", symbol: exportAssignment };
+        const referenced = namespaceForm || memberForm ? referencedModule(checker, declaration) : undefined;
+        // A namespace form names the module itself: its `export =` assignment when it has one, the module otherwise.
+        // The checker's own target for it is the final value behind the assignment or a symbol it makes for the import.
+        if (referenced !== undefined && namespaceForm) return { kind: "symbol", symbol: referenced.exportAssignment ?? referenced.module };
         const immediate = Checker_getImmediateAliasedSymbol(checker, symbol);
         const target = immediate === checker?.unknownSymbol ? undefined : immediate;
-        if (exportAssignment !== undefined) return { kind: "exported-value-member", exportAssignment, member: target };
+        if (referenced?.exportAssignment !== undefined) {
+          return { kind: "exported-value-member", exportAssignment: referenced.exportAssignment, member: target };
+        }
         return target === undefined ? undefined : { kind: "symbol", symbol: target };
       }),
     getTypeOfSymbol: (symbol) =>
@@ -848,15 +855,15 @@ function withResolvedSourceReceiverValueEvidence<
   });
 }
 
-// The symbol of the `export =` assignment of the module that an import or export declaration names, or nothing when
-// the declaration names no module, the module does not resolve, or it has no `export =`. Reports no diagnostic.
-function exportAssignmentOfReferencedModule(checker: GoPtr<Checker>, declaration: GoPtr<Node>): GoPtr<Symbol> {
+// The module that an import or export declaration names, with the symbol of its `export =` assignment when it has
+// one; nothing when the declaration names no module or the module does not resolve. Reports no diagnostic.
+function referencedModule(checker: GoPtr<Checker>, declaration: GoPtr<Node>): { readonly module: Symbol; readonly exportAssignment: Symbol | undefined } | undefined {
   const moduleSpecifier = Checker_getModuleSpecifierForImportOrExport(checker, declaration);
   if (moduleSpecifier === undefined) return undefined;
   const moduleSymbol = Checker_resolveExternalModuleName(checker, declaration, moduleSpecifier, true as bool);
   if (moduleSymbol === undefined) return undefined;
   const exported = Checker_resolveExternalModuleSymbol(checker, moduleSymbol, true as bool);
-  return exported === moduleSymbol ? undefined : exported;
+  return { module: moduleSymbol, exportAssignment: exported === undefined || exported === moduleSymbol ? undefined : exported };
 }
 
 function withCheckerForNode<T>(
