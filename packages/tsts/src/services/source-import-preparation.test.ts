@@ -409,6 +409,28 @@ test("source import preparation reports UTF-16 spans after one-, two-, three- an
   assert.deepEqual(imported.resolution, { kind: "resolved", fileName: "/src/d\u00e9p.mts" });
 });
 
+test("source import preparation reports sites in the text the file system delivers; leading byte-order marks are removed before parsing and not counted", () => {
+  const token = '"./dep.mjs"';
+  const body = `const label = "\u00e9"; import ${token};`;
+  for (const marks of ["", "\ufeff", "\ufeff\ufeff"]) {
+    const source = marks + body;
+    const input = fixture(new Map([["/src/main.mts", source], ["/src/dep.mts", "export {};"]]), ["/src/main.mts"]);
+    // The SDK's file system removes every leading U+FEFF unit when it reads a file, so no later step sees them.
+    const [delivered] = input.host.FS().ReadFile("/src/main.mts");
+    assert.equal(delivered, body, `${marks.length} leading mark(s) are removed by the file system`);
+    const result = prepareSourceImports(input);
+    const reference = file(result, "/src/main.mts").references[0];
+    if (reference === undefined) throw new Error("The expected import is absent.");
+    // The site is a UTF-16 offset of the delivered text. Its offset in the original document is larger by
+    // exactly the number of leading marks, which only the supplier of the original text can add.
+    assert.equal(reference.start, body.indexOf(token));
+    assert.equal(reference.start + marks.length, source.indexOf(token));
+    assert.equal(reference.length, token.length);
+    assert.equal(delivered.slice(reference.start, reference.start + reference.length), token);
+    assert.notEqual(Buffer.byteLength(body.slice(0, reference.start)), reference.start, "a two-byte character precedes the import");
+  }
+});
+
 test("source import preparation retains invalid configuration instead of returning an empty successful result", () => {
   const input = fixture(new Map([["/src/main.mts", "export {}; "]]), ["/src/main.mts"]);
   const config = ParseCommandLine(["--noLib", "--unrecognisedSDKflag", "/src/main.mts"], input.host);

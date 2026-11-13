@@ -31,7 +31,9 @@ type SourceReferenceSyntax =
 export type SourceImportPreparationReference = SourceReferenceSyntax & {
   readonly specifier: string;
   // UTF-16 code-unit offset and length in the source file's text as the SDK parsed it,
-  // the same unit and text as AstReader.authoredRange and AstReader.sourceRange.
+  // the same unit and text as AstReader.authoredRange and AstReader.sourceRange. The file system
+  // removes leading byte-order marks before parsing, so they are not counted: the offset in the
+  // original document is larger by the number of leading U+FEFF units of that document.
   readonly start: number;
   readonly length: number;
   readonly mode: "import" | "require" | "none";
