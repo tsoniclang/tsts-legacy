@@ -10252,6 +10252,7 @@ export function Checker_resolveExternalModuleSymbol(receiver: GoPtr<Checker>, mo
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveESModuleSymbol","kind":"method","status":"implemented","sigHash":"f1615f54cc3d30a16ee2016cd9adb905eb5bc943cb2fe5e85f9f5b6ddfca7b21","bodyHash":"d983f72f8a259ae1090a73e4460a1d5f7be6ad14467c98dddbafc07b33e191da"}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Return the checker's unknown symbol unchanged when the module's export= alias does not resolve. For a namespace import or import call, in an ECMAScript-format file, of a CommonJS-format file, the pinned Go body passes the unknown symbol to cloneTypeAsModuleType, which makes a new declaration-less symbol named unknown on every call; no later identity test against unknownSymbol recognizes it, and resolveAliasWithDeprecationCheck then never returns. TypeScript returns the symbol unchanged on this path (its branch for a target that is neither a module nor a variable, which the Go body dropped together with its diagnostic)."}
  *
  * Go source:
  * func (c *Checker) resolveESModuleSymbol(moduleSymbol *ast.Symbol, node *ast.Node, moduleSpecifier *ast.Node) *ast.Symbol {
@@ -10314,6 +10315,9 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
   let symbol_ = Checker_resolveExternalModuleSymbol(receiver, moduleSymbol, true);
   if (IsNonLocalAlias(symbol_, (SymbolFlagsValue | SymbolFlagsType | SymbolFlagsNamespace) as SymbolFlags)) {
     symbol_ = Checker_getMergedSymbol(receiver, Checker_resolveIndirectionAlias(receiver, Checker_getSymbolOfDeclaration(receiver, node), symbol_));
+  }
+  if (symbol_ === receiver!.unknownSymbol) {
+    return symbol_;
   }
   if (symbol_ !== undefined) {
     const referenceParent = moduleSpecifier!.Parent;
@@ -11478,6 +11482,7 @@ export function Checker_tryResolveAlias(receiver: GoPtr<Checker>, symbol_: GoPtr
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveAliasWithDeprecationCheck","kind":"method","status":"implemented","sigHash":"c9b9f385352bf280dd523250c5763f2b921dc470ed1b3e1cfb964d00c8e66772","bodyHash":"e945d87ccce14f68c03c3c84e31dfed25d94cf398583adb9c1d1505bdfb332e3"}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Every iteration ends the loop or moves to the immediate target. The pinned Go body, like TypeScript's, leaves the loop variable unchanged when the immediate target is defined, is not the final target and has no declarations, and so never returns: a namespace import, in an ECMAScript-format file, of a CommonJS-format file whose export= names globalThis reaches that state, because the final target and the immediate target are two separate copies of that declaration-less symbol. A target without declarations has no deprecation to report, so the walk moves past it."}
  *
  * Go source:
  * func (c *Checker) resolveAliasWithDeprecationCheck(symbol *ast.Symbol, location *ast.Node) *ast.Symbol {
@@ -11526,17 +11531,14 @@ export function Checker_resolveAliasWithDeprecationCheck(receiver: GoPtr<Checker
       if (target === targetSymbol) {
         break;
       }
-      if ((target!.Declarations ?? []).length !== 0) {
-        if (Checker_isDeprecatedSymbol(receiver, target)) {
-          Checker_addDeprecatedSuggestion(receiver, location, target!.Declarations as GoSlice<GoPtr<Node>>, target!.Name);
-          break;
-        } else {
-          if (symbol_ === targetSymbol) {
-            break;
-          }
-          symbol_ = target;
-        }
+      if ((target!.Declarations ?? []).length !== 0 && Checker_isDeprecatedSymbol(receiver, target)) {
+        Checker_addDeprecatedSuggestion(receiver, location, target!.Declarations as GoSlice<GoPtr<Node>>, target!.Name);
+        break;
       }
+      if (symbol_ === targetSymbol) {
+        break;
+      }
+      symbol_ = target;
     } else {
       break;
     }

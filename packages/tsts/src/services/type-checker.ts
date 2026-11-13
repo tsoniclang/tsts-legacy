@@ -231,8 +231,8 @@ export interface TypeCheckerQueries {
    * - import specifier, export specifier: the member of that final target.
    * Present behaviour of a namespace import, in an ECMAScript-format file, of a CommonJS-format file: this
    * query and getAliasedSymbol each return their own copy of the target (equal declarations, different
-   * objects), and when the `export =` chain does not resolve each returns a copy of the checker's unknown
-   * symbol, which has no declaration, instead of nothing. Compare results by declaration, not by identity.
+   * objects). Compare results by declaration, not by identity. When the `export =` chain does not
+   * resolve, both give nothing.
    *
    * Cost: a step that did not resolve is not remembered. Each further call for that alias runs the step
    * again and creates its diagnostic again. Ask once per binding and keep the answer; never once per use.

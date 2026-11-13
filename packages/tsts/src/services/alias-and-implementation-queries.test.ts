@@ -235,16 +235,15 @@ test("getImmediateAliasedSymbol over a module with export =: default import and 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
-// PRESENT BEHAVIOUR, pinned so that a change is seen; the last block DEPENDS ON THE SDK CORRECTION that is with the
-// SDK's owner. The namespace import below is deliberately never used: one use of it in an expression or a type makes
-// the checker's own check of the file not return (alias-and-implementation-queries.unresolved-export-equals.case.mjs).
-test("getImmediateAliasedSymbol over a module whose export = does not resolve: import = require and default import step to the assignment; a namespace import returns a symbol without declarations instead of nothing (present behaviour)", () => {
+// The namespace import below is never used in this in-process case. Programs that use it are checked under a time
+// limit in namespace-import-of-export-equals.test.ts, because a use once made the checker's check not return.
+test("getImmediateAliasedSymbol over a module whose export = does not resolve: import = require and default import step to the assignment and on to the failing alias; a namespace import gives nothing", () => {
   const program = open({
     "/case/eqm.cts": "import inner = require(\"./missing.cjs\");\nexport = inner;\n",
     "/case/u.mts": "import * as nsm from \"./eqm.cjs\";\nimport dm from \"./eqm.cjs\";\nexport const use = dm;\n",
     "/case/r.cts": "import rm = require(\"./eqm.cjs\");\nexport const use = rm;\n",
   });
-  const { bindingOf, isAlias } = walker(program);
+  const { bindingOf } = walker(program);
   const diagnosticsBefore = program.session.getDiagnostics("all").length;
 
   // The failing alias itself: nothing from either query.
@@ -261,14 +260,12 @@ test("getImmediateAliasedSymbol over a module whose export = does not resolve: i
   assert.deepEqual(dm.steps, chain);
   assert.equal(dm.target, undefined);
 
-  // The namespace import: both queries return a symbol that is not the checker's unknown symbol but a copy of it,
-  // one copy per query: no declaration, not an alias. "Nothing means unresolved" does not hold for this form today.
+  // The namespace import: the unknown symbol stays the unknown symbol, so both queries give nothing. No symbol
+  // without declarations is returned in its place.
   const nsm = bindingOf("/case/u.mts", "NamespaceImport", "* as nsm");
-  assert.notEqual(nsm.first, undefined, "DEPENDS ON THE SDK CORRECTION: nothing is the answer wanted here");
-  assert.notEqual(nsm.target, undefined, "DEPENDS ON THE SDK CORRECTION: nothing is the answer wanted here");
-  assert.deepEqual([declarations(nsm.first).length, isAlias(nsm.first), nsm.first?.Name], [0, false, "unknown"]);
-  assert.deepEqual([declarations(nsm.target).length, isAlias(nsm.target), nsm.target?.Name], [0, false, "unknown"]);
-  assert.notEqual(nsm.first, nsm.target);
+  assert.equal(nsm.first, undefined);
+  assert.equal(nsm.target, undefined);
+  assert.deepEqual(nsm.steps, []);
 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
