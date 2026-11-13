@@ -1133,6 +1133,7 @@ export function Checker_getTypeOnlyAliasDeclaration(receiver: GoPtr<Checker>, sy
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getTypeOnlyAliasDeclarationEx","kind":"method","status":"implemented","sigHash":"f2fee28c9f043169d61a0895c84f40cbdec23f2aabd47775ef344a4ddbae8d6d","bodyHash":"6081de1e28a569c095aa26e2c4db86fe2ae0e50ae6544be3ae14081d89ce22fe"}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"The loop remembers a symbol it has been on and ends, with no type-only declaration found, when it returns to it. The pinned Go body follows resolveAlias while the symbol is an alias without the wanted meaning and has no memory; two alias-flagged symbols that each also have a namespace meaning and name each other (import x = require of a module that exports with export= the mirror of x, each merged with a namespace) form a ring that resolveAlias does not report as circular, and checking either export assignment never returns. TypeScript has no loop here."}
  *
  * Go source:
  * func (c *Checker) getTypeOnlyAliasDeclarationEx(symbol *ast.Symbol, meaning ast.SymbolFlags) *ast.Node {
@@ -1148,13 +1149,30 @@ export function Checker_getTypeOnlyAliasDeclaration(receiver: GoPtr<Checker>, sy
  * }
  */
 export function Checker_getTypeOnlyAliasDeclarationEx(receiver: GoPtr<Checker>, symbol_: GoPtr<Symbol>, meaning: SymbolFlags): GoPtr<Node> {
+  // The walk's memory, without an allocation: one symbol the walk has been on, replaced by the current symbol after
+  // 1, 2, 4, 8, ... moves. The walk ends early only when its next symbol is, by identity, the remembered one, which
+  // happens only inside a ring. The memory has no capacity and refuses nothing: a chain without a ring is walked to
+  // its end whatever its length. Inside a ring the walk returns to the remembered symbol at the latest one turn after
+  // a replacement spaced at least the ring's length, so every member of the ring has been examined by then.
+  let remembered: GoPtr<Symbol> = symbol_;
+  let movesUntilReplacement = 1;
+  let movesSinceReplacement = 0;
   while ((symbol_!.Flags & SymbolFlagsAlias) !== 0 && (symbol_!.Flags & meaning) === 0) {
     const resolved = Checker_resolveAlias(receiver, symbol_);
     const links = (LinkStore_Get(receiver!.aliasSymbolLinks, symbol_) as GoPtr<AliasSymbolLinks>)!;
     if (links.typeOnlyDeclaration !== undefined) {
       return links.typeOnlyDeclaration;
     }
+    if (resolved === remembered) {
+      return undefined;
+    }
     symbol_ = resolved;
+    movesSinceReplacement++;
+    if (movesSinceReplacement === movesUntilReplacement) {
+      remembered = symbol_;
+      movesUntilReplacement *= 2;
+      movesSinceReplacement = 0;
+    }
   }
   return undefined;
 }
@@ -11482,7 +11500,7 @@ export function Checker_tryResolveAlias(receiver: GoPtr<Checker>, symbol_: GoPtr
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveAliasWithDeprecationCheck","kind":"method","status":"implemented","sigHash":"c9b9f385352bf280dd523250c5763f2b921dc470ed1b3e1cfb964d00c8e66772","bodyHash":"e945d87ccce14f68c03c3c84e31dfed25d94cf398583adb9c1d1505bdfb332e3"}
- * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Every iteration ends the loop or moves to the immediate target. The pinned Go body, like TypeScript's, leaves the loop variable unchanged when the immediate target is defined, is not the final target and has no declarations, and so never returns: a namespace import, in an ECMAScript-format file, of a CommonJS-format file whose export= names globalThis reaches that state, because the final target and the immediate target are two separate copies of that declaration-less symbol. A target without declarations has no deprecation to report, so the walk moves past it."}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"Two states on which the pinned Go body does not return are ended. (1) Every iteration ends the loop or moves to the immediate target: the pinned Go body, like TypeScript's, leaves the loop variable unchanged when the immediate target is defined, is not the final target and has no declarations, and so never returns; a namespace import, in an ECMAScript-format file, of a CommonJS-format file whose export= names globalThis reaches that state, because the final target and the immediate target are two separate copies of that declaration-less symbol. A target without declarations has no deprecation to report, so the walk moves past it. (2) The walk remembers a symbol it has been on and ends when it returns to it: the Go body has no memory, and where the final target is a copy made for the import it is not on the walk, so a ring of alias-flagged symbols that also have another meaning (import * as x merged with a namespace and exported with export=, in two files naming each other) is walked for ever."}
  *
  * Go source:
  * func (c *Checker) resolveAliasWithDeprecationCheck(symbol *ast.Symbol, location *ast.Node) *ast.Symbol {
@@ -11525,6 +11543,14 @@ export function Checker_resolveAliasWithDeprecationCheck(receiver: GoPtr<Checker
   if (targetSymbol === receiver!.unknownSymbol) {
     return targetSymbol;
   }
+  // The walk's memory, without an allocation: one symbol the walk has been on, replaced by the current symbol after
+  // 1, 2, 4, 8, ... moves. The walk ends early only when its next symbol is, by identity, the remembered one, which
+  // happens only inside a ring. The memory has no capacity and refuses nothing: a chain without a ring is walked to
+  // its end whatever its length. Inside a ring the walk returns to the remembered symbol at the latest one turn after
+  // a replacement spaced at least the ring's length, so every member of the ring has been examined by then.
+  let remembered: GoPtr<Symbol> = symbol_;
+  let movesUntilReplacement = 1;
+  let movesSinceReplacement = 0;
   while ((symbol_!.Flags & SymbolFlagsAlias) !== 0) {
     const target = Checker_getImmediateAliasedSymbol(receiver, symbol_);
     if (target !== undefined) {
@@ -11538,7 +11564,16 @@ export function Checker_resolveAliasWithDeprecationCheck(receiver: GoPtr<Checker
       if (symbol_ === targetSymbol) {
         break;
       }
+      if (target === remembered) {
+        break;
+      }
       symbol_ = target;
+      movesSinceReplacement++;
+      if (movesSinceReplacement === movesUntilReplacement) {
+        remembered = symbol_;
+        movesUntilReplacement *= 2;
+        movesSinceReplacement = 0;
+      }
     } else {
       break;
     }

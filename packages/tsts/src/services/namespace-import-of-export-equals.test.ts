@@ -126,3 +126,50 @@ test("the alias walk still reports a deprecated declaration reached through a re
     "u.mts(3,41): suggestion TS6385: 'viaOld' is deprecated.",
   ]);
 });
+
+// Rings of symbols that are aliases and namespaces at once. The checker's alias resolution stops at such a symbol, so
+// these rings are not always reported as circular, and a walk over them ends only because it remembers where it has been.
+test("a ring of namespace imports, each merged with a namespace and exported with export =, is checked to the end", () => {
+  for (const extension of ["cts", "d.cts"]) {
+    const checked = check({
+      [`/case/m1.${extension}`]: "import * as x from \"./m2.cjs\";\ndeclare namespace x {}\nexport = x;\n",
+      [`/case/m2.${extension}`]: "import * as y from \"./m1.cjs\";\ndeclare namespace y {}\nexport = y;\n",
+      "/case/u.mts": "import * as ns from \"./m1.cjs\";\nexport const v = ns;\nexport type T = typeof ns;\n",
+    });
+    assert.deepEqual(checked.errors, [
+      `m1.${extension}(1,13): error TS2303: Circular definition of import alias 'x'.`,
+      `m2.${extension}(1,13): error TS2303: Circular definition of import alias 'y'.`,
+    ]);
+  }
+});
+
+test("a ring of import = require aliases, each merged with a namespace and exported with export =, is checked to the end with TypeScript's diagnostics", () => {
+  const ring = {
+    "/case/m1.d.cts": "import x = require(\"./m2.cjs\");\ndeclare namespace x {}\nexport = x;\n",
+    "/case/m2.d.cts": "import y = require(\"./m1.cjs\");\ndeclare namespace y {}\nexport = y;\n",
+  };
+  const conflicts = [
+    "m1.d.cts(1,1): error TS2440: Import declaration conflicts with local declaration of 'x'.",
+    "m2.d.cts(1,1): error TS2440: Import declaration conflicts with local declaration of 'y'.",
+  ];
+  // The ring is not circular for the checker: each member resolves to the next and stops there. TypeScript 6.0.3
+  // reports exactly these four diagnostics for this program.
+  assert.deepEqual(check({ ...ring, "/case/u.mts": "import * as ns from \"./m1.cjs\";\nimport d from \"./m1.cjs\";\nexport const v = [ns, d];\n" }).errors, [
+    ...conflicts,
+    "u.mts(3,19): error TS2708: Cannot use namespace 'ns' as a value.",
+    "u.mts(3,23): error TS2708: Cannot use namespace 'd' as a value.",
+  ]);
+  // The ring alone, with no importer: checking either export assignment ends.
+  assert.deepEqual(check({ ...ring, "/case/u.mts": "export {};\n" }).errors, conflicts);
+});
+
+test("the opposite of a ring: a chain of twelve re-exports is neither refused nor reported as circular, and the declaration's type reaches the use", () => {
+  const files: Record<string, string> = { "/case/m0.mts": "export const v = 1;\n" };
+  for (let index = 1; index <= 12; index += 1) {
+    files[`/case/m${index}.mts`] = `export { ${index === 1 ? "v" : `a${index - 1}`} as a${index} } from "./m${index - 1}.mjs";\n`;
+  }
+  files["/case/u.mts"] = "import { a12 } from \"./m12.mjs\";\nimport * as all from \"./m12.mjs\";\nexport const ok: number = a12 + all.a12;\nexport const wrong: string = a12;\n";
+  const checked = check(files);
+  assert.deepEqual(checked.errors, ["u.mts(4,14): error TS2322: Type 'number' is not assignable to type 'string'."]);
+  assert.deepEqual(checked.suggestions, []);
+});
