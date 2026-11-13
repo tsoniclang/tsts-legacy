@@ -270,3 +270,47 @@ test("a deprecated alias in the middle of a chain is reported at the default imp
     "u.mts(4,24): suggestion TS6385: 'x2' is deprecated.",
   ]);
 });
+
+// A named import of a module that has both export = and a named export of the same name: the member of the exported
+// value is the value and the module's own export is an alias, and the checker combines the two into a symbol it makes
+// (combineValueAndTypeSymbols). That made symbol has the alias flag. In a ring of such modules the walks meet it; it is
+// stored on the asking alias, so the ring is over finitely many symbols and the programs are checked to the end.
+// The expected diagnostics are recorded observations of this checker, not derived from a rule and not an outside
+// reference: TypeScript 6.0.3's language service does not return from either ring (killed at 60 seconds after the first
+// file's TS2303 and TS2309), and for the program without a ring it reports TS2309 in addition to the one line here.
+test("a ring of named re-exports through modules that have export = and a named export of the same name is checked to the end; the combination without a ring gives the value and the type", () => {
+  const ring = check({
+    "/case/m1.d.cts": "import { x } from \"./m2.cjs\";\ndeclare const v1: { x: number };\nexport = v1;\nexport { x };\n",
+    "/case/m2.d.cts": "import { x } from \"./m1.cjs\";\ndeclare const v2: { x: number };\nexport = v2;\nexport { x };\n",
+    "/case/u.mts": "import { x } from \"./m1.cjs\";\nimport * as ns from \"./m1.cjs\";\nexport const a = [x, ns.x];\nexport type T = typeof x;\n",
+  });
+  assert.deepEqual(ring.errors, [
+    "m1.d.cts(1,10): error TS2303: Circular definition of import alias 'x'.",
+    "m1.d.cts(3,1): error TS2309: An export assignment cannot be used in a module with other exported elements.",
+    "m1.d.cts(4,10): error TS2303: Circular definition of import alias 'x'.",
+    "m2.d.cts(1,10): error TS2303: Circular definition of import alias 'x'.",
+    "m2.d.cts(3,1): error TS2309: An export assignment cannot be used in a module with other exported elements.",
+    "m2.d.cts(4,10): error TS2303: Circular definition of import alias 'x'.",
+  ]);
+  const typeAndValue = check({
+    "/case/m1.d.cts": "import { x } from \"./m2.cjs\";\ndeclare const v1: { x: number };\nexport = v1;\nexport { x };\n",
+    "/case/m2.d.cts": "import type { x } from \"./m1.cjs\";\ndeclare const v2: { x: number };\nexport = v2;\nexport type { x };\n",
+    "/case/u.mts": "import { x } from \"./m1.cjs\";\nexport const a = x;\nexport type T = x;\n",
+  });
+  assert.deepEqual(typeAndValue.errors, [
+    "m1.d.cts(1,10): error TS2303: Circular definition of import alias 'x'.",
+    "m1.d.cts(3,1): error TS2309: An export assignment cannot be used in a module with other exported elements.",
+    "m1.d.cts(4,10): error TS2303: Circular definition of import alias 'x'.",
+    "m2.d.cts(1,15): error TS2303: Circular definition of import alias 'x'.",
+    "m2.d.cts(3,1): error TS2309: An export assignment cannot be used in a module with other exported elements.",
+    "m2.d.cts(4,15): error TS2303: Circular definition of import alias 'x'.",
+    "u.mts(3,17): error TS2749: 'x' refers to a value, but is being used as a type here. Did you mean 'typeof x'?",
+  ]);
+  // The opposite: no ring. The value comes from the exported value's member, the type from the module's own export.
+  const combined = check({
+    "/case/t.d.ts": "export type x = string;\n",
+    "/case/m1.d.cts": "import type { x } from \"./t.js\";\ndeclare const v1: { x: number };\nexport = v1;\nexport type { x };\n",
+    "/case/u.mts": "import { x } from \"./m1.cjs\";\nexport const a: number = x;\nexport const b: x = \"s\";\nexport const wrong: x = 1;\n",
+  });
+  assert.deepEqual(combined.errors, ["u.mts(4,14): error TS2322: Type 'number' is not assignable to type 'string'."]);
+});
