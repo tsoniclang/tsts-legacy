@@ -3,6 +3,9 @@ import { test } from "node:test";
 import type { bool } from "../go/scalars.js";
 import { createCompilerSessionFromFiles, createInMemoryFileSystem, getBundledLibraryClosure } from "../index.js";
 import { FromMap } from "../internal/vfs/vfstest/vfstest.js";
+import { Parse as parsePackageJson } from "../internal/packagejson/packagejson.js";
+import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
+import { createCompilerHost, prepareSourceImports } from "../index.js";
 
 // The text of a file as the SDK delivers it to the parser, for the paths that carry source files, declaration files,
 // session documents and bundled declarations. Contract of a file read, from the Go original (decodeBytes): input with
@@ -94,4 +97,48 @@ test("bundled declarations are delivered without a leading mark and with their n
   }
   const core = sources.find(candidate => candidate.name === "lib.es2015.core.d.ts");
   assert.equal(core?.text.includes("either +0 or −0, the result is +0."), true, "U+2212 in a comment of lib.es2015.core.d.ts is delivered as written");
+});
+
+// A package.json is read through the file system (one leading mark removed) and its bytes are then given to the JSON
+// library, which, as the Go library does, reports a leading mark and ill-formed UTF-8 as errors. So a file with no
+// mark or one mark is parsed, and a file with two or more is not parseable.
+const packageJson = "{\"name\":\"caf\u00e9\",\"types\":\"./lib/main.d.ts\"}";
+
+test("the package.json parser accepts JSON bytes without a mark and reports a leading mark, ill-formed UTF-8 and malformed JSON as errors", () => {
+  const parse = (bytes: Uint8Array) => parsePackageJson(Array.from(bytes) as unknown as Parameters<typeof parsePackageJson>[0]);
+  const [fields, error] = parse(utf8(packageJson));
+  assert.equal(error, undefined);
+  assert.equal(fields.__tsgoEmbedded0?.Name.Value, "caf\u00e9", "non-ASCII text is kept");
+  assert.equal(fields.__tsgoEmbedded1?.Types.Value, "./lib/main.d.ts");
+  for (const marks of [1, 2, 3]) {
+    assert.notEqual(parse(utf8(mark.repeat(marks) + packageJson))[1], undefined, `${marks} leading mark(s) in the bytes are an error, not removed`);
+  }
+  assert.notEqual(parse(new Uint8Array())[1], undefined, "empty input");
+  assert.notEqual(parse(utf8("{\"name\":"))[1], undefined, "truncated input");
+  assert.notEqual(parse(new Uint8Array([0x7b, 0x22, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]))[1], undefined, "ill-formed UTF-8 inside a string");
+  // The opposite of malformed: a duplicate name is allowed and the last one is taken, as the Go call allows.
+  const [duplicate, duplicateError] = parse(utf8("{\"name\":\"a\",\"name\":\"b\"}"));
+  assert.equal(duplicateError, undefined);
+  assert.equal(duplicate.__tsgoEmbedded0?.Name.Value, "b");
+});
+
+test("module resolution reads a package.json with no mark or one leading mark, and treats one with two or three as not parseable", () => {
+  for (const [marks, resolved] of [[0, true], [1, true], [2, false], [3, false]] as const) {
+    const files = new Map<string, string>([
+      ["/src/tsconfig.json", JSON.stringify({ compilerOptions: { module: "nodenext", moduleResolution: "nodenext", noLib: true, types: [] }, files: ["/src/main.mts"] })],
+      ["/src/main.mts", "import { value } from \"pkg\";\nexport const use = value;\n"],
+      ["/src/node_modules/pkg/package.json", mark.repeat(marks) + packageJson],
+      ["/src/node_modules/pkg/lib/main.d.ts", "export declare const value: number;\n"],
+    ]);
+    const host = createCompilerHost({ currentDirectory: "/src", defaultLibraryPath: "/libs", includeBundledLibraries: false, cacheFileSystem: false,
+      fileSystem: createInMemoryFileSystem({ files, includeBundledLibraries: false, useCaseSensitiveFileNames: true }) });
+    const [config, configDiagnostics] = GetParsedCommandLineOfConfigFile("/src/tsconfig.json", undefined, undefined, host, undefined);
+    assert.equal((configDiagnostics ?? []).length, 0);
+    if (config === undefined) throw new Error("The fixture configuration was not parsed.");
+    const main = prepareSourceImports({ host, config }).files.find(candidate => candidate.fileName === "/src/main.mts");
+    // The package has no index file: its entry is found only through the "types" field of a parsed package.json.
+    assert.deepEqual(main?.references.map(reference => reference.resolution),
+      [resolved ? { kind: "resolved", fileName: "/src/node_modules/pkg/lib/main.d.ts" } : { kind: "unresolved" }],
+      `${marks} leading mark(s) in the file`);
+  }
 });

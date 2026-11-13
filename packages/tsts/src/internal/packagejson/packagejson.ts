@@ -255,6 +255,7 @@ export interface Fields {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/packagejson/packagejson.go::func::Parse","kind":"func","status":"implemented","sigHash":"4c992a9162975647c2c2d8ab3d90f1b0489695032a2311c82949afc07c4e45d3","bodyHash":"fa47abb81da5366c35b09cf693a9e82c424f521ee3c68a5f2b256a297aa43b12"}
+ * @tsgo-override {"category":"runtime-correctness","allow":["body"],"reason":"After the Go body's Unmarshal has accepted the bytes, the fields are built by decodeFields from a second parse of the same bytes. That second decode keeps a leading byte-order mark (which JSON.parse rejects) and throws on ill-formed UTF-8, as the Go library reports both as errors; with a default decoder a package.json whose bytes still begin with a mark was parsed as if it had none."}
  *
  * Go source:
  * func Parse(data []byte) (Fields, error) {
@@ -272,7 +273,7 @@ export function Parse(data: GoSlice<byte>): [Fields, GoError] {
     return [{}, err];
   }
   try {
-    return [decodeFields(globalThis.JSON.parse(new globalThis.TextDecoder("utf-8").decode(new globalThis.Uint8Array(data as Array<number>)))), undefined];
+    return [decodeFields(globalThis.JSON.parse(new globalThis.TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new globalThis.Uint8Array(data as Array<number>)))), undefined];
   } catch (error) {
     return [{}, error instanceof globalThis.Error ? error : new globalThis.Error(String(error))];
   }

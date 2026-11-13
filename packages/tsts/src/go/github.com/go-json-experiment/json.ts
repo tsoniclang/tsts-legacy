@@ -5,7 +5,10 @@ import type { Decoder, Encoder, Option } from "./json/jsontext.js";
 import { NewDecoder, NewEncoder, writeTo } from "./json/jsontext.js";
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+// Unmarshal takes UTF-8 bytes of a JSON text. The Go library reports a leading byte-order mark ("invalid character
+// '\ufeff' at start of value") and ill-formed UTF-8 as errors. A decoder with default options would remove the mark and
+// replace ill-formed bytes; this one keeps the mark, which JSON.parse then rejects, and throws on ill-formed bytes.
+const unmarshalDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export interface Options extends Option {
   readonly __jsonOptions?: never;
@@ -63,7 +66,7 @@ export function MarshalWrite(writer: Writer, value: unknown, ...opts: Array<Opti
 export function Unmarshal(data: GoSlice<byte>, out: unknown, ...opts: Array<Options>): GoError {
   void opts;
   try {
-    assignDecoded(out, JSON.parse(textDecoder.decode(Uint8Array.from(data as Array<number>))));
+    assignDecoded(out, JSON.parse(unmarshalDecoder.decode(Uint8Array.from(data as Array<number>))));
     return undefined;
   } catch (error) {
     return toError(error);
