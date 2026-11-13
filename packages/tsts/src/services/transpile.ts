@@ -15,7 +15,7 @@ import {
 } from "../internal/compiler/program.js";
 import { EmitOnlyDts, EmitOnlyJs } from "../internal/compiler/emitter.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
-import { FromASTDiagnostics, WriteFormatDiagnostics } from "../internal/diagnosticwriter/diagnosticwriter.js";
+import { FlattenDiagnosticMessage, FromASTDiagnostics, WriteFormatDiagnostics } from "../internal/diagnosticwriter/diagnosticwriter.js";
 import type { FormattingOptions } from "../internal/diagnosticwriter/diagnosticwriter.js";
 import { ParseCommandLine } from "../internal/tsoptions/commandlineparser.js";
 import { ParsedCommandLine_CompilerOptions } from "../internal/tsoptions/parsedcommandline.js";
@@ -118,6 +118,20 @@ export function formatDiagnostics(diagnostics: readonly Diagnostic[], currentDir
   };
   WriteFormatDiagnostics(output, FromASTDiagnostics([...diagnostics]), formattingOptions);
   return output.text;
+}
+
+/**
+ * The message text of one diagnostic, as the SDK's own diagnostic writer renders it: the diagnostic's message with its
+ * arguments substituted, then each message of its chain on a line of its own, indented two spaces per level of
+ * nesting. No file name, position, category or code, so the diagnostic need not have a file. Related information is
+ * separate diagnostics and is not part of the text.
+ */
+export function flattenDiagnosticMessageText(diagnostic: Diagnostic, newLine = "\n"): string {
+  const [rendered] = FromASTDiagnostics([diagnostic]);
+  if (rendered === undefined) {
+    throw new Error("The diagnostic writer returned nothing for one diagnostic.");
+  }
+  return FlattenDiagnosticMessage(rendered, newLine, DefaultLocale);
 }
 
 function transpileWorker(input: string, options: TranspileOptions, declaration: boolean): TranspileOutput {
