@@ -144,8 +144,9 @@ test("module resolution reads a package.json with no mark or one leading mark, a
   }
 });
 
-// The JSON library's Unmarshal, as its remaining callers reach it (the build-info reader and the source-map reader;
-// the package.json parser decodes its bytes itself). The Go library reports a leading mark and ill-formed UTF-8 as errors.
+// The JSON library's Unmarshal on bytes, as the source-map reader calls it (the package.json parser decodes its bytes
+// itself). The Go library reports a leading mark and ill-formed UTF-8 as errors. The build-info reader is not pinned by
+// this case: it passes the string it read, not bytes, and fails on every input, before and after these changes.
 test("the JSON unmarshal accepts bytes without a mark and reports a leading mark and ill-formed UTF-8 as errors", () => {
   const unmarshal = (bytes: Uint8Array): { readonly error: unknown; readonly out: Record<string, unknown> } => {
     const out: Record<string, unknown> = {};
@@ -157,4 +158,28 @@ test("the JSON unmarshal accepts bytes without a mark and reports a leading mark
   assert.notEqual(unmarshal(utf8(mark + "{\"version\":3}")).error, undefined, "a leading mark is an error, not removed");
   assert.notEqual(unmarshal(new Uint8Array([0x7b, 0x22, 0x66, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d])).error, undefined, "ill-formed UTF-8");
   assert.notEqual(unmarshal(utf8("{\"version\":")).error, undefined, "truncated input");
+});
+
+// The actual path of a package.json FILE differs from the parser on bytes in one respect. The file read replaces
+// ill-formed UTF-8 by U+FFFD, and the resolver gives the parser the re-encoded text, which is always well formed: the
+// parser's refusal of ill-formed bytes is reached by no file. Pinned TS-Go refuses such a manifest (TS2307); here it
+// is read. This case pins what the session does today; whether the file path is made exact is not decided here.
+test("a package.json file with ill-formed UTF-8 is read, with U+FFFD in place of the bytes, where the parser on bytes refuses them", () => {
+  const bytes = (text: string): number[] => Array.from(utf8(text));
+  // {"name":"<FF>","types":"./lib/main.d.ts"}
+  const manifest = new Uint8Array([...bytes("{\"name\":\""), 0xff, ...bytes("\",\"types\":\"./lib/main.d.ts\"}")]);
+  assert.notEqual(parsePackageJson(Array.from(manifest) as unknown as Parameters<typeof parsePackageJson>[0])[1], undefined, "the parser on these bytes: an error");
+  const fileSystem = FromMap(new Map<string, string | Uint8Array>([
+    ["/src/tsconfig.json", JSON.stringify({ compilerOptions: { module: "nodenext", moduleResolution: "nodenext", noLib: true, types: [] }, files: ["/src/main.mts"] })],
+    ["/src/main.mts", "import { value } from \"pkg\";\nexport const use = value;\n"],
+    ["/src/node_modules/pkg/package.json", manifest],
+    ["/src/node_modules/pkg/lib/main.d.ts", "export declare const value: number;\n"],
+  ]), true as bool);
+  assert.equal(fileSystem.ReadFile("/src/node_modules/pkg/package.json")[0].includes("\ufffd"), true, "the file read delivers U+FFFD");
+  const host = createCompilerHost({ currentDirectory: "/src", defaultLibraryPath: "/libs", includeBundledLibraries: false, cacheFileSystem: false, fileSystem });
+  const [config] = GetParsedCommandLineOfConfigFile("/src/tsconfig.json", undefined, undefined, host, undefined);
+  if (config === undefined) throw new Error("The fixture configuration was not parsed.");
+  const main = prepareSourceImports({ host, config }).files.find(candidate => candidate.fileName === "/src/main.mts");
+  assert.deepEqual(main?.references.map(reference => reference.resolution), [{ kind: "resolved", fileName: "/src/node_modules/pkg/lib/main.d.ts" }],
+    "the manifest is parsed and its types entry is used");
 });
