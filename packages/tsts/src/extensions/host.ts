@@ -197,8 +197,14 @@ type HostOwnedExtensionDiagnostic = ExtensionDiagnostic;
 
 interface ExtensionOwnerAuthority {
   readonly stack: string[];
-  /** The extension whose checked initializer capability is registering through the host now; null at every other time. */
-  registrant: string | null;
+  /**
+   * Provenance of one provider registration call; it grants nothing and is not "who is acting" (that is `stack`).
+   * One writer: ExtensionHost's #registerSourceDeclarationProviderForExtension sets it to the extension id it has
+   * just checked, for the one registry call it makes, and restores what was there. One reader: the provider
+   * registry's registration takes it and clears it as its first act, before it reads anything of the provider.
+   * Null at every other time.
+   */
+  pendingRegistrarExtensionId: string | null;
 }
 
 interface ExtensionFactMutation {
@@ -615,7 +621,10 @@ export interface ProviderVirtualDeclarationDocument {
   readonly moduleSpecifier: string;
   readonly providerModuleId: string;
   readonly provider: ProviderIdentity;
-  /** The id of the extension whose initializer registered `provider`; null when the embedding host registered it directly. */
+  /**
+   * The id of the extension whose initializer registered `provider`; null when the embedding host registered it
+   * directly. An extension id may be the empty string: compare with null, never by truthiness.
+   */
   readonly registrarExtensionId: string | null;
   readonly declarationModel: ProviderDeclarationModel;
   readonly sourceText: string;
@@ -698,7 +707,7 @@ export class ExtensionDiagnosticStore {
         diagnosticRanges: new Map(),
         savepoints: [],
         savepointStates: new WeakMap(),
-        ownerAuthority: { stack: [], registrant: null },
+        ownerAuthority: { stack: [], pendingRegistrarExtensionId: null },
         rangesSealed: false,
       };
       this.#ownerId = undefined;
@@ -1860,11 +1869,15 @@ export class ProviderRegistry {
   }
 
   /**
-   * The one registration. A provider object that is registered stays as it was registered: the call returns before
-   * any record is made. A new registration records who asked: the extension whose checked initializer capability
-   * the host is serving (the authority's registrant), or nobody (null) when the embedding host calls directly.
+   * The one registration. Who asked is taken first: the id the host left pending for this call (an extension's
+   * checked initializer capability), or null when the embedding host calls directly. It is cleared as it is taken,
+   * so nothing this call runs, a getter of the provider included, and no call nested in it can see it. A provider
+   * object that is registered stays as it was registered: the call returns before any record is made.
    */
   registerSourceDeclarationProvider(provider: SourceDeclarationProvider): boolean {
+    const authority = getDiagnosticStoreOwnerAuthority(this.#diagnostics);
+    const registrarExtensionId = authority.pendingRegistrarExtensionId;
+    authority.pendingRegistrarExtensionId = null;
     this.#assertHostOwnedRegistration("source declaration provider");
     if (this.#sourceDeclarationProviderRegistrations.has(provider)) {
       return true;
@@ -1873,10 +1886,7 @@ export class ProviderRegistry {
       this.#diagnostics.append(createRegistrationClosedDiagnostic("source declaration provider"));
       return false;
     }
-    const registration = snapshotSourceDeclarationProviderRegistration(
-      provider,
-      getDiagnosticStoreOwnerAuthority(this.#diagnostics).registrant,
-    );
+    const registration = snapshotSourceDeclarationProviderRegistration(provider, registrarExtensionId);
     if (registration.kind === "invalid") {
       this.#diagnostics.append(createHostDiagnostic({
         extensionCode: "INVALID_SOURCE_DECLARATION_PROVIDER",
@@ -3876,11 +3886,12 @@ export class ExtensionHost {
   ): boolean {
     this.#assertRegistrationOwner(extensionId, "source declaration provider");
     return runWithoutExtensionOwnerAuthority(this.#ownerAuthority, () => {
-      this.#ownerAuthority.registrant = extensionId;
+      const previous = this.#ownerAuthority.pendingRegistrarExtensionId;
+      this.#ownerAuthority.pendingRegistrarExtensionId = extensionId;
       try {
         return this.providers.registerSourceDeclarationProvider(provider);
       } finally {
-        this.#ownerAuthority.registrant = null;
+        this.#ownerAuthority.pendingRegistrarExtensionId = previous;
       }
     });
   }

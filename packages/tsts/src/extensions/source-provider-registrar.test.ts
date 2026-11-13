@@ -242,9 +242,17 @@ test("one extension registering the same object twice registers it once", () => 
     extensions: [registering("ext.repeat", [repeated, repeated, repeated], { results })],
   });
 
+  // The two repeat calls returned early; nothing of them is left for the next registration.
+  const direct = provider("test.direct", "@test/direct.js");
+  assert.equal(host.providers.registerSourceDeclarationProvider(direct), true);
+
   assert.deepEqual(results, [true, true, true]);
   assert.equal(resolvedDocument(host, "@test/repeated.js").registrarExtensionId, "ext.repeat");
-  assert.deepEqual(host.providers.getVirtualDeclarationDocuments().map((document) => document.provider.id), ["test.repeated"]);
+  assert.equal(resolvedDocument(host, "@test/direct.js").registrarExtensionId, null);
+  assert.deepEqual(
+    host.providers.getVirtualDeclarationDocuments().map((document) => document.provider.id).sort(),
+    ["test.direct", "test.repeated"],
+  );
   assert.deepEqual(host.diagnostics.all(), []);
 });
 
@@ -483,6 +491,53 @@ test("a registration asked from a provider callback during resolution is closed 
   assert.deepEqual(results, [false]);
   assert.equal(host.providers.resolveVirtualModule("@test/late.js").kind, "unowned");
   assert.ok(host.diagnostics.all().some((diagnostic) => diagnostic.extensionCode === "EXTENSION_REGISTRATION_CLOSED"));
+});
+
+test("a registry call made while an extension owner is active is refused and registers nothing", () => {
+  // During source analysis the analyzing extension is the active owner. Its direct call on the registry is refused
+  // by the registry's host-owned assertion, as it was before registrars existed.
+  const refused = provider("test.refused-direct", "@test/refused-direct.js");
+  const kept = provider("test.kept", "@test/kept.js");
+  let refusal = "";
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": "export const value = 1;",
+    },
+    compilerOptions: testNoLibCompilerOptions,
+    extensionHostOptions: {
+      extensions: [
+        registering("ext.1-kept", [kept]),
+        {
+          identity: { id: "ext.2-analyzing", version: "1.0.0" },
+          analyzeSource(): void {
+            const registry = getExtensionHost(session.program!)?.providers;
+            assert.ok(registry);
+            try {
+              registry.registerSourceDeclarationProvider(refused);
+            } catch (error) {
+              refusal = error instanceof Error ? error.message : String(error);
+            }
+          },
+        },
+      ],
+    },
+  });
+  session.checkSource();
+
+  assert.equal(
+    refusal,
+    "Extension 'ext.2-analyzing' must register source declaration provider state through its owner-bound initialization capability.",
+  );
+  const registry = getExtensionHost(session.program!)?.providers;
+  assert.ok(registry);
+  assert.equal(registry.resolveVirtualModule("@test/refused-direct.js").kind, "unowned");
+  const keptModule = registry.resolveVirtualModule("@test/kept.js");
+  assert.equal(keptModule.kind, "resolved");
+  if (keptModule.kind !== "resolved") assert.fail("The module registered in an initializer must resolve.");
+  assert.equal(keptModule.module.artifact.document.registrarExtensionId, "ext.1-kept");
 });
 
 test("every reader of a document returns the one document with its registrar", () => {
