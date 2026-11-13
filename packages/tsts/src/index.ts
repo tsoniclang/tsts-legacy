@@ -227,6 +227,12 @@ export {
   NodeFlagsNestedNamespace,
 } from "./internal/ast/generated/flags.js";
 export * from "./internal/ast/tokenflags.js";
+export * from "./internal/core/scriptkind.js";
+export { ScriptKind_String } from "./internal/core/scriptkind_stringer_generated.js";
+export * from "./internal/core/languagevariant.js";
+export { LanguageVariant_String } from "./internal/core/languagevariant_stringer_generated.js";
+export type { CommentDirective, CommentDirectiveKind } from "./internal/ast/ast.js";
+export { CommentDirectiveKindExpectError, CommentDirectiveKindIgnore, CommentDirectiveKindUnknown } from "./internal/ast/ast.js";
 export type { ContextFlags, Signature, Type } from "./internal/checker/types.js";
 export type {
   ResolvedCallApplicationEvidence,
