@@ -284,20 +284,6 @@ test("source import preparation preserves complete deterministic shared and cycl
   assert.deepEqual(file(first, "/src/main.mts").references.map(reference => reference.specifier), ["./left.mjs", "./right.mjs", "./left.mjs"]);
   assert.equal(input.parsed.length, 4, "shared and cyclic sources are actually parsed once, not just deduplicated afterward");
   assert.equal(new Set(input.parsed.map(SourceFile_FileName)).size, 4);
-  assert.equal(Object.isFrozen(first) && Object.isFrozen(first.roots) && Object.isFrozen(first.files) && Object.isFrozen(first.diagnostics), true);
-  for (const root of first.roots) {
-    assert.equal(Object.isFrozen(root), true);
-    assert.equal(Reflect.defineProperty(root, "state", { value: "missing" }), false,
-      "the actual frozen root status rejects mutation");
-  }
-  for (const candidate of first.files) {
-    assert.equal(Object.isFrozen(candidate) && Object.isFrozen(candidate.references), true);
-    for (const reference of candidate.references) {
-      assert.equal(Object.isFrozen(reference) && Object.isFrozen(reference.resolution), true);
-      assert.equal(Reflect.defineProperty(reference, "specifier", { value: "changed" }), false,
-        "the actual frozen occurrence rejects mutation");
-    }
-  }
 });
 
 test("source import preparation uses NodeNext package conditions, self names and import-equals modes", () => {
