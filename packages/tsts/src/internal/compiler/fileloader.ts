@@ -143,6 +143,8 @@ import {
 } from "./processingDiagnostic.js";
 import type { includeExplainingDiagnostic, processingDiagnostic } from "./processingDiagnostic.js";
 import type { ProgramOptions } from "./program.js";
+import { boundLibraryPriority, libraryBindingOf, selectedLibraryFile } from "./librarybinding.js";
+import type { LibraryBinding } from "./librarybinding.js";
 import {
   projectReferenceFileMapper_getCompilerOptionsForFile,
   projectReferenceFileMapper_getRedirectForResolution,
@@ -208,6 +210,7 @@ export interface sourceFileFromReferenceDiagnostic {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::type::fileLoader","kind":"type","status":"implemented","sigHash":"640c2e70b10d0f41c89ddbb8e17c1450c30708c7ecfe96ea898d3b1fcc7ac018","bodyHash":"a14a3a5e54fd3daccffc78fd299c9d164b8e65f28eacb7acaa08056aceec5d48"}
+ * @tsgo-override {"category":"embedding-host","allow":["signature"],"reason":"The loader holds the program's one library binding (librarybinding.ts) in place of defaultLibraryPath, which it replaces: in the directory kind the binding holds that same normalised directory; with the caller's selected library files it holds those. libraryDiagnostics keeps the unknown-library diagnostics of the default library and lib entries that the selection does not bind, for the include processor.","goSignature":"interface{addAutomaticTypeDirectiveTasks?:()=>void;addProjectReferenceTasks?:(packages/tsts/src/go/scalars.ts::bool)=>void;addRootFileTask?:(string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileInclude.ts::FileIncludeReason>)=>void;addRootTask?:(string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileInclude.ts::FileIncludeReason>)=>void;comparePathsOptions:packages/tsts/src/internal/tspath/path.ts::ComparePathsOptions;createSyntheticImport?:(string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::StringLiteralNode>;defaultLibraryPath:string;dtsDirectories:packages/tsts/src/internal/collections/set.ts::Set<packages/tsts/src/internal/tspath/path.ts::Path>;factory:packages/tsts/src/internal/ast/generated/factory.ts::NodeFactory;factoryMu:packages/tsts/src/go/sync.ts::Mutex;filesParser:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::filesParser>;getDefaultLibFilePriority?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>)=>packages/tsts/src/go/scalars.ts::int;getSourceFileFromReference?:(string,string,string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileInclude.ts::FileIncludeReason>)=>[string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::sourceFileFromReferenceDiagnostic>];isSupportedExtension?:(string)=>packages/tsts/src/go/scalars.ts::bool;libFileCount:packages/tsts/src/go/sync/atomic.ts::Int32;loadSourceFileMetaData?:(string)=>packages/tsts/src/internal/ast/ast.ts::SourceFileMetaData;opts:packages/tsts/src/internal/compiler/program.ts::ProgramOptions;parseSourceFile?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::parseTask>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>;pathForLibFile?:(string)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>;pathForLibFileCache:packages/tsts/src/internal/collections/syncmap.ts::SyncMap<string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>>;pathForLibFileResolutions:packages/tsts/src/internal/collections/syncmap.ts::SyncMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::libResolution>>;projectReferenceFileMapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/projectreferencefilemapper.ts::projectReferenceFileMapper>;resolveAutomaticTypeDirectives?:(string)=>[packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/internal/compiler/filesparser.ts::resolvedRef>,packages/tsts/src/internal/module/cache.ts::ModeAwareCache<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedTypeReferenceDirective>>,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/internal/module/resolver.ts::DiagAndArgs>,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/processingDiagnostic.ts::processingDiagnostic>>];resolveImportsAndModuleAugmentations?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::parseTask>)=>void;resolveLibrary?:(string,string)=>[packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedModule>,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/internal/module/resolver.ts::DiagAndArgs>];resolveTripleslashPathReference?:(string,string,packages/tsts/src/go/scalars.ts::int)=>[packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::resolvedRef>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/processingDiagnostic.ts::processingDiagnostic>];resolveTypeReferenceDirectives?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::parseTask>)=>void;resolver:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/resolver.ts::Resolver>;rootTasks:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::parseTask>>;sortLibs?:(packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>>)=>void;supportedExtensions:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoSlice<string>>;supportedExtensionsWithJsonIfResolveJsonModule:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoSlice<string>>;toPath?:(string)=>packages/tsts/src/internal/tspath/path.ts::Path;totalFileCount:packages/tsts/src/go/sync/atomic.ts::Int32}","tsSignature":"interface{comparePathsOptions:packages/tsts/src/internal/tspath/path.ts::ComparePathsOptions;dtsDirectories:packages/tsts/src/internal/collections/set.ts::Set<packages/tsts/src/internal/tspath/path.ts::Path>;factory:packages/tsts/src/internal/ast/generated/factory.ts::NodeFactory;factoryMu:packages/tsts/src/go/sync.ts::Mutex;filesParser:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::filesParser>;libFileCount:packages/tsts/src/go/sync/atomic.ts::Int32;libraries:packages/tsts/src/internal/compiler/librarybinding.ts::LibraryBinding;libraryDiagnostics:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/processingDiagnostic.ts::processingDiagnostic>>;opts:packages/tsts/src/internal/compiler/program.ts::ProgramOptions;pathForLibFileCache:packages/tsts/src/internal/collections/syncmap.ts::SyncMap<string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>>;pathForLibFileResolutions:packages/tsts/src/internal/collections/syncmap.ts::SyncMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::libResolution>>;projectReferenceFileMapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/projectreferencefilemapper.ts::projectReferenceFileMapper>;resolver:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/resolver.ts::Resolver>;rootTasks:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/filesparser.ts::parseTask>>;supportedExtensions:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoSlice<string>>;supportedExtensionsWithJsonIfResolveJsonModule:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoSlice<string>>;totalFileCount:packages/tsts/src/go/sync/atomic.ts::Int32}"}
  *
  * Go source:
  * fileLoader struct {
@@ -237,7 +240,8 @@ export interface sourceFileFromReferenceDiagnostic {
 export interface fileLoader {
   opts: ProgramOptions;
   resolver: GoPtr<Resolver>;
-  defaultLibraryPath: string;
+  libraries: LibraryBinding;
+  libraryDiagnostics: GoSlice<GoPtr<processingDiagnostic>>;
   comparePathsOptions: ComparePathsOptions;
   supportedExtensions: GoSlice<GoSlice<string>>;
   supportedExtensionsWithJsonIfResolveJsonModule: GoSlice<GoSlice<string>>;
@@ -638,6 +642,7 @@ export function redirectsFile_Path(receiver: GoPtr<redirectsFile>): Path_9073472
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::type::processedFiles","kind":"type","status":"implemented","sigHash":"7943b133480b0774cf9dcb87dcbd11f23c130fb74645e79c839af3bd8c17afbe","bodyHash":"cc8bfc2d42bb25fc775d0d74db74cd221d078e197d83632870b68b149875039e"}
+ * @tsgo-override {"category":"embedding-host","allow":["signature"],"reason":"processedFiles hands out the loader's one library binding, so that the source import preparation reads the binding the loader used instead of deriving a second one.","goSignature":"interface{duplicateSourceFiles:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::DuplicateSourceFile>>;files:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>>;filesByPath:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>>;finishedProcessing:packages/tsts/src/go/scalars.ts::bool;importHelpersImportSpecifiers:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::StringLiteralNode>>;includeProcessor:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/includeprocessor.ts::includeProcessor>;jsxRuntimeImportSpecifiers:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::jsxRuntimeImportSpecifier>>;libFiles:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>>;missingFiles:packages/tsts/src/go/compat.ts::GoSlice<string>;outputFileToProjectReferenceSource:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,string>;projectReferenceFileMapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/projectreferencefilemapper.ts::projectReferenceFileMapper>;redirectFilesByPath:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::redirectsFile>>;redirectTargetsMap:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoSlice<string>>;resolvedModules:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/module/cache.ts::ModeAwareCache<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedModule>>>;resolver:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/resolver.ts::Resolver>;sourceFileMetaDatas:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/ast/ast.ts::SourceFileMetaData>;sourceFilesFoundSearchingNodeModules:packages/tsts/src/internal/collections/set.ts::Set<packages/tsts/src/internal/tspath/path.ts::Path>;typeResolutionsInFile:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/module/cache.ts::ModeAwareCache<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedTypeReferenceDirective>>>}","tsSignature":"interface{duplicateSourceFiles:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::DuplicateSourceFile>>;files:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>>;filesByPath:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::SourceFileNode>>;finishedProcessing:packages/tsts/src/go/scalars.ts::bool;importHelpersImportSpecifiers:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/unions.ts::StringLiteralNode>>;includeProcessor:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/includeprocessor.ts::includeProcessor>;jsxRuntimeImportSpecifiers:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::jsxRuntimeImportSpecifier>>;libFiles:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::LibFile>>;libraries:packages/tsts/src/internal/compiler/librarybinding.ts::LibraryBinding;missingFiles:packages/tsts/src/go/compat.ts::GoSlice<string>;outputFileToProjectReferenceSource:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,string>;projectReferenceFileMapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/projectreferencefilemapper.ts::projectReferenceFileMapper>;redirectFilesByPath:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/fileloader.ts::redirectsFile>>;redirectTargetsMap:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/go/compat.ts::GoSlice<string>>;resolvedModules:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/module/cache.ts::ModeAwareCache<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedModule>>>;resolver:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/resolver.ts::Resolver>;sourceFileMetaDatas:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/ast/ast.ts::SourceFileMetaData>;sourceFilesFoundSearchingNodeModules:packages/tsts/src/internal/collections/set.ts::Set<packages/tsts/src/internal/tspath/path.ts::Path>;typeResolutionsInFile:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/tspath/path.ts::Path,packages/tsts/src/internal/module/cache.ts::ModeAwareCache<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedTypeReferenceDirective>>>}"}
  *
  * Go source:
  * processedFiles struct {
@@ -684,6 +689,7 @@ export interface processedFiles {
   jsxRuntimeImportSpecifiers: GoMap<Path_9073472b, GoPtr<jsxRuntimeImportSpecifier>>;
   importHelpersImportSpecifiers: GoMap<Path_9073472b, GoPtr<StringLiteralNode>>;
   libFiles: GoMap<Path_9073472b, GoPtr<LibFile>>;
+  libraries: LibraryBinding;
   sourceFilesFoundSearchingNodeModules: Set<Path_9073472b>;
   includeProcessor: GoPtr<includeProcessor>;
   outputFileToProjectReferenceSource: GoMap<Path_9073472b, string>;
@@ -708,6 +714,7 @@ export interface jsxRuntimeImportSpecifier {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::func::processAllProgramFiles","kind":"func","status":"implemented","sigHash":"e38059a13537c31d50a7ef49c7d0d511f7b51bcbfa1e1375a459fe88a6b62a6f","bodyHash":"d480563f6ce2ad89532596ed6fb94becd172fbecf039dc11100a6f4651d5f558"}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The loader's library binding is derived once from ProgramOptions (librarybinding.ts: the default library directory, or the caller's selected library files) and handed out in processedFiles; the default library and each lib entry are rooted through it, and a name the selected files do not bind is reported (TS2726) instead of being looked for in the default directory. Ordinary input keeps the directory rule exactly."}
  *
  * Go source:
  * func processAllProgramFiles(
@@ -787,7 +794,8 @@ export function processAllProgramFiles(opts: ProgramOptions, singleThreaded: boo
   const loader: fileLoader = {
     opts: opts,
     resolver: undefined,
-    defaultLibraryPath: GetNormalizedAbsolutePath(opts.Host.DefaultLibraryPath(), opts.Host.GetCurrentDirectory()),
+    libraries: libraryBindingOf(opts),
+    libraryDiagnostics: [],
     comparePathsOptions: {
       UseCaseSensitiveFileNames: opts.Host.FS().UseCaseSensitiveFileNames(),
       CurrentDirectory: opts.Host.GetCurrentDirectory(),
@@ -831,28 +839,38 @@ export function processAllProgramFiles(opts: ProgramOptions, singleThreaded: boo
       if (compilerOptions!.Lib === undefined) {
         const name = GetDefaultLibFileName(compilerOptions);
         const libFile = fileLoader_pathForLibFile(loader, name);
-        fileLoader_addRootTask(loader, libFile!.path, libFile, {
+        const includeReason: FileIncludeReason = {
           kind: fileIncludeKindLibFile,
           data: undefined,
           relativeFileNameDiag: undefined,
           relativeFileNameDiagOnce: new OnceImpl(),
           diag: undefined,
           diagOnce: new OnceImpl(),
-        });
+        };
+        if (libFile === undefined) {
+          loader.libraryDiagnostics.push({ kind: processingDiagnosticKindUnknownReference, data: includeReason });
+        } else {
+          fileLoader_addRootTask(loader, libFile.path, libFile, includeReason);
+        }
       } else {
         for (let index = 0; index < compilerOptions!.Lib.length; index++) {
           const lib = compilerOptions!.Lib[index]!;
           const [name, ok] = GetLibFileName(lib);
           if (ok) {
             const libFile = fileLoader_pathForLibFile(loader, name);
-            fileLoader_addRootTask(loader, libFile!.path, libFile, {
+            const includeReason: FileIncludeReason = {
               kind: fileIncludeKindLibFile,
               data: index,
               relativeFileNameDiag: undefined,
               relativeFileNameDiagOnce: new OnceImpl(),
               diag: undefined,
               diagOnce: new OnceImpl(),
-            });
+            };
+            if (libFile === undefined) {
+              loader.libraryDiagnostics.push({ kind: processingDiagnosticKindUnknownReference, data: includeReason });
+            } else {
+              fileLoader_addRootTask(loader, libFile.path, libFile, includeReason);
+            }
           }
           // !!! error on unknown name
         }
@@ -1249,6 +1267,7 @@ export function fileLoader_sortLibs(receiver: GoPtr<fileLoader>, libFiles: GoSli
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::method::fileLoader.getDefaultLibFilePriority","kind":"method","status":"implemented","sigHash":"29ee2103e7fd671229456e38cd308ceb42905ea2e5b1483bf0abda56ec00b434","bodyHash":"c9c7c67c7b3230a46837eb0ed7c5266c270e35b95f8e8fba8e5cd2ec6813e08a"}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The order is the program's one library binding's (librarybinding.ts boundLibraryPriority): in the directory kind exactly the Go body's prefix and base-name rule, moved there unchanged; for selected library files by the names bound to the file's path."}
  *
  * Go source:
  * func (p *fileLoader) getDefaultLibFilePriority(a *ast.SourceFile) int {
@@ -1272,20 +1291,7 @@ export function fileLoader_sortLibs(receiver: GoPtr<fileLoader>, libFiles: GoSli
  * }
  */
 export function fileLoader_getDefaultLibFilePriority(receiver: GoPtr<fileLoader>, a: GoPtr<SourceFile>): int {
-  const defaultLibraryPath = RemoveTrailingDirectorySeparator(receiver!.defaultLibraryPath);
-  const aFileName = SourceFile_FileName(a);
-  if (strings.HasPrefix(aFileName, defaultLibraryPath) && aFileName.length > defaultLibraryPath.length && aFileName.charCodeAt(defaultLibraryPath.length) === DirectorySeparator) {
-    const basename = aFileName.slice(strings.LastIndexByte(aFileName, DirectorySeparator) + 1);
-    if (basename === "lib.d.ts" || basename === "lib.es6.d.ts") {
-      return 0;
-    }
-    const name = strings.TrimSuffix(strings.TrimPrefix(basename, "lib."), ".d.ts");
-    const index = slices.Index(Libs, name);
-    if (index !== -1) {
-      return index + 1;
-    }
-  }
-  return Libs.length + 2;
+  return boundLibraryPriority(receiver!.libraries, SourceFile_FileName(a), SourceFile_Path(a));
 }
 
 /**
@@ -1980,6 +1986,7 @@ export function fileLoader_createSyntheticImport(receiver: GoPtr<fileLoader>, te
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::method::fileLoader.pathForLibFile","kind":"method","status":"implemented","sigHash":"b2680645d713772d080c54de200347fdb7ec655d4e99847a4093a2537faf0b06","bodyHash":"4960e9e4f465d31610cfae01bf77be4f15ffa0837bb4c20873f17ee46da65e30"}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The library file of a name is the program's library binding's (librarybinding.ts): in the directory kind CombinePaths of the default library directory and the name, as the Go body, then the libReplacement resolution; for selected library files the bound file or none, with no replacement and no default directory."}
  *
  * Go source:
  * func (p *fileLoader) pathForLibFile(name string) *LibFile {
@@ -2013,9 +2020,13 @@ export function fileLoader_pathForLibFile(receiver: GoPtr<fileLoader>, name: str
   if (ok) {
     return cached;
   }
-  let path = CombinePaths(receiver!.defaultLibraryPath, name);
+  const selected = selectedLibraryFile(receiver!.libraries, name);
+  if (selected === undefined) {
+    return undefined;
+  }
+  let path = selected;
   let replaced = false;
-  if (Tristate_IsTrue(ParsedCommandLine_CompilerOptions(receiver!.opts.Config)!.LibReplacement) && name !== "lib.d.ts") {
+  if (receiver!.libraries.kind === "directory" && Tristate_IsTrue(ParsedCommandLine_CompilerOptions(receiver!.opts.Config)!.LibReplacement) && name !== "lib.d.ts") {
     const libraryName = getLibraryNameFromLibFileName(name);
     const resolveFrom = getInferredLibraryNameResolveFrom(ParsedCommandLine_CompilerOptions(receiver!.opts.Config), receiver!.opts.Host.GetCurrentDirectory(), name);
     const [resolution, trace] = fileLoader_resolveLibrary(receiver, libraryName, resolveFrom);

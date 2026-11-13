@@ -16,10 +16,19 @@ import { GetLibFileName } from "../internal/tsoptions/enummaps.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
 import { ParsedCommandLine_FileNames, ParsedCommandLine_GetConfigFileParsingDiagnostics } from "../internal/tsoptions/parsedcommandline.js";
 import { ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
+import { selectedLibraryFile } from "../internal/compiler/librarybinding.js";
+import type { LibFile } from "../internal/compiler/fileloader.js";
+import type { GoPtr } from "../go/compat.js";
 
 export interface SourceImportPreparationInput {
   readonly host: CompilerHost;
   readonly config: ParsedCommandLine;
+  /**
+   * The program's library files, selected by the caller: library file name (as the compiler's lib names map to
+   * files, e.g. "lib.es5.d.ts") to the file of the program that is that library. When given, an empty map included,
+   * it is the only source of library files; when absent, the host's default library directory is.
+   */
+  readonly libraryFiles?: ReadonlyMap<string, string>;
 }
 
 type SourceReferenceSyntax =
@@ -94,8 +103,29 @@ function resolution(fileName: string | undefined): SourceImportPreparationRefere
     : { kind: "resolved", fileName };
 }
 
+/**
+ * The file the loader actually loaded for each library name, from its library records, derived once per preparation.
+ * A record exists for a library the loader loaded (by a lib entry or a directive, its replacement included) and, for
+ * the caller's selected library files, for a bound file of the program however it entered, under the bound name that
+ * orders first. The loader keeps one file per name, so a second record of a name with another file is an invariant
+ * failure.
+ */
+export function loadedLibraryFilesByName(records: Iterable<GoPtr<LibFile>>): ReadonlyMap<string, string> {
+  const files = new Map<string, string>();
+  for (const record of records) {
+    if (record === undefined) continue;
+    const existing = files.get(record.Name);
+    if (existing !== undefined && existing !== record.path) {
+      throw new Error(`Invariant: the loader recorded two files for library '${record.Name}': '${existing}' and '${record.path}'.`);
+    }
+    files.set(record.Name, record.path);
+  }
+  return files;
+}
+
 export function prepareSourceImports(input: SourceImportPreparationInput): SourceImportPreparation {
-  const processed = processAllProgramFiles({ Host: input.host, Config: input.config }, true);
+  const processed = processAllProgramFiles({ Host: input.host, Config: input.config,
+    ...(input.libraryFiles === undefined ? {} : { SelectedLibraries: input.libraryFiles }) }, true);
   const files: SourceImportPreparationFile[] = [];
   const diagnostics: Diagnostic[] = [];
   const diagnosticIdentities = new Set<Diagnostic>();
@@ -116,6 +146,7 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       for (const diagnostic of resolved?.ResolutionDiagnostics ?? []) addDiagnostic(diagnostic);
     }
   }
+  const loadedLibraries = loadedLibraryFilesByName(processed.libFiles.values());
   const canonicalPath = (fileName: string): string => ToPath(fileName,
     input.host.GetCurrentDirectory(), input.host.FS().UseCaseSensitiveFileNames());
   const roots = ParsedCommandLine_FileNames(input.config).map(fileName => ({
@@ -171,13 +202,14 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       } else {
         const [name, known] = GetLibFileName(reference.FileName);
         if (known) {
-          for (const library of processed.libFiles.values()) {
-            if (library?.Name === name) {
-              const targetFile = processed.filesByPath.get(canonicalPath(library.path));
-              if (targetFile !== undefined) resolvedFileName = SourceFile_FileName(targetFile);
-              break;
-            }
-          }
+          // The library file of that name is the program's library binding's, the one the loader derived (the
+          // default library directory, or the caller's selected library files). When the loader loaded a library of
+          // that name, its file is used (one lookup in the index derived once above): it can differ only where the
+          // loader resolved a replacement (default directory, noLib false). The row is resolved only when the program
+          // contains that file; nothing is loaded or probed here.
+          const libraryPath = loadedLibraries.get(name) ?? selectedLibraryFile(processed.libraries, name);
+          const targetFile = libraryPath === undefined ? undefined : processed.filesByPath.get(canonicalPath(libraryPath));
+          if (targetFile !== undefined) resolvedFileName = SourceFile_FileName(targetFile);
         }
       }
       const range = utf16Range(TextRange_Pos(reference), TextRange_End(reference));
