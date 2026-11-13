@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { prepareSourceImports } from "../index.js";
+import { loadedLibraryFilesByName } from "./source-import-preparation.js";
 import type { SourceImportPreparation, SourceImportPreparationFile, SourceImportPreparationReference } from "../index.js";
 import type { SourceFile } from "../internal/ast/ast.js";
 import { SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports } from "../internal/ast/ast.js";
@@ -691,6 +692,61 @@ test("a selected name that is not a library file name of the compiler is refused
   const input = fixture(new Map([["/src/main.ts", "export {};\n"]]), ["/src/main.ts"]);
   assert.throws(() => prepareSourceImports({ ...input, libraryFiles: new Map([["es5", "/cap/a/es5.d.ts"]]) }),
     { name: "TypeError", message: "Selected library 'es5' is not a library file name of the compiler." });
+});
+
+test("the loaded-library index is derived in one pass over the loader's records, and lookups do not read the records again", () => {
+  let reads = 0;
+  const records = [
+    { Name: "lib.es5.d.ts", path: "/libs/lib.es5.d.ts", Replaced: false },
+    { Name: "lib.es2015.core.d.ts", path: "/libs/lib.es2015.core.d.ts", Replaced: false },
+    { Name: "lib.dom.d.ts", path: "/node_modules/@typescript/lib-dom/index.d.ts", Replaced: true },
+  ];
+  function* counted() {
+    for (const record of records) {
+      reads += 1;
+      yield record;
+    }
+  }
+  const index = loadedLibraryFilesByName(counted());
+  assert.equal(reads, records.length);
+  for (let lookup = 0; lookup < 1000; lookup += 1) {
+    assert.equal(index.get(lookup % 2 === 0 ? "lib.es5.d.ts" : "lib.dom.d.ts"), lookup % 2 === 0 ? "/libs/lib.es5.d.ts" : "/node_modules/@typescript/lib-dom/index.d.ts");
+  }
+  assert.equal(reads, records.length, "a lookup reads no record");
+  assert.equal(index.get("lib.es2015.d.ts"), undefined);
+});
+
+test("the loaded-library index refuses two files recorded for one library name", () => {
+  const same = loadedLibraryFilesByName([
+    { Name: "lib.es5.d.ts", path: "/cap/es5.d.ts", Replaced: false },
+    { Name: "lib.es5.d.ts", path: "/cap/es5.d.ts", Replaced: false },
+  ]);
+  assert.equal(same.get("lib.es5.d.ts"), "/cap/es5.d.ts");
+  assert.throws(() => loadedLibraryFilesByName([
+    { Name: "lib.es5.d.ts", path: "/cap/a.d.ts", Replaced: false },
+    { Name: "lib.es5.d.ts", path: "/cap/b.d.ts", Replaced: false },
+  ]), { message: "Invariant: the loader recorded two files for library 'lib.es5.d.ts': '/cap/a.d.ts' and '/cap/b.d.ts'." });
+});
+
+test("many directives naming libraries each resolve through the one index", () => {
+  const directives = Array.from({ length: 40 }, (_, index) => index % 2 === 0 ? '/// <reference lib="es5" />' : '/// <reference lib="es2015.core" />');
+  const inputs = new Map([["/src/main.ts", [...directives, "export {};", ""].join("\n")],
+    ["/libs/lib.es5.d.ts", "interface Es5 {}\n"], ["/libs/lib.es2015.core.d.ts", "interface Es2015Core {}\n"]]);
+  const loaded = prepareSourceImports(fixture(inputs, ["/src/main.ts"], { noLib: false, lib: [] }));
+  const rows = libraryRows(loaded, "/src/main.ts");
+  assert.equal(rows.length, 40);
+  assert.equal(rows.every((row, index) => row[3] === (index % 2 === 0 ? "/libs/lib.es5.d.ts" : "/libs/lib.es2015.core.d.ts")), true);
+});
+
+test("two library names bound to one captured file both resolve to it under noLib", () => {
+  const inputs = new Map([["/src/main.ts", '/// <reference lib="es5" />\n/// <reference lib="es2015.core" />\nexport {};\n'],
+    ["/cap/shared.d.ts", "interface Shared {}\n"]]);
+  const result = prepareSourceImports({ ...fixture(inputs, ["/src/main.ts", "/cap/shared.d.ts"]),
+    libraryFiles: new Map([["lib.es5.d.ts", "/cap/shared.d.ts"], ["lib.es2015.core.d.ts", "/cap/shared.d.ts"]]) });
+  assert.deepEqual(libraryRows(result, "/src/main.ts"), [
+    ["reference-lib", "es5", "none", "/cap/shared.d.ts"],
+    ["reference-lib", "es2015.core", "none", "/cap/shared.d.ts"],
+  ]);
 });
 
 test("source import preparation executes real parser and resolver without constructing compiler semantic owners", () => {
