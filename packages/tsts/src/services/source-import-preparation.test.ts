@@ -362,7 +362,7 @@ test("source import preparation preserves parser identity and factual loaded, em
   assert.deepEqual(file(result, "/src/main.mts").references.map(reference => reference.resolution.kind), ["unresolved", "unresolved"]);
 });
 
-test("source import preparation retains independent equal-text documents and original UTF8 spans", () => {
+test("source import preparation retains independent equal-text documents and UTF-16 spans of the parsed text", () => {
   const source = 'const label = "λ"; import "./dep.mjs";';
   const input = fixture(new Map([["/src/first.mts", source], ["/src/second.mts", source], ["/src/dep.mts", "export {};"],
   ]), ["/src/first.mts", "/src/second.mts"]);
@@ -373,9 +373,40 @@ test("source import preparation retains independent equal-text documents and ori
     assert.equal(references.length, 1);
     const reference = references[0];
     if (reference === undefined) throw new Error("The expected original import is absent.");
-    assert.equal(reference.start, Buffer.from(source).indexOf('"./dep.mjs"'));
-    assert.equal(reference.length, Buffer.byteLength('"./dep.mjs"'));
+    // The character before the import is two UTF-8 bytes and one UTF-16 unit, so the two offsets differ.
+    assert.notEqual(Buffer.from(source).indexOf('"./dep.mjs"'), source.indexOf('"./dep.mjs"'));
+    assert.equal(reference.start, source.indexOf('"./dep.mjs"'));
+    assert.equal(reference.length, '"./dep.mjs"'.length);
+    assert.equal(source.slice(reference.start, reference.start + reference.length), '"./dep.mjs"');
   }
+});
+
+test("source import preparation reports UTF-16 spans after one-, two-, three- and four-byte characters, for directives and imports", () => {
+  // Leading comment: U+0041 (1 byte), U+00E9 (2 bytes), U+20AC (3 bytes), U+1F600 (4 bytes, a surrogate pair in UTF-16).
+  const header = "// A\u00e9\u20ac\u{1f600}";
+  const directiveToken = "./ambient.d.ts";
+  const importToken = '"./d\u00e9p.mjs"';
+  const source = [header, `/// <reference path="${directiveToken}" />`, `const label = "\u{1f600}"; import ${importToken};`].join("\n");
+  const input = fixture(new Map([["/src/main.mts", source], ["/src/ambient.d.ts", "declare const ambient: number;"],
+    ["/src/d\u00e9p.mts", "export {};"]]), ["/src/main.mts"]);
+  const result = prepareSourceImports(input);
+  assert.equal(result.diagnostics.length, 0);
+  const references = file(result, "/src/main.mts").references;
+  assert.deepEqual(references.map(reference => [reference.kind, reference.specifier]),
+    [["reference-path", directiveToken], ["import", "./d\u00e9p.mjs"]]);
+  const [directive, imported] = references;
+  if (directive === undefined || imported === undefined) throw new Error("The expected references are absent.");
+  const directiveStart = source.indexOf(directiveToken);
+  const importStart = source.indexOf(importToken);
+  // Each expected offset is in UTF-16 units of the text and differs from its UTF-8 byte offset.
+  assert.notEqual(Buffer.byteLength(source.slice(0, directiveStart)), directiveStart);
+  assert.notEqual(Buffer.byteLength(source.slice(0, importStart)), importStart);
+  assert.notEqual(Buffer.byteLength(importToken), importToken.length);
+  assert.deepEqual({ start: directive.start, length: directive.length }, { start: directiveStart, length: directiveToken.length });
+  assert.deepEqual({ start: imported.start, length: imported.length }, { start: importStart, length: importToken.length });
+  assert.equal(source.slice(directive.start, directive.start + directive.length), directiveToken);
+  assert.equal(source.slice(imported.start, imported.start + imported.length), importToken);
+  assert.deepEqual(imported.resolution, { kind: "resolved", fileName: "/src/d\u00e9p.mts" });
 });
 
 test("source import preparation retains invalid configuration instead of returning an empty successful result", () => {

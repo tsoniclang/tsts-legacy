@@ -1,6 +1,7 @@
 import type { FileReference, Node } from "../internal/ast/ast.js";
-import { Node_Text, SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports, SourceFile_JSDiagnostics, SourceFile_JSDocDiagnostics, SourceFile_Path, SourceFile_as_ast_HasFileName } from "../internal/ast/ast.js";
+import { Node_Text, SourceFile_Diagnostics, SourceFile_FileName, SourceFile_GetPositionMap, SourceFile_Imports, SourceFile_JSDiagnostics, SourceFile_JSDocDiagnostics, SourceFile_Path, SourceFile_as_ast_HasFileName } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
+import { PositionMap_UTF8ToUTF16 } from "../internal/ast/positionmap.js";
 import { IsExportDeclaration, IsExternalModuleReference, IsImportDeclaration, IsImportEqualsDeclaration, IsImportTypeNode, IsJSImportDeclaration, IsLiteralTypeNode, IsModuleBlock, IsModuleDeclaration, IsSourceFile } from "../internal/ast/generated/predicates.js";
 import { Node_End } from "../internal/ast/spine.js";
 import { IsAmbientModule, IsImportCall, IsRequireCall, WalkUpParenthesizedExpressions } from "../internal/ast/utilities.js";
@@ -29,6 +30,8 @@ type SourceReferenceSyntax =
 
 export type SourceImportPreparationReference = SourceReferenceSyntax & {
   readonly specifier: string;
+  // UTF-16 code-unit offset and length in the source file's text as the SDK parsed it,
+  // the same unit and text as AstReader.authoredRange and AstReader.sourceRange.
   readonly start: number;
   readonly length: number;
   readonly mode: "import" | "require" | "none";
@@ -125,6 +128,14 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       processed.projectReferenceFileMapper, SourceFile_as_ast_HasFileName(sourceFile));
     const references: SourceImportPreparationReference[] = [];
     const referenceNodes = new Set<Node>();
+    // The parser's positions are UTF-8 byte offsets. Both ends of every range are converted
+    // through the source file's own position map; a byte length is never used as a length.
+    const positionMap = SourceFile_GetPositionMap(sourceFile);
+    if (positionMap === undefined) throw new Error("The syntax-only file loader returned a source file without a position map.");
+    const utf16Range = (startByte: number, endByte: number): { readonly start: number; readonly length: number } => {
+      const start = PositionMap_UTF8ToUTF16(positionMap, startByte);
+      return { start, length: PositionMap_UTF8ToUTF16(positionMap, endByte) - start };
+    };
     for (const diagnostic of SourceFile_Diagnostics(sourceFile)) addDiagnostic(diagnostic);
     for (const diagnostic of SourceFile_JSDiagnostics(sourceFile) ?? []) addDiagnostic(diagnostic);
     for (const diagnostic of SourceFile_JSDocDiagnostics(sourceFile) ?? []) addDiagnostic(diagnostic);
@@ -135,9 +146,9 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       const specifier = Node_Text(node);
       const mode = getModeForUsageLocation(fileName, metadata, node, options);
       const resolved = processed.resolvedModules.get(path)?.get({ Name: specifier, Mode: mode });
-      const start = GetTokenPosOfNode(node, sourceFile, false);
-      references.push(Object.freeze({ ...referenceSyntax(node), specifier, start,
-        length: Node_End(node) - start, mode: referenceMode(mode), resolution: resolution(resolved?.ResolvedFileName) }));
+      const range = utf16Range(GetTokenPosOfNode(node, sourceFile, false), Node_End(node));
+      references.push(Object.freeze({ ...referenceSyntax(node), specifier, start: range.start,
+        length: range.length, mode: referenceMode(mode), resolution: resolution(resolved?.ResolvedFileName) }));
     }
     const addReference = (reference: FileReference | undefined,
       kind: "reference-path" | "reference-types" | "reference-lib"): void => {
@@ -165,8 +176,9 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
           }
         }
       }
+      const range = utf16Range(TextRange_Pos(reference), TextRange_End(reference));
       references.push(Object.freeze({ kind, placement: "directive", specifier: reference.FileName,
-        start: TextRange_Pos(reference), length: TextRange_End(reference) - TextRange_Pos(reference),
+        start: range.start, length: range.length,
         mode, resolution: resolution(resolvedFileName) }));
     };
     for (const reference of sourceFile.ReferencedFiles) addReference(reference, "reference-path");
