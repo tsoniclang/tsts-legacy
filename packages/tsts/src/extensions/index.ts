@@ -103,7 +103,6 @@ export type {
   SourceAnalysisFactAccess,
   SourceAnalysisFactResolver,
   SourceDeclarationProvider,
-  SourceDeclarationProviderRegistrar,
   SourceDeclarationMaterializationMode,
 } from "./host.js";
 export type {

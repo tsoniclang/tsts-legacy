@@ -184,7 +184,6 @@ const providerRegistryCreateRegistrationSavepoint: unique symbol = Symbol("tsts.
 const providerRegistryAssertCanCommitRegistrationSavepoint: unique symbol = Symbol("tsts.provider.assertCanCommitRegistrationSavepoint");
 const providerRegistryCommitRegistrationSavepoint: unique symbol = Symbol("tsts.provider.commitRegistrationSavepoint");
 const providerRegistryRollbackRegistrationSavepoint: unique symbol = Symbol("tsts.provider.rollbackRegistrationSavepoint");
-const providerRegistryRegisterSourceDeclarationProviderForExtension: unique symbol = Symbol("tsts.provider.registerSourceDeclarationProviderForExtension");
 const providerRegistryRegistrationSavepointActive: unique symbol = Symbol("tsts.provider.registrationSavepointActive");
 const extensionFactTransactionIdentity: unique symbol = Symbol("tsts.extensionFactTransaction.identity");
 const extensionFactSavepointIdentity: unique symbol = Symbol("tsts.extensionFactSavepoint.identity");
@@ -198,6 +197,8 @@ type HostOwnedExtensionDiagnostic = ExtensionDiagnostic;
 
 interface ExtensionOwnerAuthority {
   readonly stack: string[];
+  /** The extension whose checked initializer capability is registering through the host now; null at every other time. */
+  registrant: string | null;
 }
 
 interface ExtensionFactMutation {
@@ -614,8 +615,8 @@ export interface ProviderVirtualDeclarationDocument {
   readonly moduleSpecifier: string;
   readonly providerModuleId: string;
   readonly provider: ProviderIdentity;
-  /** The registrar of `provider`'s registration: the embedding host, or the extension whose initializer registered it. */
-  readonly registrar: SourceDeclarationProviderRegistrar;
+  /** The id of the extension whose initializer registered `provider`; null when the embedding host registered it directly. */
+  readonly registrarExtensionId: string | null;
   readonly declarationModel: ProviderDeclarationModel;
   readonly sourceText: string;
   readonly readOnly: true;
@@ -635,18 +636,10 @@ export interface SourceDeclarationProvider {
   getDeclarationModel(module: ProviderModuleResolution, request: ProviderDeclarationRequest): ProviderDeclarationModel | ExtensionDiagnostic;
 }
 
-/**
- * Who registered a source declaration provider with the registry of one extension host. `host`: the embedding
- * host, through the registry's public method. `extension`: the extension with this identity id, through the
- * capability of its `initialize`. The registry writes it once on the registration; it names no package.
- */
-export type SourceDeclarationProviderRegistrar =
-  | { readonly kind: "host" }
-  | { readonly kind: "extension"; readonly extensionId: string };
-
 interface RegisteredSourceDeclarationProvider {
   readonly identity: ProviderIdentity;
-  readonly registrar: SourceDeclarationProviderRegistrar;
+  /** The extension whose initializer made this registration; null for the embedding host. Written once, here. */
+  readonly registrarExtensionId: string | null;
   readonly declarationMaterialization: SourceDeclarationMaterializationMode;
   readonly ownsModule: SourceDeclarationProvider["ownsModule"];
   readonly resolveModule: SourceDeclarationProvider["resolveModule"];
@@ -654,7 +647,6 @@ interface RegisteredSourceDeclarationProvider {
 }
 
 const sealProviderRegistrations: unique symbol = Symbol("tsts.provider.sealRegistrations");
-const hostSourceDeclarationProviderRegistrar: SourceDeclarationProviderRegistrar = Object.freeze({ kind: "host" });
 const providerMaxRegisteredProviders = 4_096;
 
 export interface ExtendedProgram<TProgram extends object = object> {
@@ -706,7 +698,7 @@ export class ExtensionDiagnosticStore {
         diagnosticRanges: new Map(),
         savepoints: [],
         savepointStates: new WeakMap(),
-        ownerAuthority: { stack: [] },
+        ownerAuthority: { stack: [], registrant: null },
         rangesSealed: false,
       };
       this.#ownerId = undefined;
@@ -1867,26 +1859,12 @@ export class ProviderRegistry {
     this.#materializationRound = materializationRound;
   }
 
-  registerSourceDeclarationProvider(provider: SourceDeclarationProvider): boolean {
-    return this.#registerSourceDeclarationProvider(provider, undefined);
-  }
-
-  [providerRegistryRegisterSourceDeclarationProviderForExtension](
-    extensionId: string,
-    provider: SourceDeclarationProvider,
-  ): boolean {
-    return this.#registerSourceDeclarationProvider(provider, extensionId);
-  }
-
   /**
-   * The one registration. `extensionId` is the extension whose initializer asked, or undefined for the embedding
-   * host. A provider object that is registered stays as it was registered: the call returns before any record is
-   * made, so the registrar of a registration is the caller that created it.
+   * The one registration. A provider object that is registered stays as it was registered: the call returns before
+   * any record is made. A new registration records who asked: the extension whose checked initializer capability
+   * the host is serving (the authority's registrant), or nobody (null) when the embedding host calls directly.
    */
-  #registerSourceDeclarationProvider(
-    provider: SourceDeclarationProvider,
-    extensionId: string | undefined,
-  ): boolean {
+  registerSourceDeclarationProvider(provider: SourceDeclarationProvider): boolean {
     this.#assertHostOwnedRegistration("source declaration provider");
     if (this.#sourceDeclarationProviderRegistrations.has(provider)) {
       return true;
@@ -1895,10 +1873,10 @@ export class ProviderRegistry {
       this.#diagnostics.append(createRegistrationClosedDiagnostic("source declaration provider"));
       return false;
     }
-    const registrar: SourceDeclarationProviderRegistrar = extensionId === undefined
-      ? hostSourceDeclarationProviderRegistrar
-      : Object.freeze({ kind: "extension", extensionId });
-    const registration = snapshotSourceDeclarationProviderRegistration(provider, registrar);
+    const registration = snapshotSourceDeclarationProviderRegistration(
+      provider,
+      getDiagnosticStoreOwnerAuthority(this.#diagnostics).registrant,
+    );
     if (registration.kind === "invalid") {
       this.#diagnostics.append(createHostDiagnostic({
         extensionCode: "INVALID_SOURCE_DECLARATION_PROVIDER",
@@ -2432,7 +2410,7 @@ export class ProviderRegistry {
     const artifactDeclarationModel = freezeProviderDeclarationModel(canonicalizeProviderAbiModel(declarationModel));
     const candidate = Object.freeze({
       providerIdentity: owner.provider.identity,
-      providerRegistrar: owner.provider.registrar,
+      registrarExtensionId: owner.provider.registrarExtensionId,
       resolution,
       materialization: declarationRequest.materialization,
       declarationModel,
@@ -3301,7 +3279,7 @@ export class ProviderRegistry {
         moduleSpecifier: ownerResolution.moduleSpecifier,
         providerModuleId: ownerResolution.providerModuleId,
         provider: plan.candidate.providerIdentity,
-        registrar: plan.candidate.providerRegistrar,
+        registrarExtensionId: plan.candidate.registrarExtensionId,
         declarationModel: plan.declarationModel,
         sourceText,
         readOnly: true,
@@ -3468,7 +3446,7 @@ export class ProviderRegistry {
       moduleSpecifier: candidate.resolution.moduleSpecifier,
       providerModuleId: candidate.resolution.providerModuleId,
       provider: candidate.providerIdentity,
-      registrar: candidate.providerRegistrar,
+      registrarExtensionId: candidate.registrarExtensionId,
       declarationModel,
       sourceText,
       readOnly: true,
@@ -3897,10 +3875,14 @@ export class ExtensionHost {
     provider: SourceDeclarationProvider,
   ): boolean {
     this.#assertRegistrationOwner(extensionId, "source declaration provider");
-    return runWithoutExtensionOwnerAuthority(
-      this.#ownerAuthority,
-      () => this.providers[providerRegistryRegisterSourceDeclarationProviderForExtension](extensionId, provider),
-    );
+    return runWithoutExtensionOwnerAuthority(this.#ownerAuthority, () => {
+      this.#ownerAuthority.registrant = extensionId;
+      try {
+        return this.providers.registerSourceDeclarationProvider(provider);
+      } finally {
+        this.#ownerAuthority.registrant = null;
+      }
+    });
   }
 
   #failSemanticFinalization(): void {
@@ -5462,7 +5444,7 @@ type SourceDeclarationProviderRegistrationSnapshot =
 
 function snapshotSourceDeclarationProviderRegistration(
   provider: SourceDeclarationProvider,
-  registrar: SourceDeclarationProviderRegistrar,
+  registrarExtensionId: string | null,
 ): SourceDeclarationProviderRegistrationSnapshot {
   try {
     const identity = snapshotProviderIdentity(provider.identity);
@@ -5486,7 +5468,7 @@ function snapshotSourceDeclarationProviderRegistration(
       kind: "valid",
       provider: Object.freeze({
         identity,
-        registrar,
+        registrarExtensionId,
         declarationMaterialization,
         ownsModule: (specifier: string, context: ProviderModuleContext) => ownsModule.call(provider, specifier, context),
         resolveModule: (specifier: string, context: ProviderModuleContext) => resolveModule.call(provider, specifier, context),
@@ -5564,7 +5546,7 @@ type ProviderDeclarationLoadOutcome = Exclude<ProviderDeclarationLoadResult, { r
 
 interface ProviderDeclarationCandidate {
   readonly providerIdentity: ProviderIdentity;
-  readonly providerRegistrar: SourceDeclarationProviderRegistrar;
+  readonly registrarExtensionId: string | null;
   readonly resolution: ProviderModuleResolution;
   readonly materialization: ProviderDeclarationMaterialization;
   readonly declarationModel: ProviderDeclarationModel;
