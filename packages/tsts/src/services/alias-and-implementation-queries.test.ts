@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { SymbolFlagsAlias, createCompilerSessionFromFiles } from "../index.js";
 import type { Node, Symbol, TypeCheckerQueries } from "../index.js";
 
@@ -60,15 +61,9 @@ function sameNodes(left: readonly Node[], right: readonly Node[]): boolean {
   return left.length === right.length && left.every((node, index) => node === right[index]);
 }
 
-// A step that is exactly the record { kind: "symbol", symbol } (no other key) whose symbol is the given object: the relation
-// the earlier deepEqual against that literal checked, with identity for the symbol so that no symbol graph is compared.
-function isSymbolStepOf(step: ReturnType<TypeCheckerQueries["getAliasStep"]>, symbol: Symbol | undefined): boolean {
-  return step?.kind === "symbol" && Object.keys(step).sort().join(",") === "kind,symbol" && symbol !== undefined && step.symbol === symbol;
-}
-
-// Two steps that are equal records of the symbol kind (the same two keys) whose symbols are one object.
+// Two steps of the same kind whose symbols are one object.
 function stepsToSameSymbol(left: ReturnType<TypeCheckerQueries["getAliasStep"]>, right: ReturnType<TypeCheckerQueries["getAliasStep"]>): boolean {
-  return left?.kind === "symbol" && isSymbolStepOf(right, left.symbol) && isSymbolStepOf(left, left.symbol);
+  return left?.kind === "symbol" && right?.kind === "symbol" && left.symbol === right.symbol;
 }
 
 // The step of a binding whose step is a symbol. A step of the other kind fails the case.
@@ -201,12 +196,14 @@ test("getAliasStep by binding form: a namespace import, a default import, export
   // A namespace import of a module without export = steps to the module itself, which is not an alias and is the final target.
   const pm = bindingOf("/case/u.mts", "NamespaceImport", "* as pm");
   assert.deepEqual(pm.steps, ["final /case/m.mts:KindSourceFile:export const a = 1;\n"]);
-  assert.ok(isSymbolStepOf(pm.first, pm.target), "the namespace import's step is exactly a symbol step to its final target, the module");
+  assert.ok(pm.first?.kind === "symbol" && pm.first.symbol === pm.target, "the namespace import's step is its final target, the module");
+  assert.ok(isDeepStrictEqual(pm.first, { kind: "symbol", symbol: pm.target }), "the namespace import's step is the closed record { kind: symbol, symbol: the module }");
 
   // A default import steps to the module's default export; for an expression that is the export assignment, not an alias.
   const dm = bindingOf("/case/u.mts", "ImportClause", "dm");
   assert.deepEqual(dm.steps, ["final /case/dm.mts:KindExportAssignment:export default 1 + 2;"]);
-  assert.ok(isSymbolStepOf(dm.first, dm.target), "the default import's step is exactly a symbol step to its final target, the export assignment");
+  assert.ok(dm.first?.kind === "symbol" && dm.first.symbol === dm.target, "the default import's step is its final target, the export assignment");
+  assert.ok(isDeepStrictEqual(dm.first, { kind: "symbol", symbol: dm.target }), "the default import's step is the closed record { kind: symbol, symbol: the export assignment }");
 
   // export * as: the importer's binding steps to the namespace export, an alias; that steps to the module.
   const plainNs = bindingOf("/case/u.mts", "ImportSpecifier", "plainNs");
@@ -291,8 +288,13 @@ test("getAliasStep over a module with export =: every binding form steps to the 
   assert.deepEqual(ns.steps, [assignment, value]);
   assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "default as viaDefault").steps, [assignment, value]);
   assert.deepEqual(bindingOf("/case/xeq.mts", "NamespaceExport", "* as box").steps, [assignment, value]);
-  assert.ok(stepsToSameSymbol(ns.first, d.first), "the namespace import and the default import have equal symbol steps to one symbol");
-  assert.ok(stepsToSameSymbol(ns.checker.getAliasStep(ns.symbol), ns.first), "the step repeats as an equal symbol step to the same symbol");
+  assert.ok(stepsToSameSymbol(ns.first, d.first), "the namespace import and the default import step to one symbol");
+  assert.ok(ns.first?.kind === "symbol" && isDeepStrictEqual(ns.first, { kind: "symbol", symbol: ns.first.symbol }) && isDeepStrictEqual(d.first, { kind: "symbol", symbol: ns.first.symbol }) && isDeepStrictEqual(ns.first, d.first),
+    "the namespace and default imports' steps are the same closed record { kind: symbol, symbol }");
+  const repeated = ns.checker.getAliasStep(ns.symbol);
+  assert.ok(stepsToSameSymbol(repeated, ns.first), "the step repeats to the same symbol");
+  assert.ok(ns.first?.kind === "symbol" && isDeepStrictEqual(repeated, { kind: "symbol", symbol: ns.first.symbol }) && isDeepStrictEqual(ns.first, { kind: "symbol", symbol: ns.first.symbol }) && isDeepStrictEqual(repeated, ns.first),
+    "the repeated step is the same closed record { kind: symbol, symbol }");
 
   // A chain of two assignments: every hop is a step, for the namespace import as for the others.
   assert.deepEqual(bindingOf("/case/u.mts", "ImportClause", "da").steps, chain);
