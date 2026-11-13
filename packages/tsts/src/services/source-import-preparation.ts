@@ -32,10 +32,10 @@ export type SourceImportPreparationReference = SourceReferenceSyntax & {
   readonly specifier: string;
   // UTF-16 code-unit offset and length in the source file's text as the SDK parsed it,
   // the same unit and text as AstReader.authoredRange and AstReader.sourceRange. That text is what the
-  // file system delivers, which is the original document without its first leading byte-order mark and,
-  // if a second one follows, without that one too; a third and later ones stay in the text and are
-  // counted. The offset in the original document is therefore larger by the number of units removed:
-  // the original's length minus the delivered text's length (0, 1 or 2), not the number of leading marks.
+  // file system delivers: the original document without its first leading byte-order mark, if it has
+  // one. Further leading marks stay in the text and are counted. The offset in the original document
+  // is therefore larger by the number of units removed, the original's length minus the delivered
+  // text's length (0 or 1), not by the number of leading marks.
   readonly start: number;
   readonly length: number;
   readonly mode: "import" | "require" | "none";

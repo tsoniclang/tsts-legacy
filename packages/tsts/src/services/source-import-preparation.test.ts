@@ -477,17 +477,17 @@ test("source import preparation reports a UTF-16 site that differs from the byte
   }
 });
 
-test("source import preparation reports sites in the text the file system delivers, which has lost at most two leading byte-order marks", () => {
+test("source import preparation reports sites in the text the file system delivers, which has lost exactly one leading byte-order mark if the file had any", () => {
   const token = '"./dep.mjs"';
   const body = `const label = "\u00e9"; import ${token};`;
-  // The SDK's file system removes the first leading U+FEFF and, if another follows, that one too; never a third.
-  for (const [marks, removed] of [[0, 0], [1, 1], [2, 2], [3, 2], [4, 2]] as const) {
+  // The SDK's file system removes the first leading U+FEFF and no other, as the Go original does.
+  for (const [marks, removed] of [[0, 0], [1, 1], [2, 1], [3, 1], [4, 1]] as const) {
     const source = "\ufeff".repeat(marks) + body;
     const input = fixture(new Map([["/src/main.mts", source], ["/src/dep.mts", "export {};"]]), ["/src/main.mts"]);
     const [delivered] = input.host.FS().ReadFile("/src/main.mts");
     assert.equal(source.length - delivered.length, removed, `of ${marks} leading mark(s) the file system removes ${removed}`);
     assert.equal(delivered, source.slice(removed), "the delivered text is the original without its first units");
-    assert.equal(delivered.startsWith("\ufeff"), marks > 2, "a third and later mark stay in the delivered text");
+    assert.equal(delivered.startsWith("\ufeff"), marks > 1, "a second and later mark stay in the delivered text");
     const result = prepareSourceImports(input);
     assert.equal(result.diagnostics.length, 0);
     const reference = file(result, "/src/main.mts").references[0];
