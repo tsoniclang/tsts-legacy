@@ -7,6 +7,13 @@ import { providerVirtualDeclarationFactKey } from "./facts.js";
 import type { ProviderDeclarationModel } from "./index.js";
 import { findNodes, sourceProviderExtension, testCoreDeclarations, testNoLibCompilerOptions } from "./source-provider-test-support.js";
 
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
+  if (info === undefined) return undefined;
+  if (info.kind !== "member") throw new Error("A member access was expected.");
+  return info as Extract<T, { readonly kind: "member" }>;
+}
+
 const moduleSpecifier = "@test/namespace-names.js";
 const model: ProviderDeclarationModel = {
   moduleSpecifier,
@@ -67,7 +74,7 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   ]);
   const properties = findNodes(sourceFile, source.ast.children, source.ast.is.IsPropertyAccessExpression);
   const propertyFacts = properties.map(property => checked.sourceFacts?.getFact(
-    source.checker.getResolvedPropertyAccessInfo(property)?.selectedDeclaration, providerVirtualDeclarationFactKey,
+    memberAccess(source.checker.getResolvedPropertyAccessInfo(property))?.selectedDeclaration, providerVirtualDeclarationFactKey,
   ));
   assert.ok(propertyFacts.some(fact => fact?.memberId === "factory::class"));
 });

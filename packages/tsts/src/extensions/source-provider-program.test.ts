@@ -17,6 +17,13 @@ import {
   testNoLibCompilerOptions,
 } from "./source-provider-test-support.js";
 
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
+  if (info === undefined) return undefined;
+  if (info.kind !== "member") throw new Error("A member access was expected.");
+  return info as Extract<T, { readonly kind: "member" }>;
+}
+
 test("source provider declarations bind through normal checking and retain exact provider identities", () => {
   const moduleSpecifier = "@test/native/counter.js";
   const model: ProviderDeclarationModel = {
@@ -84,7 +91,7 @@ test("source provider declarations bind through normal checking and retain exact
   );
 
   const valueProperty = properties
-    .map((property) => source.checker.getResolvedPropertyAccessInfo(property))
+    .map((property) => memberAccess(source.checker.getResolvedPropertyAccessInfo(property)))
     .find((info) =>
       checked.sourceFacts?.getFact(info?.selectedDeclaration, providerVirtualDeclarationFactKey)?.memberId
       === "Counter::value");

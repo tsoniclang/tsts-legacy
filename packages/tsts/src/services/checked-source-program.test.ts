@@ -17,6 +17,13 @@ import {
   testProviderModel,
 } from "../extensions/source-provider-test-support.js";
 
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
+  if (info === undefined) return undefined;
+  if (info.kind !== "member") throw new Error("A member access was expected.");
+  return info as Extract<T, { readonly kind: "member" }>;
+}
+
 test("original compiler program order remains frozen independently of included source traversal", () => {
   const checked = createCompilerSessionFromFiles({
     currentDirectory: "/src",
@@ -184,7 +191,7 @@ test("checked source program exposes one exact AST and direct checker decision s
 
   const propertyInfos = properties.map((property) => ({
     property,
-    info: source.checker.getResolvedPropertyAccessInfo(property),
+    info: memberAccess(source.checker.getResolvedPropertyAccessInfo(property)),
   }));
   const ordinaryProperty = propertyInfos.find(({ info }) => info?.optionalChain === false);
   const optionalProperty = propertyInfos.find(({ info }) => info?.optionalChain === true);

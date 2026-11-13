@@ -5,7 +5,8 @@ import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
-import { Node_PropertyNameOrName, Node_Symbol, Node_Text, SourceFile_FileName, SourceFile_Path } from "../internal/ast/ast.js";
+import { Node_Arguments, Node_Expression, Node_PropertyNameOrName, Node_Symbol, Node_Text, SourceFile_FileName, SourceFile_Path } from "../internal/ast/ast.js";
+import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
@@ -22,6 +23,7 @@ import {
 import type { SymbolFlags } from "../internal/ast/generated/flags.js";
 import {
   IsElementAccessExpression,
+  IsAwaitExpression,
   IsExportSpecifier,
   IsGetAccessorDeclaration,
   IsIdentifier,
@@ -46,10 +48,12 @@ import {
   IsObjectLiteralMethod,
   IsPropertyName,
   IsDynamicName,
+  IsImportCall,
   ModuleExportNameIsDefault,
   OEKAssertions,
   OEKParentheses,
   SkipOuterExpressions,
+  SkipParentheses,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
 import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerById, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
@@ -166,9 +170,27 @@ type PublicSelectedPropertyAccess<Selection> = Selection extends CheckerResolved
   ? Omit<Selection, "selectedIndex"> & { readonly selectedIndex?: TypeIndexInfo }
   : never;
 
-export type ResolvedSourcePropertyAccessInfo = PublicSelectedPropertyAccess<CheckerResolvedSourcePropertyAccessInfo> & {
-  readonly receiver: CheckerResolvedSourcePropertyAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
-};
+/**
+ * What a property access selects.
+ *
+ * "member": a member of the receiver's type, with the receiver, the selected symbol and declaration and the types.
+ *
+ * "module-exported-value": the access reads the `default` member the checker makes for the namespace of a
+ * CommonJS-format module (`ns.default`), which stands for the module's exported value. That member has no
+ * declaration and its symbol is shared between modules, so nothing is taken from the symbol. `target` names the
+ * module only where the receiver EXPRESSION proves it: when the receiver is an import's own namespace binding it is
+ * what getAliasStep gives for that binding (the module's `export =` assignment when it has one, the module
+ * otherwise); when the receiver is `await import("m")` itself it is the same for that module. For any other receiver
+ * (a variable the namespace value flowed into, a parameter, a conditional) `target` is nothing: the checker knows
+ * that the member is a module's exported value and not which module. The receiver's type does not tell: a value
+ * typed by one import's namespace may be another module's.
+ */
+export type ResolvedSourcePropertyAccessInfo =
+  | (PublicSelectedPropertyAccess<CheckerResolvedSourcePropertyAccessInfo> & {
+      readonly kind: "member";
+      readonly receiver: CheckerResolvedSourcePropertyAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
+    })
+  | { readonly kind: "module-exported-value"; readonly target: Symbol | undefined };
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
   readonly receiver: CheckerResolvedSourceElementAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
 };
@@ -409,6 +431,9 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSymbolOrNil(checker, node)),
     getAliasedSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => {
+        // The made default member of a module's exported value is shared between modules: its alias target is the
+        // first module's and is not handed out. Its boundary is asked by occurrence (getResolvedPropertyAccessInfo).
+        if (isSyntheticDefaultMember(checker, symbol)) return undefined;
         const target = Checker_GetAliasedSymbol(checker, symbol);
         return target === checker?.unknownSymbol ? undefined : target;
       }),
@@ -462,18 +487,21 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         })),
     getResolvedPropertyAccessInfo: (node) =>
       memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) =>
-          withResolvedPropertyAccessEvidence(
-            checker,
-            Checker_getResolvedSourcePropertyAccessInfo(checker, node),
-          ))),
+        withCheckerForNode(program, node, defaultOptions, (checker): GoPtr<ResolvedSourcePropertyAccessInfo> => {
+          const selected = Checker_getResolvedSourcePropertyAccessInfo(checker, node);
+          return isSyntheticDefaultMember(checker, selected?.sourceSymbol)
+            ? { kind: "module-exported-value", target: exportedValueBoundary(checker, node) }
+            : withResolvedPropertyAccessEvidence(checker, selected);
+        })),
     getResolvedElementAccessInfo: (node) =>
       memoizeResolvedNodeQuery(elementAccessInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) =>
-          withResolvedSourceReceiverValueEvidence(
-            checker,
-            Checker_getResolvedSourceElementAccessInfo(checker, node),
-          ))),
+        withCheckerForNode(program, node, defaultOptions, (checker) => {
+          const selected = Checker_getResolvedSourceElementAccessInfo(checker, node);
+          // An element access that reads the made default member would name the first module's value: nothing.
+          return isSyntheticDefaultMember(checker, selected?.sourceSymbol)
+            ? undefined
+            : withResolvedSourceReceiverValueEvidence(checker, selected);
+        })),
     getResolvedIterationInfo: (node) =>
       memoizeResolvedNodeQuery(iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
@@ -813,6 +841,7 @@ function withResolvedPropertyAccessEvidence(
   const resolved = withResolvedSourceReceiverValueEvidence(checker, access);
   if (resolved === undefined) return undefined;
   return Object.freeze({
+    kind: "member" as const,
     ...resolved,
     ...(selectedIndex === undefined ? {} : {
       selectedIndex: Object.freeze(readTypeIndexInfo(checker, selected.receiver.type, selectedIndex)),
@@ -858,7 +887,34 @@ function withResolvedSourceReceiverValueEvidence<
 // The module that an import or export declaration names, with the symbol of its `export =` assignment when it has
 // one; nothing when the declaration names no module or the module does not resolve. Reports no diagnostic.
 function referencedModule(checker: GoPtr<Checker>, declaration: GoPtr<Node>): { readonly module: Symbol; readonly exportAssignment: Symbol | undefined } | undefined {
-  const moduleSpecifier = Checker_getModuleSpecifierForImportOrExport(checker, declaration);
+  return moduleOfSpecifier(checker, declaration, Checker_getModuleSpecifierForImportOrExport(checker, declaration));
+}
+
+// Whether a symbol is the `default` member the checker makes for a module's exported value: its creator's mark.
+function isSyntheticDefaultMember(checker: GoPtr<Checker>, symbol: GoPtr<Symbol>): boolean {
+  return checker !== undefined && symbol !== undefined && LinkStore_TryGet(checker.aliasSymbolLinks, symbol)?.syntheticDefault === true;
+}
+
+// The module boundary of `E.default` where the member is the made default: one symbol, the module's `export =`
+// assignment when it has one and the module otherwise, exactly as a namespace import steps. Given only where the
+// receiver expression proves the module: an import's own namespace binding, or `await import("m")` itself.
+function exportedValueBoundary(checker: GoPtr<Checker>, access: GoPtr<Node>): Symbol | undefined {
+  const receiver = SkipParentheses(Node_Expression(access) as GoPtr<Expression>) as GoPtr<Node>;
+  if (receiver === undefined) return undefined;
+  let referenced: ReturnType<typeof referencedModule>;
+  if (IsIdentifier(receiver)) {
+    const binding = Checker_GetSymbolAtLocation(checker, receiver);
+    const declaration = binding !== undefined && (binding.Flags & SymbolFlagsAlias) !== 0
+      ? Checker_getDeclarationOfAliasSymbol(checker, binding) : undefined;
+    referenced = declaration !== undefined && IsNamespaceImport(declaration) ? referencedModule(checker, declaration) : undefined;
+  } else if (IsAwaitExpression(receiver)) {
+    const awaited = SkipParentheses(Node_Expression(receiver) as GoPtr<Expression>) as GoPtr<Node>;
+    referenced = awaited !== undefined && IsImportCall(awaited) ? moduleOfSpecifier(checker, awaited, Node_Arguments(awaited)?.[0]) : undefined;
+  }
+  return referenced === undefined ? undefined : referenced.exportAssignment ?? referenced.module;
+}
+
+function moduleOfSpecifier(checker: GoPtr<Checker>, declaration: GoPtr<Node>, moduleSpecifier: GoPtr<Node>): { readonly module: Symbol; readonly exportAssignment: Symbol | undefined } | undefined {
   if (moduleSpecifier === undefined) return undefined;
   const moduleSymbol = Checker_resolveExternalModuleName(checker, declaration, moduleSpecifier, true as bool);
   if (moduleSymbol === undefined) return undefined;

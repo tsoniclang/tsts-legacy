@@ -10472,6 +10472,7 @@ export function Checker_getTypeWithSyntheticDefaultImportType(receiver: GoPtr<Ch
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.createDefaultPropertyWrapperForModule","kind":"method","status":"implemented","sigHash":"be3759cac24f70c337da650c87f7fe862cc2169962debb1d04020969b99817d5","bodyHash":"6adfd0685cd1d36b52a56a1d9731a82fa4e7f7825ff20441dd60e8adffd26365"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"After the Go body's writes, the default member this function makes is marked on its alias links (syntheticDefault). Nothing else changes: the symbol, its Parent, its alias target and the returned type are the Go body's."}
  *
  * Go source:
  * func (c *Checker) createDefaultPropertyWrapperForModule(symbol *ast.Symbol, originalSymbol *ast.Symbol, anonymousSymbol *ast.Symbol) *Type {
@@ -10489,7 +10490,9 @@ export function Checker_createDefaultPropertyWrapperForModule(receiver: GoPtr<Ch
   const newSymbol = Checker_newSymbol(receiver, SymbolFlagsAlias, InternalSymbolNameDefault);
   newSymbol!.Parent = originalSymbol;
   (LinkStore_Get(receiver!.valueSymbolLinks, newSymbol) as GoPtr<ValueSymbolLinks>)!.nameType = Checker_getStringLiteralType(receiver, "default");
-  (LinkStore_Get(receiver!.aliasSymbolLinks, newSymbol) as GoPtr<AliasSymbolLinks>)!.aliasTarget = Checker_resolveSymbol(receiver, symbol_);
+  const newSymbolLinks = (LinkStore_Get(receiver!.aliasSymbolLinks, newSymbol) as GoPtr<AliasSymbolLinks>)!;
+  newSymbolLinks.aliasTarget = Checker_resolveSymbol(receiver, symbol_);
+  newSymbolLinks.syntheticDefault = true as bool;
   memberTable.set(InternalSymbolNameDefault, newSymbol);
   return Checker_newAnonymousType(receiver, anonymousSymbol, memberTable, [], [], []);
 }

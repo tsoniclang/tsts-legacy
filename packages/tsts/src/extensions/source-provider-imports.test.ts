@@ -12,6 +12,13 @@ import {
   testNoLibCompilerOptions,
 } from "./source-provider-test-support.js";
 
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
+  if (info === undefined) return undefined;
+  if (info.kind !== "member") throw new Error("A member access was expected.");
+  return info as Extract<T, { readonly kind: "member" }>;
+}
+
 test("provider modules preserve default, renamed, and namespace import identities", () => {
   const moduleSpecifier = "@test/import-forms.js";
   const model: ProviderDeclarationModel = {
@@ -139,7 +146,7 @@ test("provider default imports retain member identity beside same-named module e
     assert.equal(accesses.length, 2);
     assert.deepEqual(
       accesses.map((access) => {
-        const selected = source.checker.getResolvedPropertyAccessInfo(access);
+        const selected = memberAccess(source.checker.getResolvedPropertyAccessInfo(access));
         return checked.sourceFacts?.getFact(
           selected?.selectedWriteDeclaration ?? selected?.selectedReadDeclaration ?? selected?.selectedDeclaration,
           providerVirtualDeclarationFactKey,

@@ -409,6 +409,7 @@ export interface DeferredSymbolLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::AliasSymbolLinks","kind":"type","status":"implemented","sigHash":"2382f765aa7550658e62ca026e5ae05e6b85aeb5330acd2f4d3843d948d97bb6","bodyHash":"c72aaf0fa7b15e17301de8ca8c1983331d7378eca2abda2d5d2508a2e3eaad2e"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"One added link: a mark that createDefaultPropertyWrapperForModule sets on the default member it makes for a module's exported value. That member has no declaration, and its symbol is shared by every module whose exported value has the same type (the wrapper is cached by type id), so its Parent and alias target name the first such module only. The mark lets the public queries recognise the member from its creator's own record and never hand out the first module's provenance for it.","goSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}","tsSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;syntheticDefault?:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}"}
  *
  * Go source:
  * AliasSymbolLinks struct {
@@ -423,6 +424,8 @@ export interface AliasSymbolLinks {
   aliasTarget: GoPtr<Symbol_62f2f8bf>;
   referenced: bool;
   typeOnlyDeclaration: GoPtr<Node>;
+  // Set by createDefaultPropertyWrapperForModule on the `default` member it makes for a module's exported value.
+  syntheticDefault?: bool;
 }
 
 /**
