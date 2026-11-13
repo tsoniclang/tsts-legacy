@@ -38,8 +38,8 @@ test("a provider the embedding host registers directly has the host as registrar
   const document = resolvedDocument(host, "@test/direct.js");
   assert.equal(document.registrarExtensionId, null);
   assert.equal(document.provider.id, "test.direct");
-  assert.deepEqual(host.extensions, []);
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.extensions.length, 0, "extensions");
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("a provider registered in an extension's initializer has that extension as registrar", () => {
@@ -53,7 +53,7 @@ test("a provider registered in an extension's initializer has that extension as 
   // The registrar is the extension, not the provider: the two identities differ and stay apart.
   assert.equal(document.provider.id, "test.initialized");
   assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.owner"]);
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("providers of two extensions each name their own extension, and a direct provider names neither", () => {
@@ -81,7 +81,7 @@ test("providers of two extensions each name their own extension, and a direct pr
     ],
   );
   assert.deepEqual(listed.map((document) => document.fileName), listed.map((document) => document.fileName).sort());
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("one extension that registers two providers is the registrar of both", () => {
@@ -147,10 +147,10 @@ test("a failed initializer with no later registration leaves the module unowned 
     extensions: [registering("ext.failed", [lost], { fail: true })],
   });
 
-  assert.deepEqual(host.extensions, []);
+  assert.equal(host.extensions.length, 0, "extensions");
   assert.equal(host.providers.hasSourceDeclarationProviders, false);
   assert.equal(host.providers.resolveVirtualModule("@test/lost.js").kind, "unowned");
-  assert.deepEqual(host.providers.getVirtualDeclarationDocuments(), []);
+  assert.equal(host.providers.getVirtualDeclarationDocuments().length, 0, "documents");
 });
 
 test("after a failed initializer the embedding host can register the same provider and is its registrar", () => {
@@ -180,7 +180,7 @@ test("registering the same provider object again keeps the first registrar", () 
   assert.deepEqual(results, [true, true]);
   assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.first", "ext.second"]);
   assert.equal(resolvedDocument(host, "@test/shared.js").registrarExtensionId, "ext.first");
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("the registrar of an object two extensions register is the one that initializes first: by id, not by list order", () => {
@@ -195,7 +195,7 @@ test("the registrar of an object two extensions register is the one that initial
     assert.deepEqual(order, ["ext.a", "ext.b"], listed.join(","));
     assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.a", "ext.b"], listed.join(","));
     assert.equal(resolvedDocument(host, "@test/shared.js").registrarExtensionId, "ext.a", listed.join(","));
-    assert.deepEqual(host.diagnostics.all(), [], listed.join(","));
+    assert.equal(host.diagnostics.all().length, 0, listed.join(","));
   }
 });
 
@@ -215,7 +215,7 @@ test("a declared edge reverses the id order, and the registrar is then the other
       const label = `${edge} ${listed.join(",")}`;
       assert.deepEqual(order, ["ext.b", "ext.a"], label);
       assert.equal(resolvedDocument(host, "@test/shared.js").registrarExtensionId, "ext.b", label);
-      assert.deepEqual(host.diagnostics.all(), [], label);
+      assert.equal(host.diagnostics.all().length, 0, label);
     }
   }
 });
@@ -253,7 +253,7 @@ test("one extension registering the same object twice registers it once", () => 
     host.providers.getVirtualDeclarationDocuments().map((document) => document.provider.id).sort(),
     ["test.direct", "test.repeated"],
   );
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("a second registration of the same object by an extension that then fails leaves the first registration", () => {
@@ -320,7 +320,7 @@ test("an extension whose id equals its provider's id is the registrar by its ext
   assert.equal(document.registrarExtensionId, "test.same-id");
   assert.equal(document.provider.id, "test.same-id");
   assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["test.same-id"]);
-  assert.deepEqual(host.diagnostics.all(), []);
+  assert.equal(host.diagnostics.all().length, 0, "diagnostics");
 });
 
 test("a failed initializer that registered two providers leaves neither, and a later extension can register both", () => {
@@ -330,11 +330,11 @@ test("a failed initializer that registered two providers leaves neither, and a l
   const alone = new ExtensionHost({}, {
     extensions: [registering("ext.failed", [one, two], { fail: true })],
   });
-  assert.deepEqual(alone.extensions, []);
+  assert.equal(alone.extensions.length, 0, "extensions");
   assert.equal(alone.providers.hasSourceDeclarationProviders, false);
   assert.equal(alone.providers.resolveVirtualModule("@test/one.js").kind, "unowned");
   assert.equal(alone.providers.resolveVirtualModule("@test/two.js").kind, "unowned");
-  assert.deepEqual(alone.providers.getVirtualDeclarationDocuments(), []);
+  assert.equal(alone.providers.getVirtualDeclarationDocuments().length, 0, "documents");
 
   const results: boolean[] = [];
   const followed = new ExtensionHost({}, {
@@ -368,7 +368,7 @@ test("a registration refused inside a successful initializer leaves no registrat
   assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.mixed"]);
   assert.equal(host.providers.resolveVirtualModule("@test/refused.js").kind, "unowned");
   const documents = host.providers.getVirtualDeclarationDocuments();
-  assert.deepEqual(documents, []);
+  assert.equal(documents.length, 0, "documents");
   assert.equal(resolvedDocument(host, "@test/accepted.js").registrarExtensionId, "ext.mixed");
   assert.deepEqual(
     host.providers.getVirtualDeclarationDocuments().map((document) => document.provider.id),
@@ -550,9 +550,10 @@ test("every reader of a document returns the one document with its registrar", (
   assert.equal(resolved.kind, "resolved");
   if (resolved.kind !== "resolved") assert.fail("The module must resolve.");
   const document = resolved.module.artifact.document;
-  assert.equal(host.providers.getVirtualDeclarationDocument(document.uri), document);
-  assert.equal(host.providers.getVirtualDeclarationDocument(document.fileName), document);
-  assert.deepEqual(host.providers.getVirtualDeclarationDocuments(), [document]);
+  assert.ok(host.providers.getVirtualDeclarationDocument(document.uri) === document, "the lookup by uri returns the resolved document");
+  assert.ok(host.providers.getVirtualDeclarationDocument(document.fileName) === document, "the lookup by file name returns the resolved document");
+  const listed = host.providers.getVirtualDeclarationDocuments();
+  assert.ok(listed.length === 1 && listed[0] === document, `${listed.length} listed documents; the only one is the resolved document`);
   assert.equal(document.registrarExtensionId, "ext.read");
 });
 
@@ -576,7 +577,7 @@ test("the public document and the canonical owner document of one provider both 
   });
   const checked = session.checkSource();
   assert.equal(checked.diagnostics.length, 0);
-  assert.deepEqual(checked.extensionDiagnostics, []);
+  assert.equal(checked.extensionDiagnostics.length, 0, "extension diagnostics");
 
   const publicDocuments = getExtensionHost(session.program!)?.providers.getVirtualDeclarationDocuments() ?? [];
   assert.deepEqual(publicDocuments.map((document) => document.artifactKind), ["public"]);
@@ -600,8 +601,8 @@ test("the public document and the canonical owner document of one provider both 
   // The facts' lookup hands through the registry's own documents, for both kinds.
   const registry = getExtensionHost(session.program!)?.providers;
   assert.ok(registry);
-  assert.equal(registry.getVirtualDeclarationDocument(fact.artifactFileName), owner);
-  assert.equal(checked.sourceFacts.getVirtualDeclarationDocument(publicDocuments[0]!.fileName), publicDocuments[0]);
+  assert.ok(registry.getVirtualDeclarationDocument(fact.artifactFileName) === owner, "the registry's lookup returns the facts' owner document");
+  assert.ok(checked.sourceFacts.getVirtualDeclarationDocument(publicDocuments[0]!.fileName) === publicDocuments[0], "the facts' lookup returns the registry's public document");
 });
 
 function resolvedDocument(host: ExtensionHost, specifier: string): ProviderVirtualDeclarationDocument {

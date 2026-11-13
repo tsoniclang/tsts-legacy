@@ -1,6 +1,6 @@
 import { Set_Has } from "../collections/set.js";
 import { LibFilesSet, Libs } from "../tsoptions/enummaps.js";
-import { CombinePaths, GetNormalizedAbsolutePath, ToPath } from "../tspath/path.js";
+import { CombinePaths, DirectorySeparator, GetNormalizedAbsolutePath, RemoveTrailingDirectorySeparator, ToPath } from "../tspath/path.js";
 import type { Path } from "../tspath/path.js";
 import type { ProgramOptions } from "./program.js";
 
@@ -33,12 +33,13 @@ export function libraryBindingOf(opts: ProgramOptions): LibraryBinding {
   const useCaseSensitiveFileNames = opts.Host.FS().UseCaseSensitiveFileNames();
   const files = new Map<string, string>();
   const names = new Map<Path, string[]>();
-  for (const name of [...selected.keys()].sort()) {
+  const entries = [...selected].sort((left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0);
+  for (const [name, selectedFileName] of entries) {
     // Only GetLibFileName's results are ever looked up, so any other key could never take effect.
     if (!Set_Has(LibFilesSet, name)) {
       throw new TypeError(`Selected library '${name}' is not a library file name of the compiler.`);
     }
-    const fileName = GetNormalizedAbsolutePath(selected.get(name)!, currentDirectory);
+    const fileName = GetNormalizedAbsolutePath(selectedFileName, currentDirectory);
     files.set(name, fileName);
     const path = ToPath(fileName, currentDirectory, useCaseSensitiveFileNames);
     const bound = names.get(path);
@@ -77,11 +78,34 @@ export function libraryNamePriority(name: string): number {
 
 /** Of several names bound to one file (given in ascending order), the one that orders first; a tie keeps the earlier. */
 export function firstLibraryName(names: readonly string[]): string {
-  let first = names[0]!;
+  const initial = names[0];
+  if (initial === undefined) {
+    throw new Error("Invariant: a file in the library binding's inverse has at least one bound name.");
+  }
+  let first = initial;
   for (const name of names) {
     if (libraryNamePriority(name) < libraryNamePriority(first)) {
       first = name;
     }
   }
   return first;
+}
+
+/**
+ * The order of a file among the program's library files, by the program's library binding. Directory kind: the
+ * file directly in the default library directory is ordered by its base name (the rule of
+ * fileLoader.getDefaultLibFilePriority); selected library files: by the names bound to the file's path. Any other
+ * file orders after every library.
+ */
+export function boundLibraryPriority(binding: LibraryBinding, fileName: string, path: Path): number {
+  if (binding.kind === "explicit") {
+    const names = binding.names.get(path);
+    return names === undefined ? Libs.length + 2 : libraryNamePriority(firstLibraryName(names));
+  }
+  // The directory and the file name are absolute and normalized; a prefix check suffices.
+  const directory = RemoveTrailingDirectorySeparator(binding.directory);
+  if (fileName.startsWith(directory) && fileName.length > directory.length && fileName.charCodeAt(directory.length) === DirectorySeparator) {
+    return libraryNamePriority(fileName.slice(fileName.lastIndexOf("/") + 1));
+  }
+  return Libs.length + 2;
 }

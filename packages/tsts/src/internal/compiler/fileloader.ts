@@ -143,7 +143,7 @@ import {
 } from "./processingDiagnostic.js";
 import type { includeExplainingDiagnostic, processingDiagnostic } from "./processingDiagnostic.js";
 import type { ProgramOptions } from "./program.js";
-import { boundLibraryNames, firstLibraryName, libraryBindingOf, libraryNamePriority, selectedLibraryFile } from "./librarybinding.js";
+import { boundLibraryPriority, libraryBindingOf, selectedLibraryFile } from "./librarybinding.js";
 import type { LibraryBinding } from "./librarybinding.js";
 import {
   projectReferenceFileMapper_getCompilerOptionsForFile,
@@ -1267,7 +1267,7 @@ export function fileLoader_sortLibs(receiver: GoPtr<fileLoader>, libFiles: GoSli
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/fileloader.go::method::fileLoader.getDefaultLibFilePriority","kind":"method","status":"implemented","sigHash":"29ee2103e7fd671229456e38cd308ceb42905ea2e5b1483bf0abda56ec00b434","bodyHash":"c9c7c67c7b3230a46837eb0ed7c5266c270e35b95f8e8fba8e5cd2ec6813e08a"}
- * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The order is taken through the program's one library binding: in the directory kind exactly as the Go body (prefix and base name); for selected library files by the names bound to the file's path. The base-name rule itself moved to libraryNamePriority unchanged."}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The order is the program's one library binding's (librarybinding.ts boundLibraryPriority): in the directory kind exactly the Go body's prefix and base-name rule, moved there unchanged; for selected library files by the names bound to the file's path."}
  *
  * Go source:
  * func (p *fileLoader) getDefaultLibFilePriority(a *ast.SourceFile) int {
@@ -1291,17 +1291,7 @@ export function fileLoader_sortLibs(receiver: GoPtr<fileLoader>, libFiles: GoSli
  * }
  */
 export function fileLoader_getDefaultLibFilePriority(receiver: GoPtr<fileLoader>, a: GoPtr<SourceFile>): int {
-  const libraries = receiver!.libraries;
-  if (libraries.kind === "explicit") {
-    const names = boundLibraryNames(libraries, SourceFile_Path(a));
-    return names === undefined ? Libs.length + 2 : libraryNamePriority(firstLibraryName(names));
-  }
-  const defaultLibraryPath = RemoveTrailingDirectorySeparator(libraries.directory);
-  const aFileName = SourceFile_FileName(a);
-  if (strings.HasPrefix(aFileName, defaultLibraryPath) && aFileName.length > defaultLibraryPath.length && aFileName.charCodeAt(defaultLibraryPath.length) === DirectorySeparator) {
-    return libraryNamePriority(aFileName.slice(strings.LastIndexByte(aFileName, DirectorySeparator) + 1));
-  }
-  return Libs.length + 2;
+  return boundLibraryPriority(receiver!.libraries, SourceFile_FileName(a), SourceFile_Path(a));
 }
 
 /**
