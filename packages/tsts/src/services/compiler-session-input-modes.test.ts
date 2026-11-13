@@ -92,6 +92,21 @@ test("configuration mode, selected by naming the file: the same files are opened
   assert.deepEqual(other.errors, []);
 });
 
+test("configuration mode resolves the configuration file name as root file names are resolved", () => {
+  const files = {
+    "/case/tsconfig.json": JSON.stringify({ compilerOptions: { ...base, strict: true }, files: ["a.ts"] }),
+    "/case/a.ts": implicitAny,
+  };
+  for (const configFileName of ["tsconfig.json", "./tsconfig.json", "/case/sub/../tsconfig.json", "/case/TSCONFIG.json"]) {
+    const configured = open({ files, configFileName });
+    assert.deepEqual(configured.programFiles, ["/case/a.ts"], configFileName);
+    assert.deepEqual(configured.errors, ["a.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."], configFileName);
+  }
+  // The file system's own case rule decides: with case-sensitive names another letter case is another file.
+  assert.throws(() => createCompilerSessionFromFiles({ currentDirectory: "/case", files, configFileName: "/case/TSCONFIG.json", useCaseSensitiveFileNames: true }), /is not among the session's files/u);
+  assert.throws(() => createCompilerSessionFromFiles({ currentDirectory: "/case", files, configFileName: "absent.json" }), /is not among the session's files/u);
+});
+
 test("the two modes cannot be mixed, and configuration mode requires its file", () => {
   const files = { "/case/tsconfig.json": "{}", "/case/a.ts": "export const a = 1;\n" };
   assert.throws(() => createCompilerSessionFromFiles({ currentDirectory: "/case", files, configFileName: "/case/tsconfig.json", compilerOptions: {} }), /either a configuration file name, or compiler options and root files/u);
@@ -105,13 +120,37 @@ const configLines = (session: CompilerSession): readonly string[] =>
   formatDiagnostics(configDiagnostics(session), "/case").split("\n").filter(line => line !== "");
 const one = { "/case/a.ts": "export const a = 1;\n" };
 
-test("options mode: explicit empty root files are an empty root set, not omitted roots", () => {
+test("options mode: explicit empty root files are a valid empty program with no diagnostic; an authored empty files list keeps its diagnostic in configuration mode", () => {
   const files = { "/case/tsconfig.json": JSON.stringify({ files: ["a.ts"] }), "/case/a.ts": typeError, "/case/b.ts": typeError };
   const empty = open({ files, compilerOptions: { ...base, strict: true }, rootFiles: [] });
   assert.deepEqual(empty.programFiles, [], "no file is a root: not the inferred ones, not the authored ones");
-  assert.equal(empty.errors.some(line => /TS2322/u.test(line)), false, "nothing is checked");
+  assert.deepEqual(empty.errors, [], "no diagnostic: no file and no list was written");
   const omitted = open({ files, compilerOptions: { ...base, strict: true } });
   assert.deepEqual(omitted.programFiles, ["/case/a.ts", "/case/b.ts"], "omitted roots are inferred from the supplied files alone");
+  // Omitted roots with no supported source file: an empty program, no diagnostic either.
+  const noSource = open({ files: { "/case/notes.txt": "text\n" }, compilerOptions: { ...base, strict: true } });
+  assert.deepEqual([noSource.programFiles, noSource.errors], [[], []]);
+  // Configuration mode with an authored empty files list: the configuration's own diagnostic, against that file.
+  const authoredEmpty = open({ files: { "/case/tsconfig.json": JSON.stringify({ files: [] }), "/case/a.ts": typeError }, configFileName: "/case/tsconfig.json" });
+  assert.deepEqual(authoredEmpty.errors.map(line => line.replace(/\(\d+,\d+\)/u, "")), ["tsconfig.json: error TS18002: The 'files' list in config file '/case/tsconfig.json' is empty."]);
+});
+
+test("options mode: omitted roots are every supplied file the compiler supports under the options: TypeScript extensions always, JavaScript ones only with allowJs", () => {
+  const sources = {
+    "/case/a.ts": "export const a = 1;\n", "/case/b.tsx": "export const b = 1;\n", "/case/c.d.ts": "export declare const c: number;\n",
+    "/case/d.mts": "export const d = 1;\n", "/case/e.d.mts": "export declare const e: number;\n",
+    "/case/f.cts": "export const f = 1;\n", "/case/g.d.cts": "export declare const g: number;\n",
+    "/case/h.js": "export const h = 1;\n", "/case/i.jsx": "export const i = 1;\n", "/case/j.mjs": "export const j = 1;\n", "/case/k.cjs": "exports.k = 1;\n",
+    "/case/l.json": "{}\n", "/case/node_modules/pkg/index.ts": "export const p = 1;\n", "/elsewhere/m.ts": "export const m = 1;\n",
+  };
+  const program = (allowJs: boolean): readonly string[] => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files: sources, compilerOptions: { ...base, allowJs, jsx: "preserve" } });
+    const checked = session.checkSource();
+    return Object.keys(sources).filter(fileName => checked.getSourceFile(fileName) !== undefined);
+  };
+  const typescript = ["/case/a.ts", "/case/b.tsx", "/case/c.d.ts", "/case/d.mts", "/case/e.d.mts", "/case/f.cts", "/case/g.d.cts", "/case/node_modules/pkg/index.ts", "/elsewhere/m.ts"];
+  assert.deepEqual(program(false), typescript);
+  assert.deepEqual(program(true), [...typescript.slice(0, 7), "/case/h.js", "/case/i.jsx", "/case/j.mjs", "/case/k.cjs", ...typescript.slice(7)]);
 });
 
 // The sixteen options of the Host's table, each with the value the table gives it, through the object reader.

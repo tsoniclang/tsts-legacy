@@ -273,8 +273,11 @@ test("a deprecated alias in the middle of a chain is reported at the default imp
 
 // A named import of a module that has both export = and a named export of the same name: the member of the exported
 // value is the value and the module's own export is an alias, and the checker combines the two into a symbol it makes
-// (combineValueAndTypeSymbols). That made symbol has the alias flag. In a ring of such modules the walks meet it; it is
-// stored on the asking alias, so the ring is over finitely many symbols and the programs are checked to the end.
+// (combineValueAndTypeSymbols). That made symbol has the alias flag. What these programs show, counted on instrumented
+// scratch builds (W3's and R1's): in both rings no combined symbol is made, and each deprecation walk takes exactly one
+// turn, from u.mts's import to the member x of the exported value, its final target; a combined symbol is met only in
+// the program without a ring, where the walk steps onto it and goes on to the type alias in t.d.ts. The rings are
+// checked to the end where TypeScript 6.0.3 does not return.
 // The expected diagnostics are recorded observations of this checker, not derived from a rule and not an outside
 // reference: TypeScript 6.0.3's language service does not return from either ring (killed at 60 seconds after the first
 // file's TS2303 and TS2309), and for the program without a ring it reports TS2309 in addition to the one line here.
