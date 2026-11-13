@@ -15,7 +15,7 @@ import { GetTokenPosOfNode } from "../internal/scanner/scanner.js";
 import { GetLibFileName } from "../internal/tsoptions/enummaps.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
 import { ParsedCommandLine_FileNames, ParsedCommandLine_GetConfigFileParsingDiagnostics } from "../internal/tsoptions/parsedcommandline.js";
-import { ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
+import { CombinePaths, GetNormalizedAbsolutePath, ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
 
 export interface SourceImportPreparationInput {
   readonly host: CompilerHost;
@@ -118,6 +118,9 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   }
   const canonicalPath = (fileName: string): string => ToPath(fileName,
     input.host.GetCurrentDirectory(), input.host.FS().UseCaseSensitiveFileNames());
+  // The directory of the SDK's library files as the caller's host states it: the loader's own default library
+  // path, from the same two host values.
+  const defaultLibraryPath = GetNormalizedAbsolutePath(input.host.DefaultLibraryPath(), input.host.GetCurrentDirectory());
   const roots = ParsedCommandLine_FileNames(input.config).map(fileName => Object.freeze({
     fileName,
     state: processed.filesByPath.get(canonicalPath(fileName)) === undefined ? "missing" : "loaded",
@@ -171,13 +174,19 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       } else {
         const [name, known] = GetLibFileName(reference.FileName);
         if (known) {
+          // The library file of that name is where the loader put it when it followed the directive. Under noLib
+          // the loader follows no library directive and keeps no library record: the file is then the default
+          // library file of that name, and the row is resolved only when the supplied program contains that file.
+          // Nothing is loaded or probed here.
+          let libraryPath = CombinePaths(defaultLibraryPath, name);
           for (const library of processed.libFiles.values()) {
             if (library?.Name === name) {
-              const targetFile = processed.filesByPath.get(canonicalPath(library.path));
-              if (targetFile !== undefined) resolvedFileName = SourceFile_FileName(targetFile);
+              libraryPath = library.path;
               break;
             }
           }
+          const targetFile = processed.filesByPath.get(canonicalPath(libraryPath));
+          if (targetFile !== undefined) resolvedFileName = SourceFile_FileName(targetFile);
         }
       }
       const range = utf16Range(TextRange_Pos(reference), TextRange_End(reference));
