@@ -73,7 +73,7 @@ function program(args: readonly string[], files: ReadonlyMap<string, string>, se
   const compilerHost = host(files);
   const config = ParseCommandLine([...args], compilerHost);
   assert.ok(config);
-  assert.equal((config.Errors ?? []).length, 0, "command-line errors");
+  assert.ok(config.Errors !== undefined && config.Errors.length === 0, `command-line errors: ${config.Errors === undefined ? "absent" : config.Errors.length}`);
   const built = NewProgram({ Host: compilerHost, Config: config, ...(selected === undefined ? {} : { SelectedLibraries: selected }) });
   assert.ok(built);
   return built;
