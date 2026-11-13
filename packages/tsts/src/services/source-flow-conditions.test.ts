@@ -21,10 +21,6 @@ function checkedConditions(source: string) {
     assert.ok(selected);
     assert.equal(selected.reference, reference);
     assert.equal(queries.getResolvedFlowConditionInfo(reference), selected);
-    assert.ok(Object.isFrozen(selected));
-    assert.ok(Object.isFrozen(selected.conditions));
-    assert.ok(selected.conditions.every(Object.isFrozen));
-    assert.ok(selected.conditions.every(condition => Object.isFrozen(condition.assignments)));
     return selected.conditions;
   };
   return { ast, queries, properties, calls, read };

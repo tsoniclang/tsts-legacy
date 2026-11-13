@@ -83,7 +83,7 @@ export function resolveSourceFlowConditionInfo(
       if (!outcomes.has(assumed)) {
         outcomes.add(assumed);
         selectedOutcomes.set(current.Node, outcomes);
-        candidates.push(Object.freeze({ expression: current.Node, assumed }));
+        candidates.push({ expression: current.Node, assumed });
       }
     }
     if ((flags & FlowFlagsReduceLabel) !== 0) {
@@ -128,9 +128,7 @@ export function resolveSourceFlowConditionInfo(
       for (const predecessor of previous) pending.push(predecessor);
       for (const predecessor of reductions.get(current) ?? []) pending.push(predecessor);
     }
-    if (!bypasses) conditions.push(Object.freeze({
-      ...candidate, assignments: Object.freeze([...assignments]),
-    }));
+    if (!bypasses) conditions.push({ ...candidate, assignments: [...assignments] });
   }
-  return Object.freeze({ reference, conditions: Object.freeze(conditions) });
+  return { reference, conditions };
 }
