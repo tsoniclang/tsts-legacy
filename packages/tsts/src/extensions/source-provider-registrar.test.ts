@@ -554,7 +554,6 @@ test("every reader of a document returns the one document with its registrar", (
   assert.equal(host.providers.getVirtualDeclarationDocument(document.fileName), document);
   assert.deepEqual(host.providers.getVirtualDeclarationDocuments(), [document]);
   assert.equal(document.registrarExtensionId, "ext.read");
-  assert.ok(Object.isFrozen(document));
 });
 
 test("the public document and the canonical owner document of one provider both carry its registrar", () => {

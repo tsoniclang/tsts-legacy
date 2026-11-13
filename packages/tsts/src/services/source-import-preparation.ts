@@ -118,8 +118,11 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   }
   const canonicalPath = (fileName: string): string => ToPath(fileName,
     input.host.GetCurrentDirectory(), input.host.FS().UseCaseSensitiveFileNames());
-  // The directory of the SDK's library files as the caller's host states it: the loader's own default library
-  // path, from the same two host values.
+  // The directory of the SDK's library files as the caller's host states it. This restates the loader's rule for
+  // the one case in which the loader does not compute it (noLib): the loader's defaultLibraryPath is this same
+  // normalisation of the same two host values (fileloader.ts, where the loader is made), and its library file for a
+  // name is CombinePaths of that directory and the name (fileLoader_pathForLibFile). A host made without a default
+  // library path has the SDK's bundled library directory here; nothing is read from it.
   const defaultLibraryPath = GetNormalizedAbsolutePath(input.host.DefaultLibraryPath(), input.host.GetCurrentDirectory());
   const roots = ParsedCommandLine_FileNames(input.config).map(fileName => ({
     fileName,

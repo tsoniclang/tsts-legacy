@@ -23,13 +23,14 @@ interface FixtureOptions {
 }
 
 function fixture(files: ReadonlyMap<string, string>, roots: readonly string[], options: FixtureOptions = {},
-  defaultLibraryPath = "/libs") {
+  defaultLibraryPath: string | null = "/libs") {
   const inputs = new Map(files);
   inputs.set("/src/tsconfig.json", JSON.stringify({
     compilerOptions: { module: "nodenext", moduleResolution: "nodenext", noLib: true, types: [], ...options },
     files: roots,
   }));
-  const original = createCompilerHost({ currentDirectory: "/src", defaultLibraryPath,
+  // A null default library path leaves the host's own default: the SDK's bundled library directory.
+  const original = createCompilerHost({ currentDirectory: "/src", ...(defaultLibraryPath === null ? {} : { defaultLibraryPath }),
     includeBundledLibraries: false, cacheFileSystem: false,
     fileSystem: createInMemoryFileSystem({ files: inputs, includeBundledLibraries: false, useCaseSensitiveFileNames: true }) });
   const parsed: SourceFile[] = [];
@@ -627,6 +628,29 @@ test("a library reference is matched by the SDK's name mapping and the default l
     ["/libs/lib.es5.d.ts", "interface NotTheDefaultLibrary {}\n"],
   ]), ["/src/main.ts", "/src/libs/lib.es5.d.ts", "/libs/lib.es5.d.ts"], {}, "libs"));
   assert.deepEqual(libraryRows(relative, "/src/main.ts"), [["reference-lib", "es5", "none", "/src/libs/lib.es5.d.ts"]]);
+
+  // The same relative directory without noLib: the loader normalises it and loads the file itself; the same row.
+  const relativeLoaded = prepareSourceImports(fixture(new Map([
+    ["/src/main.ts", '/// <reference lib="es5" />\nexport {};\n'],
+    ["/src/libs/lib.es5.d.ts", "interface Es5 {}\n"],
+    ["/libs/lib.es5.d.ts", "interface NotTheDefaultLibrary {}\n"],
+  ]), ["/src/main.ts"], { noLib: false, lib: [] }, "libs"));
+  assert.deepEqual(libraryRows(relativeLoaded, "/src/main.ts"), [["reference-lib", "es5", "none", "/src/libs/lib.es5.d.ts"]]);
+  assert.deepEqual(programFiles(relativeLoaded), ["/src/libs/lib.es5.d.ts", "/src/main.ts"]);
+  assert.equal(relativeLoaded.diagnostics.length, 0);
+});
+
+test("a host made without a default library path has the SDK's own library directory, and nothing is taken from it", () => {
+  // The caller roots a library file in its own directory but states no default library path. The host's default is
+  // the SDK's bundled library directory; the supplied file is not there, so the reference is not satisfied by the
+  // program, and no file of that directory becomes a file of the program.
+  const result = prepareSourceImports(fixture(new Map([
+    ["/src/main.ts", '/// <reference lib="es5" />\nexport {};\n'],
+    ["/libs/lib.es5.d.ts", "interface Es5 {}\n"],
+  ]), ["/src/main.ts", "/libs/lib.es5.d.ts"], {}, null));
+  assert.deepEqual(libraryRows(result, "/src/main.ts"), [["reference-lib", "es5", "none", "unresolved"]]);
+  assert.deepEqual(programFiles(result), ["/libs/lib.es5.d.ts", "/src/main.ts"]);
+  assert.equal(result.diagnostics.length, 0);
 });
 
 test("source import preparation executes real parser and resolver without constructing compiler semantic owners", () => {
