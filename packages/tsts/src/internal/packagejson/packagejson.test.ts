@@ -136,7 +136,7 @@ function field(value: { readonly Valid: boolean; readonly Null: boolean; readonl
 
 test("Parse gives the pinned library's result for every byte input of the four observed sets", () => {
   for (const [id, label, hex, error, name, types] of pinnedRows) {
-    const data = Array.from(Buffer.from(hex, "hex")) as byte[];
+    const data: byte[] = Array.from(Buffer.from(hex, "hex"));
     const [fields, parseError] = Parse(data);
     const observed = [parseError !== undefined, field(fields.__tsgoEmbedded0?.Name), field(fields.__tsgoEmbedded1?.Types)];
     assert.deepEqual(observed, [error, name, types], `${id}: ${label}`);
@@ -146,7 +146,9 @@ test("Parse gives the pinned library's result for every byte input of the four o
 test("a discarded duplicate value is checked, and the retained value is still the last one", () => {
   const [kept, keptError] = Parse(bytes('{"name":"first","name":"second"}'));
   assert.equal(keptError, undefined);
-  assert.equal(kept.__tsgoEmbedded0!.Name.Value, "second");
+  const header = kept.__tsgoEmbedded0;
+  if (header === undefined) assert.fail("the parsed fields have no header fields");
+  assert.equal(header.Name.Value, "second");
   const [refused, refusedError] = Parse(bytes('{"name":"\\ud800","name":"second"}'));
   assert.notEqual(refusedError, undefined);
   assert.deepEqual(refused, {});

@@ -35,7 +35,7 @@ test("without selected library files the binding is the default library director
   const binding = libraryBindingOf({ Host: host(new Map(), "libs"), Config: undefined });
   assert.deepEqual(binding, { kind: "directory", directory: "/src/libs" });
   assert.equal(selectedLibraryFile(binding, "lib.es5.d.ts"), "/src/libs/lib.es5.d.ts");
-  assert.equal(boundLibraryNames(binding, "/src/libs/lib.es5.d.ts" as never), undefined);
+  assert.equal(boundLibraryNames(binding, ToPath("/src/libs/lib.es5.d.ts", "/src", true)), undefined);
 });
 
 test("selected library files are the only source, an empty selection included", () => {
@@ -57,7 +57,7 @@ test("a selected name that is not a library file name of the compiler is refused
 
 test("several names bound to one file are all kept, and the first by library order names its record", () => {
   const binding = libraryBindingOf(options(new Map([["lib.es2015.d.ts", "/cap/shared.d.ts"], ["lib.es5.d.ts", "/cap/shared.d.ts"]])));
-  assert.deepEqual(boundLibraryNames(binding, "/cap/shared.d.ts" as never), ["lib.es2015.d.ts", "lib.es5.d.ts"]);
+  assert.deepEqual(boundLibraryNames(binding, ToPath("/cap/shared.d.ts", "/src", true)), ["lib.es2015.d.ts", "lib.es5.d.ts"]);
   assert.equal(firstLibraryName(["lib.es2015.d.ts", "lib.es5.d.ts"]), "lib.es5.d.ts");
   assert.equal(libraryNamePriority("lib.d.ts"), 0);
   assert.ok(libraryNamePriority("lib.es5.d.ts") < libraryNamePriority("lib.es2015.d.ts"));
@@ -79,6 +79,12 @@ function program(args: readonly string[], files: ReadonlyMap<string, string>, se
   return built;
 }
 
+function sourceFileNamed(built: ReturnType<typeof program>, fileName: string) {
+  const file = Program_GetSourceFiles(built).find(candidate => SourceFile_FileName(candidate) === fileName);
+  if (file === undefined) assert.fail(`${fileName} is not a file of the program`);
+  return file;
+}
+
 // The library diagnostics of the program: those without a file (a default library or lib entry), then those of a
 // directive in /src/main.ts.
 function libraryDiagnostics(built: ReturnType<typeof program>) {
@@ -95,10 +101,9 @@ test("under noLib a rooted bound file is a library file of the program, and an o
   ]);
   const built = program(["--noLib", "/src/main.ts", "/cap/b/core.d.ts", "/cap/a/es5.d.ts"], files,
     new Map([["lib.es5.d.ts", "/cap/a/es5.d.ts"], ["lib.es2015.core.d.ts", "/cap/b/core.d.ts"]]));
-  const byName = new Map(Program_GetSourceFiles(built).map(file => [SourceFile_FileName(file), file]));
-  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(byName.get("/cap/a/es5.d.ts")!)), true);
-  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(byName.get("/cap/b/core.d.ts")!)), true);
-  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(byName.get("/src/main.ts")!)), false);
+  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(sourceFileNamed(built, "/cap/a/es5.d.ts"))), true);
+  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(sourceFileNamed(built, "/cap/b/core.d.ts"))), true);
+  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(sourceFileNamed(built, "/src/main.ts"))), false);
   // Library files come first, in library order, whatever the order of the roots.
   assert.deepEqual(Program_GetSourceFiles(built).map(SourceFile_FileName), ["/cap/a/es5.d.ts", "/cap/b/core.d.ts", "/src/main.ts"]);
 });
@@ -106,8 +111,7 @@ test("under noLib a rooted bound file is a library file of the program, and an o
 test("the same roots without selected library files: a file in no library position is an ordinary file", () => {
   const files = new Map([["/src/main.ts", "export const value = 1;\n"], ["/cap/a/es5.d.ts", "interface Es5 {}\n"]]);
   const built = program(["--noLib", "/src/main.ts", "/cap/a/es5.d.ts"], files);
-  const es5 = Program_GetSourceFiles(built).find(file => SourceFile_FileName(file) === "/cap/a/es5.d.ts")!;
-  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(es5)), false);
+  assert.equal(Program_IsSourceFileDefaultLibrary(built, SourceFile_Path(sourceFileNamed(built, "/cap/a/es5.d.ts"))), false);
 });
 
 test("with noLib off the loader takes every library from the selection and never from the default directory", () => {

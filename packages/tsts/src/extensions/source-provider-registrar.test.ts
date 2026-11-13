@@ -513,7 +513,9 @@ test("a registry call made while an extension owner is active is refused and reg
         {
           identity: { id: "ext.2-analyzing", version: "1.0.0" },
           analyzeSource(): void {
-            const registry = getExtensionHost(session.program!)?.providers;
+            const program = session.program;
+            if (program === undefined) assert.fail("the session has no program during analysis");
+            const registry = getExtensionHost(program)?.providers;
             assert.ok(registry);
             try {
               registry.registerSourceDeclarationProvider(refused);
@@ -526,12 +528,14 @@ test("a registry call made while an extension owner is active is refused and reg
     },
   });
   session.checkSource();
+  const program = session.program;
+  if (program === undefined) assert.fail("the session has no program");
 
   assert.equal(
     refusal,
     "Extension 'ext.2-analyzing' must register source declaration provider state through its owner-bound initialization capability.",
   );
-  const registry = getExtensionHost(session.program!)?.providers;
+  const registry = getExtensionHost(program)?.providers;
   assert.ok(registry);
   assert.equal(registry.resolveVirtualModule("@test/refused-direct.js").kind, "unowned");
   const keptModule = registry.resolveVirtualModule("@test/kept.js");
@@ -579,9 +583,13 @@ test("the public document and the canonical owner document of one provider both 
   assert.equal(checked.diagnostics.length, 0);
   assert.equal(checked.extensionDiagnostics.length, 0, "extension diagnostics");
 
-  const publicDocuments = getExtensionHost(session.program!)?.providers.getVirtualDeclarationDocuments() ?? [];
+  const program = session.program;
+  if (program === undefined) assert.fail("the session has no program");
+  const publicDocuments = getExtensionHost(program)?.providers.getVirtualDeclarationDocuments() ?? [];
   assert.deepEqual(publicDocuments.map((document) => document.artifactKind), ["public"]);
-  assert.equal(publicDocuments[0]!.registrarExtensionId, "ext.owners");
+  const publicDocument = publicDocuments[0];
+  if (publicDocument === undefined) assert.fail("the session has no public provider document");
+  assert.equal(publicDocument.registrarExtensionId, "ext.owners");
 
   const sourceFile = checked.getSourceFile("/src/index.ts");
   assert.ok(sourceFile);
@@ -595,14 +603,14 @@ test("the public document and the canonical owner document of one provider both 
   const owner = checked.sourceFacts.getVirtualDeclarationDocument(fact.artifactFileName);
   assert.ok(owner);
   assert.equal(owner.artifactKind, "canonical-export-owner");
-  assert.notEqual(owner.fileName, publicDocuments[0]!.fileName);
+  assert.notEqual(owner.fileName, publicDocument.fileName);
   assert.equal(owner.registrarExtensionId, "ext.owners");
   assert.equal(owner.provider.id, "test.owners");
   // The facts' lookup hands through the registry's own documents, for both kinds.
-  const registry = getExtensionHost(session.program!)?.providers;
+  const registry = getExtensionHost(program)?.providers;
   assert.ok(registry);
   assert.ok(registry.getVirtualDeclarationDocument(fact.artifactFileName) === owner, "the registry's lookup returns the facts' owner document");
-  assert.ok(checked.sourceFacts.getVirtualDeclarationDocument(publicDocuments[0]!.fileName) === publicDocuments[0], "the facts' lookup returns the registry's public document");
+  assert.ok(checked.sourceFacts.getVirtualDeclarationDocument(publicDocument.fileName) === publicDocument, "the facts' lookup returns the registry's public document");
 });
 
 function resolvedDocument(host: ExtensionHost, specifier: string): ProviderVirtualDeclarationDocument {
