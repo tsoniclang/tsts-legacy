@@ -194,18 +194,79 @@ test("a ring of namespace imports, each merged with a function and exported with
   assert.deepEqual(check({ ...ring("cts"), "/case/u.mts": "export {};\n" }).errors, circular("cts"));
 });
 
-test("a use of a namespace import of a deprecated export = value is reported once, as a use of a default import of it is", () => {
+// Deprecation through a namespace import. The symbol made for the import stands for the value it was made from: the
+// walk goes on from that value, so a deprecated value (or a deprecated alias further on) is reported at the use.
+// Reference for each expectation: TypeScript 6.0.3 (node_modules/typescript), its language service's semantic and
+// suggestion diagnostics for the same files on disk under module and moduleResolution nodenext, strict, target es2024.
+// Pinned TS-Go gives no reference for the ring (it does not return from it). Each expectation is also what this
+// checker reported while it made two symbols per import.
+const ONE_HOP_REFERENCE = [
+  "eq.d.cts(3,10): suggestion TS6385: 'obj' is deprecated.",
+  "u.mts(3,19): suggestion TS6385: 'ns' is deprecated.",
+  "u.mts(3,19): suggestion TS6385: 'obj' is deprecated.",
+  "u.mts(3,23): suggestion TS6385: 'd' is deprecated.",
+  "u.mts(3,26): suggestion TS6385: 'ns' is deprecated.",
+  "u.mts(3,26): suggestion TS6385: 'obj' is deprecated.",
+];
+test("a use of a namespace import of a deprecated export = value has the suggestion naming the import and the one naming the value; a default import's use has one", () => {
+  const checked = check({
+    "/case/m1.d.cts": "import x1 = require(\"./m2.cjs\");\nexport = x1;\n",
+    "/case/m2.d.cts": "import x2 = require(\"./m3.cjs\");\nexport = x2;\n",
+    "/case/m3.d.cts": "/** @deprecated gone */\ndeclare const end: { k: number };\nexport = end;\n",
+    "/case/u.mts": "import * as ns from \"./m1.cjs\";\nimport d from \"./m1.cjs\";\nexport const a = [ns, d];\nexport type T = typeof ns;\n",
+  });
+  assert.deepEqual(checked.errors, []);
+  // These eight lines are exactly TypeScript 6.0.3's suggestions for this program.
+  assert.deepEqual(checked.suggestions, [
+    "m1.d.cts(2,10): suggestion TS6385: 'x1' is deprecated.",
+    "m2.d.cts(2,10): suggestion TS6385: 'x2' is deprecated.",
+    "m3.d.cts(3,10): suggestion TS6385: 'end' is deprecated.",
+    "u.mts(3,19): suggestion TS6385: 'end' is deprecated.",
+    "u.mts(3,19): suggestion TS6385: 'ns' is deprecated.",
+    "u.mts(3,23): suggestion TS6385: 'd' is deprecated.",
+    "u.mts(4,24): suggestion TS6385: 'end' is deprecated.",
+    "u.mts(4,24): suggestion TS6385: 'ns' is deprecated.",
+  ]);
+});
+
+test("the one-hop form: a namespace import of a module whose export = names a deprecated value", () => {
   const checked = check({
     "/case/eq.d.cts": "/** @deprecated use another */\ndeclare const obj: { k: number };\nexport = obj;\n",
     "/case/u.mts": "import * as ns from \"./eq.cjs\";\nimport d from \"./eq.cjs\";\nexport const v = [ns, d, ns.k];\n",
   });
   assert.deepEqual(checked.errors, []);
-  // Each use has one suggestion. When the import's final target and immediate target were two symbols, the walk over
-  // the second one added "'obj' is deprecated" at every use of ns.
-  assert.deepEqual(checked.suggestions, [
-    "eq.d.cts(3,10): suggestion TS6385: 'obj' is deprecated.",
-    "u.mts(3,19): suggestion TS6385: 'ns' is deprecated.",
-    "u.mts(3,23): suggestion TS6385: 'd' is deprecated.",
-    "u.mts(3,26): suggestion TS6385: 'ns' is deprecated.",
+  assert.deepEqual(checked.suggestions, ONE_HOP_REFERENCE);
+});
+
+test("a deprecated alias in the middle of a chain is reported at the default import's use and not at the namespace import's, and a deprecated member of a ring is still reported at the namespace use", () => {
+  const middle = check({
+    "/case/m1.d.cts": "import x1 = require(\"./m2.cjs\");\nexport = x1;\n",
+    "/case/m2.d.cts": "/** @deprecated gone */\nimport x2 = require(\"./m3.cjs\");\nexport = x2;\n",
+    "/case/m3.d.cts": "declare const end: { k: number };\nexport = end;\n",
+    "/case/u.mts": "import * as ns from \"./m1.cjs\";\nimport d from \"./m1.cjs\";\nexport const a = [ns, d];\nexport type T = typeof ns;\n",
+  });
+  assert.deepEqual(middle.errors, []);
+  // Here the checker differs from TypeScript 6.0.3, which reports only the second line (the export = of m2). The first
+  // and third lines are the pinned checker's own (unchanged by the symbol made once: the same before and after).
+  assert.deepEqual(middle.suggestions, [
+    "m1.d.cts(2,10): suggestion TS6385: 'x2' is deprecated.",
+    "m2.d.cts(3,10): suggestion TS6385: 'x2' is deprecated.",
+    "u.mts(3,23): suggestion TS6385: 'x2' is deprecated.",
+  ]);
+  // A ring of three import = require aliases, each merged with a namespace, the second deprecated: an error program
+  // (TS2440 in each file). The walk goes on from the import's made symbol into the ring and meets the deprecated member.
+  // TypeScript 6.0.3 returns from this program with exactly these four suggestions and the three TS2440 errors.
+  const ring: Record<string, string> = {};
+  for (const index of [1, 2, 3]) {
+    const mark = index === 2 ? "/** @deprecated gone */\n" : "";
+    ring[`/case/m${index}.d.cts`] = `${mark}import x${index} = require("./m${index % 3 + 1}.cjs");\n${mark}declare namespace x${index} { const k${index}: number }\nexport = x${index};\n`;
+  }
+  const ringed = check({ ...ring, "/case/u.mts": "import * as ns from \"./m1.cjs\";\nimport d from \"./m1.cjs\";\nexport const a = [ns, d];\nexport type T = typeof ns;\n" });
+  assert.deepEqual(ringed.errors, [1, 2, 3].map(index => `m${index}.d.cts(${index === 2 ? 2 : 1},1): error TS2440: Import declaration conflicts with local declaration of 'x${index}'.`));
+  assert.deepEqual(ringed.suggestions, [
+    "m1.d.cts(3,10): suggestion TS6385: 'x1' is deprecated.",
+    "m2.d.cts(5,10): suggestion TS6385: 'x2' is deprecated.",
+    "u.mts(3,19): suggestion TS6385: 'x2' is deprecated.",
+    "u.mts(4,24): suggestion TS6385: 'x2' is deprecated.",
   ]);
 });
