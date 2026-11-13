@@ -106,7 +106,7 @@ test("an access to the made default member through any other receiver says that 
   // In each of these the value may be the namespace of two.cjs while the receiver's static type is the one of one.cjs.
   for (const text of ["reassigned.default", "copied.default", "chosen.default", "typed.default", "resolved.default"]) {
     const info = program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", text));
-    assert.ok(info?.kind === "module-exported-value" && info.target === undefined, `${text}: a module's exported value, no module`);
+    assert.ok(info?.kind === "module-exported-value" && Object.keys(info).sort().join(",") === "kind,target" && info.target === undefined, `${text}: exactly { kind: module-exported-value, target: undefined }`);
   }
 });
 

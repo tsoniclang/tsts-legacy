@@ -33,12 +33,12 @@ import {
   findNodesByKind,
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "./type-checker.js";
 
 // The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
-function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
-  if (info === undefined) return undefined;
-  if (info.kind !== "member") throw new Error("A member access was expected.");
-  return info as Extract<T, { readonly kind: "member" }>;
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
 }
 
 test("global value lookup retains actual library and alias signature identity through local shadows", () => {

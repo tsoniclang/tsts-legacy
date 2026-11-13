@@ -6,12 +6,12 @@ import { Diagnostic_String } from "../internal/ast/diagnostic.js";
 import { providerVirtualDeclarationFactKey } from "./facts.js";
 import type { ProviderDeclarationModel } from "./index.js";
 import { findNodes, sourceProviderExtension, testCoreDeclarations, testNoLibCompilerOptions } from "./source-provider-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "../services/type-checker.js";
 
 // The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
-function memberAccess<T extends { readonly kind: string }>(info: T | undefined): Extract<T, { readonly kind: "member" }> | undefined {
-  if (info === undefined) return undefined;
-  if (info.kind !== "member") throw new Error("A member access was expected.");
-  return info as Extract<T, { readonly kind: "member" }>;
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
 }
 
 const moduleSpecifier = "@test/namespace-names.js";
