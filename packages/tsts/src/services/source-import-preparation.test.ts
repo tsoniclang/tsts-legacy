@@ -66,20 +66,23 @@ test("source import preparation preserves all eight authored reference families 
     { prefix: "type Selected = import(", token: '"./type.js"', suffix: ").Selected;" },
     { prefix: "const loaded = import(", token: '"./dynamic.js"', suffix: ");" },
   ];
-  let byteOffset = 0;
+  // A first line of two-, three- and four-byte characters: every site below it differs between UTF-16 units and bytes.
+  const header = "// \u00e9\u20ac\u{1f600}\n";
+  let offset = header.length;
   const expectedRanges = authored.map(occurrence => {
-    const range = { start: byteOffset + Buffer.byteLength(occurrence.prefix), length: Buffer.byteLength(occurrence.token) };
-    byteOffset += Buffer.byteLength(occurrence.prefix + occurrence.token + occurrence.suffix) + 1;
+    const range = { start: offset + occurrence.prefix.length, length: occurrence.token.length };
+    offset += (occurrence.prefix + occurrence.token + occurrence.suffix).length + 1;
     return range;
   });
-  const main = authored.map(occurrence => occurrence.prefix + occurrence.token + occurrence.suffix).join("\n");
+  const main = header + authored.map(occurrence => occurrence.prefix + occurrence.token + occurrence.suffix).join("\n");
   const repeatedToken = '"./required.cjs"';
   const repeatedPrefix = "require(";
   const repeatedStatement = `${repeatedPrefix}${repeatedToken});`;
-  const repeated = `${repeatedStatement}\n${repeatedStatement}`;
-  const repeatedRanges = [0, Buffer.byteLength(`${repeatedStatement}\n`)].map(start => ({
-    start: start + Buffer.byteLength(repeatedPrefix), length: Buffer.byteLength(repeatedToken),
+  const repeated = `${header}${repeatedStatement}\n${repeatedStatement}`;
+  const repeatedRanges = [header.length, header.length + `${repeatedStatement}\n`.length].map(start => ({
+    start: start + repeatedPrefix.length, length: repeatedToken.length,
   }));
+  const bytesBefore = (text: string, unitOffset: number): number => Buffer.byteLength(text.slice(0, unitOffset));
   const inputs = new Map([
     ["/src/package.json", '{"type":"module"}'], ["/src/main.ts", main],
     ["/src/ambient.d.ts", "declare const ambient: number;"],
@@ -136,13 +139,24 @@ test("source import preparation preserves all eight authored reference families 
     if (directive === undefined || expectedRange === undefined || reference === undefined) {
       throw new Error("The complete authored directive range domain is absent.");
     }
+    // The parser's own range is in UTF-8 bytes of the text; the reported site is the same place in UTF-16 units.
     assert.deepEqual({ start: TextRange_Pos(directive), length: TextRange_End(directive) - TextRange_Pos(directive) },
-      expectedRange, `directive ${index} belongs to its own authored attribute, not an earlier equal substring`);
-    assert.equal(reference.start, TextRange_Pos(directive), `directive ${index} retains the genuine parser's own range start`);
-    assert.equal(reference.length, TextRange_End(directive) - TextRange_Pos(directive), `directive ${index} retains the genuine parser's own full range`);
+      { start: bytesBefore(main, expectedRange.start), length: Buffer.byteLength(main.slice(expectedRange.start, expectedRange.start + expectedRange.length)) },
+      `directive ${index} belongs to its own authored attribute, not an earlier equal substring`);
+    assert.notEqual(TextRange_Pos(directive), expectedRange.start, `directive ${index}: the byte position and the UTF-16 site differ in this text`);
+    assert.deepEqual({ start: reference.start, length: reference.length }, expectedRange,
+      `directive ${index} is reported at the parser's own range, converted to UTF-16 units`);
   }
   assert.deepEqual(prepared.map(reference => ({ start: reference.start, length: reference.length })), expectedRanges,
-    "the complete occurrence-specific UTF8 vector retains interior directive and quoted ordinary spans");
+    "the complete occurrence-specific UTF-16 vector retains interior directive and quoted ordinary spans");
+  for (const [index, reference] of prepared.entries()) {
+    assert.equal(main.slice(reference.start, reference.start + reference.length), authored[index]?.token, `reference ${index}: the UTF-16 slice is the authored token`);
+    assert.notEqual(bytesBefore(main, reference.start), reference.start, `reference ${index}: the byte offset differs from the reported site`);
+  }
+  for (const reference of file(result, "/src/repeated.cjs").references) {
+    assert.equal(repeated.slice(reference.start, reference.start + reference.length), repeatedToken);
+    assert.notEqual(bytesBefore(repeated, reference.start), reference.start);
+  }
   assert.equal(input.parsed.every(source => !source.isBound.Load()), true,
     "every genuine parsed source remains unbound, without checked semantic state");
 });
@@ -409,25 +423,82 @@ test("source import preparation reports UTF-16 spans after one-, two-, three- an
   assert.deepEqual(imported.resolution, { kind: "resolved", fileName: "/src/d\u00e9p.mts" });
 });
 
-test("source import preparation reports sites in the text the file system delivers; leading byte-order marks are removed before parsing and not counted", () => {
+test("source import preparation reports a UTF-16 site that differs from the byte offset for every kind of reference: the three directives, import, export from, import type, dynamic import, import = require and a require call", () => {
+  const wide = "\u00e9\u20ac\u{1f600}";
+  const main = [
+    `// ${wide}`,
+    '/// <reference path="./ambient.d.ts" />',
+    '/// <reference types="ambient" />',
+    '/// <reference lib="es5" />',
+    `const a\u00e9 = "${wide}"; import { value } from "./import.js";`,
+    'export { value as second } from "./export.js";',
+    'type Selected = import("./type.js").Selected;',
+    'const loaded = import("./dynamic.js");',
+    'import assigned = require("./assigned.cjs");',
+    "namespace Local { export const inner = 1; }",
+    "import entity = Local.inner;",
+    `export { a\u00e9, loaded, assigned, entity }; export type { Selected };`, "",
+  ].join("\n");
+  const common = `const b = "${wide}"; const loaded = require("./required.cjs");\n`;
+  const input = fixture(new Map([
+    ["/src/package.json", '{"type":"module"}'], ["/src/main.ts", main], ["/src/main.cjs", common],
+    ["/src/ambient.d.ts", "declare const ambient: number;"],
+    ["/src/node_modules/@types/ambient/package.json", '{"name":"@types/ambient","version":"1.0.0","types":"index.d.ts"}'],
+    ["/src/node_modules/@types/ambient/index.d.ts", "declare const ambientPackage: number;"],
+    ["/libs/lib.es5.d.ts", "interface MinimalLibrary {}"],
+    ["/src/import.ts", "export const value = 1;"], ["/src/export.ts", "export const value = 2;"],
+    ["/src/type.ts", "export type Selected = number;"], ["/src/dynamic.ts", "export const dynamic = 3;"],
+    ["/src/assigned.cts", "const value = 1; export = value;"], ["/src/required.cjs", "exports.value = 4;"],
+  ]), ["/src/main.ts", "/src/main.cjs"], { noLib: false, lib: [], allowJs: true });
+  const result = prepareSourceImports(input);
+  assert.equal(result.diagnostics.length, 0);
+  // The authored token at each site: the bare attribute value for a directive, the quoted literal otherwise.
+  const expected = [
+    ["reference-path", "directive", "./ambient.d.ts"], ["reference-types", "directive", "ambient"], ["reference-lib", "directive", "es5"],
+    ["import", "statement", '"./import.js"'], ["export", "statement", '"./export.js"'],
+    ["import-type", "expression", '"./type.js"'], ["dynamic-import", "expression", '"./dynamic.js"'],
+    // An import-equals with a module reference has kind "require" and placement "statement"; a require call has
+    // kind "require" and placement "expression". An import-equals of an entity name (import entity = Local.inner)
+    // names no module and is not a reference.
+    ["require", "statement", '"./assigned.cjs"'],
+  ];
+  const sites = (fileName: string, text: string) => file(result, fileName).references.map(reference => {
+    assert.notEqual(Buffer.byteLength(text.slice(0, reference.start)), reference.start,
+      `${reference.kind}: the byte offset differs from the reported site`);
+    return [reference.kind, reference.placement, text.slice(reference.start, reference.start + reference.length)];
+  });
+  assert.deepEqual(sites("/src/main.ts", main), expected);
+  assert.deepEqual(sites("/src/main.cjs", common), [["require", "expression", '"./required.cjs"']]);
+  // Each site is the token's own place, not an earlier equal substring ("ambient" also occurs inside "./ambient.d.ts").
+  const before = ['path="', 'types="', 'lib="', "", "", "", "", ""];
+  for (const [index, [, , token]] of expected.entries()) {
+    const lead = before[index] ?? "";
+    assert.equal(file(result, "/src/main.ts").references[index]?.start, main.indexOf(`${lead}${token}`) + lead.length, `reference ${index} is at its authored token`);
+  }
+});
+
+test("source import preparation reports sites in the text the file system delivers, which has lost at most two leading byte-order marks", () => {
   const token = '"./dep.mjs"';
   const body = `const label = "\u00e9"; import ${token};`;
-  for (const marks of ["", "\ufeff", "\ufeff\ufeff"]) {
-    const source = marks + body;
+  // The SDK's file system removes the first leading U+FEFF and, if another follows, that one too; never a third.
+  for (const [marks, removed] of [[0, 0], [1, 1], [2, 2], [3, 2], [4, 2]] as const) {
+    const source = "\ufeff".repeat(marks) + body;
     const input = fixture(new Map([["/src/main.mts", source], ["/src/dep.mts", "export {};"]]), ["/src/main.mts"]);
-    // The SDK's file system removes every leading U+FEFF unit when it reads a file, so no later step sees them.
     const [delivered] = input.host.FS().ReadFile("/src/main.mts");
-    assert.equal(delivered, body, `${marks.length} leading mark(s) are removed by the file system`);
+    assert.equal(source.length - delivered.length, removed, `of ${marks} leading mark(s) the file system removes ${removed}`);
+    assert.equal(delivered, source.slice(removed), "the delivered text is the original without its first units");
+    assert.equal(delivered.startsWith("\ufeff"), marks > 2, "a third and later mark stay in the delivered text");
     const result = prepareSourceImports(input);
+    assert.equal(result.diagnostics.length, 0);
     const reference = file(result, "/src/main.mts").references[0];
     if (reference === undefined) throw new Error("The expected import is absent.");
-    // The site is a UTF-16 offset of the delivered text. Its offset in the original document is larger by
-    // exactly the number of leading marks, which only the supplier of the original text can add.
-    assert.equal(reference.start, body.indexOf(token));
-    assert.equal(reference.start + marks.length, source.indexOf(token));
+    // The site is a UTF-16 offset of the delivered text. Its offset in the original document is larger by the
+    // number of units removed (the difference of the two lengths), which is not the number of leading marks.
+    assert.equal(reference.start, delivered.indexOf(token));
+    assert.equal(reference.start + (source.length - delivered.length), source.indexOf(token));
     assert.equal(reference.length, token.length);
     assert.equal(delivered.slice(reference.start, reference.start + reference.length), token);
-    assert.notEqual(Buffer.byteLength(body.slice(0, reference.start)), reference.start, "a two-byte character precedes the import");
+    assert.notEqual(Buffer.byteLength(delivered.slice(0, reference.start)), reference.start, "a two-byte character precedes the import");
   }
 });
 

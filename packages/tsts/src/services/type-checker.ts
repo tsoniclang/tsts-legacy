@@ -217,6 +217,25 @@ export interface TypeCheckerQueries {
    * Nothing, and no throw, for a symbol that is not an alias and for an alias whose own step did not
    * resolve (a missing module or member). A member of a circular alias chain has a step: following the
    * steps from it returns to a symbol already visited, which is how a caller finds the cycle's members.
+   *
+   * One step, by binding form:
+   * - import specifier, export specifier: the module's export of that name, an alias when it is a re-export;
+   * - default import: the module's default export, or the `export =` assignment of a module that has one
+   *   (that assignment's symbol is an alias when it names an entity);
+   * - `import x = require(...)`: the module, or its `export =` assignment;
+   * - `import x = N.v`: the named entity;
+   * - namespace import, `export * as ns`: the module.
+   * Not one step, for a module with `export =`: the checker resolves the whole chain behind the
+   * assignment before it answers, so the assignment and every alias behind it are skipped:
+   * - namespace import, `export * as ns`: the final target of the chain;
+   * - import specifier, export specifier: the member of that final target.
+   * Present behaviour of a namespace import, in an ECMAScript-format file, of a CommonJS-format file: this
+   * query and getAliasedSymbol each return their own copy of the target (equal declarations, different
+   * objects), and when the `export =` chain does not resolve each returns a copy of the checker's unknown
+   * symbol, which has no declaration, instead of nothing. Compare results by declaration, not by identity.
+   *
+   * Cost: a step that did not resolve is not remembered. Each further call for that alias runs the step
+   * again and creates its diagnostic again. Ask once per binding and keep the answer; never once per use.
    */
   readonly getImmediateAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
   readonly getTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;

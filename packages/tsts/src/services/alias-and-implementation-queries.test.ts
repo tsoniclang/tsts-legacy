@@ -125,6 +125,154 @@ test("getImmediateAliasedSymbol steps one alias at a time, closes a circular cha
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
+// One row per step from a binding: "alias " or "final " (whether the step is itself flagged as an alias), then the
+// step's declarations. The walk ends at nothing or at a symbol already visited.
+function walker(program: ReturnType<typeof open>) {
+  const describe = (symbol: Symbol | undefined): string =>
+    declarations(symbol).map(declaration => `${program.fileNameOf(declaration)}:${program.ast.kindName(declaration)}:${program.textOf(declaration)}`).join(" | ");
+  const isAlias = (symbol: Symbol | undefined): boolean => symbol !== undefined && (symbol.Flags & SymbolFlagsAlias) !== 0;
+  const bindingOf = (fileName: string, kind: string, text: string) => {
+    const { checker, sourceFile } = program.queries(fileName);
+    const symbol = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, kind, text)));
+    assert.equal(isAlias(symbol), true, `${text} is an alias binding`);
+    const steps: string[] = [];
+    const seen = new Set<Symbol>();
+    let current = symbol;
+    for (let count = 0; count < 12; count += 1) {
+      const next = checker.getImmediateAliasedSymbol(current);
+      if (next === undefined || seen.has(next)) break;
+      seen.add(next);
+      steps.push(`${isAlias(next) ? "alias" : "final"} ${describe(next)}`);
+      current = next;
+    }
+    return { checker, symbol, steps, first: checker.getImmediateAliasedSymbol(symbol), target: checker.getAliasedSymbol(symbol) };
+  };
+  return { describe, isAlias, bindingOf };
+}
+
+test("getImmediateAliasedSymbol by binding form: a namespace import, a default import, export * as, import = require and import = N.v each give one step", () => {
+  const program = open({
+    "/case/m.mts": "export const a = 1;\n",
+    "/case/dm.mts": "export default 1 + 2;\n",
+    "/case/xns.mts": "export * as plainNs from \"./m.mjs\";\n",
+    "/case/eq.cts": "const obj = { k: 1 };\nexport = obj;\n",
+    "/case/u.mts": [
+      "import * as pm from \"./m.mjs\";", "import dm from \"./dm.mjs\";", "import { plainNs } from \"./xns.mjs\";",
+      "namespace N { export const v = 1; }", "import x = N.v;", "export const use = [pm, dm, plainNs, x];", "",
+    ].join("\n"),
+    "/case/r.cts": "import r = require(\"./eq.cjs\");\nexport const use = r;\n",
+  });
+  const { bindingOf } = walker(program);
+  const diagnosticsBefore = program.session.getDiagnostics("all").length;
+
+  // A namespace import steps to the module itself, which is not an alias and is the final target.
+  const pm = bindingOf("/case/u.mts", "NamespaceImport", "* as pm");
+  assert.deepEqual(pm.steps, ["final /case/m.mts:KindSourceFile:export const a = 1;\n"]);
+  assert.equal(pm.first, pm.target);
+
+  // A default import steps to the module's default export; for an expression that is the export assignment, not an alias.
+  const dm = bindingOf("/case/u.mts", "ImportClause", "dm");
+  assert.deepEqual(dm.steps, ["final /case/dm.mts:KindExportAssignment:export default 1 + 2;"]);
+  assert.equal(dm.first, dm.target);
+
+  // export * as: the importer's binding steps to the namespace export, an alias; that steps to the module.
+  const plainNs = bindingOf("/case/u.mts", "ImportSpecifier", "plainNs");
+  assert.deepEqual(plainNs.steps, ["alias /case/xns.mts:KindNamespaceExport:* as plainNs", "final /case/m.mts:KindSourceFile:export const a = 1;\n"]);
+  assert.deepEqual(bindingOf("/case/xns.mts", "NamespaceExport", "* as plainNs").steps, ["final /case/m.mts:KindSourceFile:export const a = 1;\n"]);
+
+  // import = require of a module with export =: one step is that assignment, an alias; the next is what it names.
+  const r = bindingOf("/case/r.cts", "ImportEqualsDeclaration", "import r = require(\"./eq.cjs\");");
+  assert.deepEqual(r.steps, ["alias /case/eq.cts:KindExportAssignment:export = obj;", "final /case/eq.cts:KindVariableDeclaration:obj = { k: 1 }"]);
+
+  // import = of an entity name: one step is the named entity.
+  const x = bindingOf("/case/u.mts", "ImportEqualsDeclaration", "import x = N.v;");
+  assert.deepEqual(x.steps, ["final /case/u.mts:KindVariableDeclaration:v = 1"]);
+
+  assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
+});
+
+// PRESENT BEHAVIOUR, pinned so that a change is seen. For a module with export =, a namespace import, export * as and
+// a named import or re-export do not give one step: the checker resolves the whole chain behind export = before it
+// answers (Checker_resolveESModuleSymbol), so the assignment and every alias behind it are skipped. A default import
+// and import = require do give one step, to the assignment.
+test("getImmediateAliasedSymbol over a module with export =: default import and import = require step to the assignment; namespace import, export * as and named members land past it (present behaviour)", () => {
+  const program = open({
+    "/case/eq.cts": "const obj = { k: 1 };\nexport = obj;\n",
+    "/case/eqa.cts": "import inner = require(\"./eq.cjs\");\nexport = inner;\n",
+    "/case/xeq.mts": "export * as box from \"./eq.cjs\";\n",
+    "/case/xk.mts": "export { k as viaK } from \"./eq.cjs\";\n",
+    "/case/u.mts": [
+      "import * as ns from \"./eq.cjs\";", "import d from \"./eq.cjs\";", "import { k } from \"./eq.cjs\";",
+      "import * as nsa from \"./eqa.cjs\";", "import da from \"./eqa.cjs\";", "export const use = [ns, d, k, nsa, da];", "",
+    ].join("\n"),
+    "/case/r.cts": "import ra = require(\"./eqa.cjs\");\nexport const use = ra;\n",
+  });
+  const { bindingOf, describe } = walker(program);
+  const diagnosticsBefore = program.session.getDiagnostics("all").length;
+  const assignment = "alias /case/eq.cts:KindExportAssignment:export = obj;";
+  const value = "final /case/eq.cts:KindVariableDeclaration:obj = { k: 1 }";
+
+  // One step: the assignment.
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportClause", "d").steps, [assignment, value]);
+  const chain = ["alias /case/eqa.cts:KindExportAssignment:export = inner;", "alias /case/eqa.cts:KindImportEqualsDeclaration:import inner = require(\"./eq.cjs\");", assignment, value];
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportClause", "da").steps, chain);
+  assert.deepEqual(bindingOf("/case/r.cts", "ImportEqualsDeclaration", "import ra = require(\"./eqa.cjs\");").steps, chain);
+
+  // Past the assignment: the namespace forms land on the final value, the named forms on its member.
+  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as ns").steps, [value]);
+  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as nsa").steps, [value], "export = inner, inner and export = obj are all skipped");
+  assert.deepEqual(bindingOf("/case/xeq.mts", "NamespaceExport", "* as box").steps, [value]);
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "k").steps, ["final /case/eq.cts:KindPropertyAssignment:k: 1"]);
+  assert.deepEqual(bindingOf("/case/xk.mts", "ExportSpecifier", "k as viaK").steps, ["final /case/eq.cts:KindPropertyAssignment:k: 1"]);
+
+  // A namespace import in an ECMAScript-format file of a CommonJS-format file: the checker makes a new symbol for each
+  // of the two queries (Checker_cloneTypeAsModuleType). Same declarations, not the same object. Compare by declaration.
+  const ns = bindingOf("/case/u.mts", "NamespaceImport", "* as ns");
+  assert.equal(describe(ns.first), describe(ns.target));
+  assert.notEqual(ns.first, ns.target, "DEPENDS ON THE SDK CORRECTION: two clones with one declaration");
+  assert.equal(ns.checker.getImmediateAliasedSymbol(ns.symbol), ns.first, "each query repeats to its own object");
+
+  assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
+});
+
+// PRESENT BEHAVIOUR, pinned so that a change is seen; the last block DEPENDS ON THE SDK CORRECTION that is with the
+// SDK's owner. The namespace import below is deliberately never used: one use of it in an expression or a type makes
+// the checker's own check of the file not return (alias-and-implementation-queries.unresolved-export-equals.case.mjs).
+test("getImmediateAliasedSymbol over a module whose export = does not resolve: import = require and default import step to the assignment; a namespace import returns a symbol without declarations instead of nothing (present behaviour)", () => {
+  const program = open({
+    "/case/eqm.cts": "import inner = require(\"./missing.cjs\");\nexport = inner;\n",
+    "/case/u.mts": "import * as nsm from \"./eqm.cjs\";\nimport dm from \"./eqm.cjs\";\nexport const use = dm;\n",
+    "/case/r.cts": "import rm = require(\"./eqm.cjs\");\nexport const use = rm;\n",
+  });
+  const { bindingOf, isAlias } = walker(program);
+  const diagnosticsBefore = program.session.getDiagnostics("all").length;
+
+  // The failing alias itself: nothing from either query.
+  const inner = bindingOf("/case/eqm.cts", "ImportEqualsDeclaration", "import inner = require(\"./missing.cjs\");");
+  assert.deepEqual(inner.steps, []);
+  assert.equal(inner.target, undefined);
+
+  // One step still resolves for the two forms that stop at the assignment; the final target does not.
+  const chain = ["alias /case/eqm.cts:KindExportAssignment:export = inner;", "alias /case/eqm.cts:KindImportEqualsDeclaration:import inner = require(\"./missing.cjs\");"];
+  const rm = bindingOf("/case/r.cts", "ImportEqualsDeclaration", "import rm = require(\"./eqm.cjs\");");
+  assert.deepEqual(rm.steps, chain);
+  assert.equal(rm.target, undefined);
+  const dm = bindingOf("/case/u.mts", "ImportClause", "dm");
+  assert.deepEqual(dm.steps, chain);
+  assert.equal(dm.target, undefined);
+
+  // The namespace import: both queries return a symbol that is not the checker's unknown symbol but a copy of it,
+  // one copy per query: no declaration, not an alias. "Nothing means unresolved" does not hold for this form today.
+  const nsm = bindingOf("/case/u.mts", "NamespaceImport", "* as nsm");
+  assert.notEqual(nsm.first, undefined, "DEPENDS ON THE SDK CORRECTION: nothing is the answer wanted here");
+  assert.notEqual(nsm.target, undefined, "DEPENDS ON THE SDK CORRECTION: nothing is the answer wanted here");
+  assert.deepEqual([declarations(nsm.first).length, isAlias(nsm.first), nsm.first?.Name], [0, false, "unknown"]);
+  assert.deepEqual([declarations(nsm.target).length, isAlias(nsm.target), nsm.target?.Name], [0, false, "unknown"]);
+  assert.notEqual(nsm.first, nsm.target);
+
+  assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
+});
+
 test("the existing property lookup on a class's declared type, asked with the contract member symbol's own key, selects the implementing member: own, inherited, absent, and by unique symbol", () => {
   const program = open({
     "/case/impl.mts": [
