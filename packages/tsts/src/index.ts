@@ -111,6 +111,7 @@ export type {
   SourceCallMarkerDeclaration,
   SourceCallMarkerKind,
   SourceDeclarationProvider,
+  SourceDeclarationProviderRegistrar,
   SourceDeclarationMaterializationMode,
   SourceFileQueries,
   SourcePointerMutability,
