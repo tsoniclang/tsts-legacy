@@ -134,6 +134,7 @@ export type { ParsedCommandLine } from "./internal/tsoptions/parsedcommandline.j
 export { barebonesLibContent, formatDiagnostics, transpile, transpileDeclaration, transpileModule } from "./services/transpile.js";
 export type { TranspileCompilerOptions, TranspileCompilerOptionValue, TranspileOptions, TranspileOutput } from "./services/transpile.js";
 export type {
+  ResolvedAliasStep,
   ResolvedSourceCallInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,

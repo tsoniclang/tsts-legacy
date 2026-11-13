@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SymbolFlagsAlias, createCompilerSessionFromFiles } from "../index.js";
-import type { Node, Symbol } from "../index.js";
+import type { Node, Symbol, TypeCheckerQueries } from "../index.js";
 
 const compilerOptions = { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024" };
 
@@ -55,7 +55,15 @@ function declarations(symbol: Symbol | undefined): readonly Node[] {
   return (symbol.Declarations ?? []).filter((declaration): declaration is Node => declaration !== undefined);
 }
 
-test("getImmediateAliasedSymbol steps one alias at a time, closes a circular chain, and returns nothing without throwing for a non-alias and for a step that did not resolve", () => {
+// The step of a binding whose step is a symbol. A step of the other kind fails the case.
+function symbolStep(checker: TypeCheckerQueries, symbol: Symbol | undefined): Symbol | undefined {
+  const step = checker.getAliasStep(symbol);
+  if (step === undefined) return undefined;
+  if (step.kind !== "symbol") throw new Error("A step that is a symbol was expected.");
+  return step.symbol;
+}
+
+test("getAliasStep steps one alias at a time, closes a circular chain, and returns nothing without throwing for a non-alias and for a step that did not resolve", () => {
   const program = open({
     "/case/m.mts": "export const a = 1;\n",
     "/case/r.mts": "export { a as b } from \"./m.mjs\";\n",
@@ -79,30 +87,30 @@ test("getImmediateAliasedSymbol steps one alias at a time, closes a circular cha
   // z -> c (export specifier in s) -> b (export specifier in r) -> a (variable in m): three steps, each one alias further.
   const z = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ImportSpecifier", "c as z")));
   assert.equal(isAlias(z), true);
-  const step1 = checker.getImmediateAliasedSymbol(z);
+  const step1 = symbolStep(checker, z);
   assert.deepEqual(describe(step1), ["/case/s.mts:KindExportSpecifier:b as c"]);
   assert.equal(isAlias(step1), true);
-  const step2 = checker.getImmediateAliasedSymbol(step1);
+  const step2 = symbolStep(checker, step1);
   assert.deepEqual(describe(step2), ["/case/r.mts:KindExportSpecifier:a as b"]);
   assert.equal(isAlias(step2), true);
-  const step3 = checker.getImmediateAliasedSymbol(step2);
+  const step3 = symbolStep(checker, step2);
   assert.deepEqual(describe(step3), ["/case/m.mts:KindVariableDeclaration:a = 1"]);
   assert.equal(isAlias(step3), false);
   assert.equal(step3, checker.getAliasedSymbol(z), "the last step is the final target the existing query returns");
   // The opposite of an alias: a variable. Nothing, and no throw.
-  assert.equal(checker.getImmediateAliasedSymbol(step3), undefined);
+  assert.equal(symbolStep(checker, step3), undefined);
 
   // A local re-export steps to the local declaration; a re-export of an import steps to that import binding, not past it.
   const viaLocal = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ExportSpecifier", "local as viaLocal")));
-  assert.deepEqual(describe(checker.getImmediateAliasedSymbol(viaLocal)), ["/case/u.mts:KindVariableDeclaration:local = 1"]);
+  assert.deepEqual(describe(symbolStep(checker, viaLocal)), ["/case/u.mts:KindVariableDeclaration:local = 1"]);
   const viaZ = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ExportSpecifier", "z as viaZ")));
-  assert.equal(checker.getImmediateAliasedSymbol(viaZ), z);
+  assert.equal(symbolStep(checker, viaZ), z);
 
   // An alias whose member does not exist: flagged as an alias, and both queries return nothing.
   const nope = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ImportSpecifier", "nope")));
   assert.equal(isAlias(nope), true);
   assert.equal(checker.getAliasedSymbol(nope), undefined);
-  assert.equal(checker.getImmediateAliasedSymbol(nope), undefined);
+  assert.equal(symbolStep(checker, nope), undefined);
 
   // An import through a circular re-export: its final target is unresolved, and its steps lead into the cycle and
   // return to a symbol already visited. The cycle's members are the two export specifiers; the importer is not one.
@@ -110,27 +118,29 @@ test("getImmediateAliasedSymbol steps one alias at a time, closes a circular cha
   const x = cyclic.checker.getSymbolAtLocation(program.nameOf(program.only(cyclic.sourceFile, "ImportSpecifier", "x")));
   assert.equal(isAlias(x), true);
   assert.equal(cyclic.checker.getAliasedSymbol(x), undefined);
-  const inC1 = cyclic.checker.getImmediateAliasedSymbol(x);
+  const inC1 = symbolStep(cyclic.checker, x);
   assert.deepEqual(describe(inC1), ["/case/c1.mts:KindExportSpecifier:x"]);
-  const inC2 = cyclic.checker.getImmediateAliasedSymbol(inC1);
+  const inC2 = symbolStep(cyclic.checker, inC1);
   assert.deepEqual(describe(inC2), ["/case/c2.mts:KindExportSpecifier:x"]);
-  assert.equal(cyclic.checker.getImmediateAliasedSymbol(inC2), inC1, "the walk returns to the first member: the cycle is c1.x, c2.x");
+  assert.equal(symbolStep(cyclic.checker, inC2), inC1, "the walk returns to the first member: the cycle is c1.x, c2.x");
 
   // Through a star re-export there is no alias in the re-exporting module: one step reaches the declaration.
   const star = program.queries("/case/v.mts");
   const viaStar = star.checker.getSymbolAtLocation(program.nameOf(program.only(star.sourceFile, "ImportSpecifier", "a as viaStar")));
-  assert.deepEqual(describe(star.checker.getImmediateAliasedSymbol(viaStar)), ["/case/m.mts:KindVariableDeclaration:a = 1"]);
+  assert.deepEqual(describe(symbolStep(star.checker, viaStar)), ["/case/m.mts:KindVariableDeclaration:a = 1"]);
 
-  assert.equal(checker.getImmediateAliasedSymbol(undefined), undefined);
+  assert.equal(symbolStep(checker, undefined), undefined);
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
-// One row per step from a binding: "alias " or "final " (whether the step is itself flagged as an alias), then the
-// step's declarations. The walk ends at nothing or at a symbol already visited.
+// One row per step from a binding. A symbol step: "alias " or "final " (whether the step is itself flagged as an
+// alias), then the step's declarations. A member of an exported value: "member of [<the export = assignment>]: " and
+// the member in the same form, or "nothing". The walk ends at nothing or at a symbol already visited.
 function walker(program: ReturnType<typeof open>) {
   const describe = (symbol: Symbol | undefined): string =>
     declarations(symbol).map(declaration => `${program.fileNameOf(declaration)}:${program.ast.kindName(declaration)}:${program.textOf(declaration)}`).join(" | ");
   const isAlias = (symbol: Symbol | undefined): boolean => symbol !== undefined && (symbol.Flags & SymbolFlagsAlias) !== 0;
+  const row = (symbol: Symbol): string => `${isAlias(symbol) ? "alias" : "final"} ${describe(symbol)}`;
   const bindingOf = (fileName: string, kind: string, text: string) => {
     const { checker, sourceFile } = program.queries(fileName);
     const symbol = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, kind, text)));
@@ -139,18 +149,25 @@ function walker(program: ReturnType<typeof open>) {
     const seen = new Set<Symbol>();
     let current = symbol;
     for (let count = 0; count < 12; count += 1) {
-      const next = checker.getImmediateAliasedSymbol(current);
+      const step = checker.getAliasStep(current);
+      if (step === undefined) break;
+      const next = step.kind === "symbol" ? step.symbol : step.member;
+      if (step.kind === "exported-value-member") {
+        steps.push(`member of [${describe(step.exportAssignment)}]: ${next === undefined ? "nothing" : row(next)}`);
+      } else {
+        if (seen.has(step.symbol)) break;
+        steps.push(row(step.symbol));
+      }
       if (next === undefined || seen.has(next)) break;
       seen.add(next);
-      steps.push(`${isAlias(next) ? "alias" : "final"} ${describe(next)}`);
       current = next;
     }
-    return { checker, symbol, steps, first: checker.getImmediateAliasedSymbol(symbol), target: checker.getAliasedSymbol(symbol) };
+    return { checker, symbol, steps, first: checker.getAliasStep(symbol), target: checker.getAliasedSymbol(symbol) };
   };
   return { describe, isAlias, bindingOf };
 }
 
-test("getImmediateAliasedSymbol by binding form: a namespace import, a default import, export * as, import = require and import = N.v each give one step", () => {
+test("getAliasStep by binding form: a namespace import, a default import, export * as, import = require and import = N.v each give one step", () => {
   const program = open({
     "/case/m.mts": "export const a = 1;\n",
     "/case/dm.mts": "export default 1 + 2;\n",
@@ -165,15 +182,15 @@ test("getImmediateAliasedSymbol by binding form: a namespace import, a default i
   const { bindingOf } = walker(program);
   const diagnosticsBefore = program.session.getDiagnostics("all").length;
 
-  // A namespace import steps to the module itself, which is not an alias and is the final target.
+  // A namespace import of a module without export = steps to the module itself, which is not an alias and is the final target.
   const pm = bindingOf("/case/u.mts", "NamespaceImport", "* as pm");
   assert.deepEqual(pm.steps, ["final /case/m.mts:KindSourceFile:export const a = 1;\n"]);
-  assert.equal(pm.first, pm.target);
+  assert.deepEqual(pm.first, { kind: "symbol", symbol: pm.target });
 
   // A default import steps to the module's default export; for an expression that is the export assignment, not an alias.
   const dm = bindingOf("/case/u.mts", "ImportClause", "dm");
   assert.deepEqual(dm.steps, ["final /case/dm.mts:KindExportAssignment:export default 1 + 2;"]);
-  assert.equal(dm.first, dm.target);
+  assert.deepEqual(dm.first, { kind: "symbol", symbol: dm.target });
 
   // export * as: the importer's binding steps to the namespace export, an alias; that steps to the module.
   const plainNs = bindingOf("/case/u.mts", "ImportSpecifier", "plainNs");
@@ -191,56 +208,83 @@ test("getImmediateAliasedSymbol by binding form: a namespace import, a default i
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
-// PRESENT BEHAVIOUR, pinned so that a change is seen. For a module with export =, a namespace import, export * as and
-// a named import or re-export do not give one step: the checker resolves the whole chain behind export = before it
-// answers (Checker_resolveESModuleSymbol), so the assignment and every alias behind it are skipped. A default import
-// and import = require do give one step, to the assignment.
-test("getImmediateAliasedSymbol over a module with export =: default import and import = require step to the assignment; namespace import, export * as and named members land past it (present behaviour)", () => {
+// The export = assignment is the nearest boundary of every binding over such a module and is never skipped. The
+// checker's own immediate target lands past it for a namespace import, export * as and a named member (it resolves the
+// chain behind the assignment before it answers); the query answers with the assignment instead.
+test("getAliasStep over a module with export =: every binding form steps to the assignment's symbol; a named import or re-export is a member of the exported value with the assignment as its boundary", () => {
   const program = open({
     "/case/eq.cts": "const obj = { k: 1 };\nexport = obj;\n",
     "/case/eqa.cts": "import inner = require(\"./eq.cjs\");\nexport = inner;\n",
+    "/case/lit.cts": "export = { k: 1 };\n",
     "/case/xeq.mts": "export * as box from \"./eq.cjs\";\n",
     "/case/xk.mts": "export { k as viaK } from \"./eq.cjs\";\n",
     "/case/u.mts": [
       "import * as ns from \"./eq.cjs\";", "import d from \"./eq.cjs\";", "import { k } from \"./eq.cjs\";",
-      "import * as nsa from \"./eqa.cjs\";", "import da from \"./eqa.cjs\";", "export const use = [ns, d, k, nsa, da];", "",
+      "import { default as viaDefault } from \"./eq.cjs\";", "import { absent } from \"./eq.cjs\";",
+      "import * as nsa from \"./eqa.cjs\";", "import da from \"./eqa.cjs\";", "import { k as ka } from \"./eqa.cjs\";",
+      "import * as nsl from \"./lit.cjs\";", "import { k as kl } from \"./lit.cjs\";",
+      "export const use = [ns, d, k, viaDefault, absent, nsa, da, ka, nsl, kl];", "",
     ].join("\n"),
     "/case/r.cts": "import ra = require(\"./eqa.cjs\");\nexport const use = ra;\n",
   });
-  const { bindingOf, describe } = walker(program);
+  const { bindingOf } = walker(program);
   const diagnosticsBefore = program.session.getDiagnostics("all").length;
   const assignment = "alias /case/eq.cts:KindExportAssignment:export = obj;";
   const value = "final /case/eq.cts:KindVariableDeclaration:obj = { k: 1 }";
-
-  // One step: the assignment.
-  assert.deepEqual(bindingOf("/case/u.mts", "ImportClause", "d").steps, [assignment, value]);
   const chain = ["alias /case/eqa.cts:KindExportAssignment:export = inner;", "alias /case/eqa.cts:KindImportEqualsDeclaration:import inner = require(\"./eq.cjs\");", assignment, value];
+
+  // Default import, a specifier named default, import = require, namespace import and export * as: the same first
+  // step, the assignment's symbol, and the same object for all of them.
+  const d = bindingOf("/case/u.mts", "ImportClause", "d");
+  const ns = bindingOf("/case/u.mts", "NamespaceImport", "* as ns");
+  assert.deepEqual(d.steps, [assignment, value]);
+  assert.deepEqual(ns.steps, [assignment, value]);
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "default as viaDefault").steps, [assignment, value]);
+  assert.deepEqual(bindingOf("/case/xeq.mts", "NamespaceExport", "* as box").steps, [assignment, value]);
+  assert.deepEqual(ns.first, d.first, "the namespace import and the default import step to one symbol");
+  assert.equal(ns.first?.kind === "symbol" && d.first?.kind === "symbol" && ns.first.symbol === d.first.symbol, true);
+  assert.deepEqual(ns.checker.getAliasStep(ns.symbol), ns.first, "the step repeats to the same symbol");
+
+  // A chain of two assignments: every hop is a step, for the namespace import as for the others.
   assert.deepEqual(bindingOf("/case/u.mts", "ImportClause", "da").steps, chain);
   assert.deepEqual(bindingOf("/case/r.cts", "ImportEqualsDeclaration", "import ra = require(\"./eqa.cjs\");").steps, chain);
+  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as nsa").steps, chain);
 
-  // Past the assignment: the namespace forms land on the final value, the named forms on its member.
-  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as ns").steps, [value]);
-  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as nsa").steps, [value], "export = inner, inner and export = obj are all skipped");
-  assert.deepEqual(bindingOf("/case/xeq.mts", "NamespaceExport", "* as box").steps, [value]);
-  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "k").steps, ["final /case/eq.cts:KindPropertyAssignment:k: 1"]);
-  assert.deepEqual(bindingOf("/case/xk.mts", "ExportSpecifier", "k as viaK").steps, ["final /case/eq.cts:KindPropertyAssignment:k: 1"]);
+  // An assignment of an expression: its symbol is not an alias and is declared by the assignment; the chain ends there.
+  const literal = "/case/lit.cts:KindExportAssignment:export = { k: 1 };";
+  assert.deepEqual(bindingOf("/case/u.mts", "NamespaceImport", "* as nsl").steps, [`final ${literal}`]);
 
-  // A namespace import in an ECMAScript-format file of a CommonJS-format file: the checker makes a new symbol for each
-  // of the two queries (Checker_cloneTypeAsModuleType). Same declarations, not the same object. Compare by declaration.
-  const ns = bindingOf("/case/u.mts", "NamespaceImport", "* as ns");
-  assert.equal(describe(ns.first), describe(ns.target));
-  assert.notEqual(ns.first, ns.target, "DEPENDS ON THE SDK CORRECTION: two clones with one declaration");
-  assert.equal(ns.checker.getImmediateAliasedSymbol(ns.symbol), ns.first, "each query repeats to its own object");
+  // A named import or re-export: a member of the exported value. The boundary is the module's own assignment, also
+  // when the value lies further assignments away; the member is the one the checker finds on the final value.
+  const member = "final /case/eq.cts:KindPropertyAssignment:k: 1";
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "k").steps, [`member of [/case/eq.cts:KindExportAssignment:export = obj;]: ${member}`]);
+  assert.deepEqual(bindingOf("/case/xk.mts", "ExportSpecifier", "k as viaK").steps, [`member of [/case/eq.cts:KindExportAssignment:export = obj;]: ${member}`]);
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "k as ka").steps, [`member of [/case/eqa.cts:KindExportAssignment:export = inner;]: ${member}`]);
+  assert.deepEqual(bindingOf("/case/u.mts", "ImportSpecifier", "k as kl").steps, [`member of [${literal}]: final /case/lit.cts:KindPropertyAssignment:k: 1`]);
+
+  // A member the exported value does not have: the boundary with no member. The steps from the boundary resolve
+  // (assignment, then the value), which tells this from an assignment whose own chain fails.
+  const absent = bindingOf("/case/u.mts", "ImportSpecifier", "absent");
+  assert.deepEqual(absent.steps, ["member of [/case/eq.cts:KindExportAssignment:export = obj;]: nothing"]);
+  assert.equal(absent.first?.kind === "exported-value-member" && absent.first.exportAssignment === (d.first?.kind === "symbol" ? d.first.symbol : undefined), true,
+    "the boundary is the same assignment symbol the other forms step to");
+  assert.equal(absent.target, undefined);
+
+  // The final target of a namespace import, in an ECMAScript-format file, of a CommonJS-format file is a copy the
+  // checker makes for the import: equal declarations, never the step's own target object. Targets compare by declaration.
+  assert.deepEqual(declarations(ns.target), declarations(d.target));
+  assert.notEqual(ns.target, d.target);
 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
 // The namespace import below is never used in this in-process case. Programs that use it are checked under a time
 // limit in namespace-import-of-export-equals.test.ts, because a use once made the checker's check not return.
-test("getImmediateAliasedSymbol over a module whose export = does not resolve: import = require and default import step to the assignment and on to the failing alias; a namespace import gives nothing", () => {
+test("getAliasStep over a module whose export = does not resolve: every binding form steps to the assignment and on to the failing alias; a named member has the boundary and no member", () => {
   const program = open({
     "/case/eqm.cts": "import inner = require(\"./missing.cjs\");\nexport = inner;\n",
-    "/case/u.mts": "import * as nsm from \"./eqm.cjs\";\nimport dm from \"./eqm.cjs\";\nexport const use = dm;\n",
+    "/case/xm.mts": "export * as boxm from \"./eqm.cjs\";\n",
+    "/case/u.mts": "import * as nsm from \"./eqm.cjs\";\nimport dm from \"./eqm.cjs\";\nimport { km } from \"./eqm.cjs\";\nimport { gone } from \"./nowhere.mjs\";\nexport const use = [dm, km, gone];\n",
     "/case/r.cts": "import rm = require(\"./eqm.cjs\");\nexport const use = rm;\n",
   });
   const { bindingOf } = walker(program);
@@ -249,23 +293,30 @@ test("getImmediateAliasedSymbol over a module whose export = does not resolve: i
   // The failing alias itself: nothing from either query.
   const inner = bindingOf("/case/eqm.cts", "ImportEqualsDeclaration", "import inner = require(\"./missing.cjs\");");
   assert.deepEqual(inner.steps, []);
+  assert.equal(inner.first, undefined);
   assert.equal(inner.target, undefined);
 
-  // One step still resolves for the two forms that stop at the assignment; the final target does not.
+  // Every form reaches the failing alias by steps: the assignment, then the import that does not resolve. The final
+  // target of each is nothing. The causal unit of the failure is the last step, the same binding for all forms.
   const chain = ["alias /case/eqm.cts:KindExportAssignment:export = inner;", "alias /case/eqm.cts:KindImportEqualsDeclaration:import inner = require(\"./missing.cjs\");"];
-  const rm = bindingOf("/case/r.cts", "ImportEqualsDeclaration", "import rm = require(\"./eqm.cjs\");");
-  assert.deepEqual(rm.steps, chain);
-  assert.equal(rm.target, undefined);
-  const dm = bindingOf("/case/u.mts", "ImportClause", "dm");
-  assert.deepEqual(dm.steps, chain);
-  assert.equal(dm.target, undefined);
+  for (const [fileName, kind, text] of [
+    ["/case/r.cts", "ImportEqualsDeclaration", "import rm = require(\"./eqm.cjs\");"], ["/case/u.mts", "ImportClause", "dm"],
+    ["/case/u.mts", "NamespaceImport", "* as nsm"], ["/case/xm.mts", "NamespaceExport", "* as boxm"],
+  ] as const) {
+    const binding = bindingOf(fileName, kind, text);
+    assert.deepEqual(binding.steps, chain, text);
+    assert.equal(binding.target, undefined, text);
+  }
 
-  // The namespace import: the unknown symbol stays the unknown symbol, so both queries give nothing. No symbol
-  // without declarations is returned in its place.
-  const nsm = bindingOf("/case/u.mts", "NamespaceImport", "* as nsm");
-  assert.equal(nsm.first, undefined);
-  assert.equal(nsm.target, undefined);
-  assert.deepEqual(nsm.steps, []);
+  // A named member: the boundary is known, the member is not, and the steps from the boundary end at the failing alias.
+  const km = bindingOf("/case/u.mts", "ImportSpecifier", "km");
+  assert.deepEqual(km.steps, ["member of [/case/eqm.cts:KindExportAssignment:export = inner;]: nothing"]);
+  assert.equal(km.target, undefined);
+
+  // The opposite: a module that does not resolve at all has no boundary; the step is nothing.
+  const gone = bindingOf("/case/u.mts", "ImportSpecifier", "gone");
+  assert.equal(gone.first, undefined);
+  assert.equal(gone.target, undefined);
 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
