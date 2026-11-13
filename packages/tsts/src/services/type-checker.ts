@@ -15,7 +15,6 @@ import type { TypeIndexInfo } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
   SymbolFlagsAlias,
-  SymbolFlagsClass,
   SymbolFlagsNamespace,
   SymbolFlagsType,
   SymbolFlagsValue,
@@ -215,17 +214,11 @@ export interface TypeCheckerQueries {
   readonly getAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
   /**
    * The symbol an alias names directly: one step of its alias chain, itself possibly an alias.
-   * Nothing for a symbol that is not an alias and for an alias whose target did not resolve
-   * (a missing module or member, a circular alias). Never throws for those.
+   * Nothing, and no throw, for a symbol that is not an alias and for an alias whose own step did not
+   * resolve (a missing module or member). A member of a circular alias chain has a step: following the
+   * steps from it returns to a symbol already visited, which is how a caller finds the cycle's members.
    */
   readonly getImmediateAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
-  /**
-   * The member the instance type of a class has under the key of a contract member (a member of an
-   * interface or base class), declared in the class or inherited by it; nothing where the class has none.
-   * The key is the contract member symbol's own key, so a unique-symbol key selects the member with that
-   * symbol and never a member that only shares a spelling. Nothing for a symbol that is not a class.
-   */
-  readonly getImplementingMember: (classSymbol: GoPtr<Symbol>, contractMember: GoPtr<Symbol>) => GoPtr<Symbol>;
   readonly getTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
   readonly getWriteTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
   readonly getDeclaredTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
@@ -380,19 +373,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => {
         if (symbol === undefined || (symbol.Flags & SymbolFlagsAlias) === 0) return undefined;
         if (Checker_getDeclarationOfAliasSymbol(checker, symbol) === undefined) return undefined;
-        // An alias whose resolution failed has no target to step to. Its failure was reported when it was
-        // resolved; the immediate step is not computed again for it, so this query reports nothing.
-        if (Checker_GetAliasedSymbol(checker, symbol) === checker?.unknownSymbol) return undefined;
         const immediate = Checker_getImmediateAliasedSymbol(checker, symbol);
         return immediate === checker?.unknownSymbol ? undefined : immediate;
-      }),
-    getImplementingMember: (classSymbol, contractMember) =>
-      withCheckerForSymbol(program, classSymbol, defaultOptions, (checker) => {
-        if (classSymbol === undefined || contractMember === undefined) return undefined;
-        if ((classSymbol.Flags & SymbolFlagsClass) === 0) return undefined;
-        const instanceType = Checker_getDeclaredTypeOfSymbol(checker, classSymbol);
-        if (instanceType === undefined) return undefined;
-        return Checker_GetPropertyOfType(checker, instanceType, contractMember.Name);
       }),
     getTypeOfSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_getTypeOfSymbol(checker, symbol)),

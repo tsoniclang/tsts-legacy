@@ -55,7 +55,7 @@ function declarations(symbol: Symbol | undefined): readonly Node[] {
   return (symbol.Declarations ?? []).filter((declaration): declaration is Node => declaration !== undefined);
 }
 
-test("getImmediateAliasedSymbol steps one alias at a time, and returns nothing without throwing for a non-alias and for an unresolved alias", () => {
+test("getImmediateAliasedSymbol steps one alias at a time, closes a circular chain, and returns nothing without throwing for a non-alias and for a step that did not resolve", () => {
   const program = open({
     "/case/m.mts": "export const a = 1;\n",
     "/case/r.mts": "export { a as b } from \"./m.mjs\";\n",
@@ -67,6 +67,8 @@ test("getImmediateAliasedSymbol steps one alias at a time, and returns nothing w
     "/case/c1.mts": "export { x } from \"./c2.mjs\";\n",
     "/case/c2.mts": "export { x } from \"./c1.mjs\";\n",
     "/case/e.mts": "import { x } from \"./c1.mjs\";\nexport const w = x;\n",
+    "/case/star.mts": "export * from \"./m.mjs\";\n",
+    "/case/v.mts": "import { a as viaStar } from \"./star.mjs\";\nexport const y = viaStar;\n",
   });
   const { checker, sourceFile } = program.queries("/case/u.mts");
   const diagnosticsBefore = program.session.getDiagnostics("all").length;
@@ -102,17 +104,28 @@ test("getImmediateAliasedSymbol steps one alias at a time, and returns nothing w
   assert.equal(checker.getAliasedSymbol(nope), undefined);
   assert.equal(checker.getImmediateAliasedSymbol(nope), undefined);
 
-  // An alias inside a circular re-export: nothing.
+  // An import through a circular re-export: its final target is unresolved, and its steps lead into the cycle and
+  // return to a symbol already visited. The cycle's members are the two export specifiers; the importer is not one.
   const cyclic = program.queries("/case/e.mts");
   const x = cyclic.checker.getSymbolAtLocation(program.nameOf(program.only(cyclic.sourceFile, "ImportSpecifier", "x")));
   assert.equal(isAlias(x), true);
-  assert.equal(cyclic.checker.getImmediateAliasedSymbol(x), undefined);
+  assert.equal(cyclic.checker.getAliasedSymbol(x), undefined);
+  const inC1 = cyclic.checker.getImmediateAliasedSymbol(x);
+  assert.deepEqual(describe(inC1), ["/case/c1.mts:KindExportSpecifier:x"]);
+  const inC2 = cyclic.checker.getImmediateAliasedSymbol(inC1);
+  assert.deepEqual(describe(inC2), ["/case/c2.mts:KindExportSpecifier:x"]);
+  assert.equal(cyclic.checker.getImmediateAliasedSymbol(inC2), inC1, "the walk returns to the first member: the cycle is c1.x, c2.x");
+
+  // Through a star re-export there is no alias in the re-exporting module: one step reaches the declaration.
+  const star = program.queries("/case/v.mts");
+  const viaStar = star.checker.getSymbolAtLocation(program.nameOf(program.only(star.sourceFile, "ImportSpecifier", "a as viaStar")));
+  assert.deepEqual(describe(star.checker.getImmediateAliasedSymbol(viaStar)), ["/case/m.mts:KindVariableDeclaration:a = 1"]);
 
   assert.equal(checker.getImmediateAliasedSymbol(undefined), undefined);
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");
 });
 
-test("getImplementingMember selects the class member under the contract member's own key: own, inherited, absent, and by unique symbol", () => {
+test("the existing property lookup on a class's declared type, asked with the contract member symbol's own key, selects the implementing member: own, inherited, absent, and by unique symbol", () => {
   const program = open({
     "/case/impl.mts": [
       "const key: unique symbol = Symbol();", "const other: unique symbol = Symbol();",
@@ -141,7 +154,9 @@ test("getImplementingMember selects the class member under the contract member's
     return `${program.textOf(program.nameOf(parent))}.${program.textOf(program.nameOf(declaration))}`;
   };
   const selected = (className: string): (string[] | null)[] => contractMembers.map(member => {
-    const found = checker.getImplementingMember(classSymbol(className), member.symbol);
+    const classType = checker.getDeclaredTypeOfSymbol(classSymbol(className));
+    if (member.symbol === undefined) throw new Error("The contract member has no symbol.");
+    const found = checker.getPropertyOfType(classType, member.symbol.Name);
     return found === undefined ? null : declarations(found).map(owner);
   });
   // C inherits m and [key] from B and declares p; its own [other] has another unique symbol and is never selected.
@@ -150,11 +165,6 @@ test("getImplementingMember selects the class member under the contract member's
   assert.deepEqual(selected("D"), [["D.m"], ["D.p"], ["D.[key]"]]);
   // E declares only p; the checker reports that it does not implement I.
   assert.deepEqual(selected("E"), [null, ["E.p"], null]);
-  // B implements nothing but has two of the keys: the query answers by key and does not judge conformance.
+  // B implements nothing but has two of the keys: the lookup answers by key and does not judge conformance.
   assert.deepEqual(selected("B"), [["B.m"], null, ["B.[key]"]]);
-  // The opposite of a class: an interface symbol. Nothing.
-  const interfaceSymbol = checker.getSymbolAtLocation(program.nameOf(contract));
-  assert.equal(checker.getImplementingMember(interfaceSymbol, contractMembers[0]?.symbol), undefined);
-  assert.equal(checker.getImplementingMember(classSymbol("C"), undefined), undefined);
-  assert.equal(checker.getImplementingMember(undefined, contractMembers[0]?.symbol), undefined);
 });
