@@ -1868,19 +1868,24 @@ export class ProviderRegistry {
   }
 
   registerSourceDeclarationProvider(provider: SourceDeclarationProvider): boolean {
-    return this.#registerSourceDeclarationProvider(provider, hostSourceDeclarationProviderRegistrar);
+    return this.#registerSourceDeclarationProvider(provider, undefined);
   }
 
   [providerRegistryRegisterSourceDeclarationProviderForExtension](
     extensionId: string,
     provider: SourceDeclarationProvider,
   ): boolean {
-    return this.#registerSourceDeclarationProvider(provider, Object.freeze({ kind: "extension", extensionId }));
+    return this.#registerSourceDeclarationProvider(provider, extensionId);
   }
 
+  /**
+   * The one registration. `extensionId` is the extension whose initializer asked, or undefined for the embedding
+   * host. A provider object that is registered stays as it was registered: the call returns before any record is
+   * made, so the registrar of a registration is the caller that created it.
+   */
   #registerSourceDeclarationProvider(
     provider: SourceDeclarationProvider,
-    registrar: SourceDeclarationProviderRegistrar,
+    extensionId: string | undefined,
   ): boolean {
     this.#assertHostOwnedRegistration("source declaration provider");
     if (this.#sourceDeclarationProviderRegistrations.has(provider)) {
@@ -1890,6 +1895,9 @@ export class ProviderRegistry {
       this.#diagnostics.append(createRegistrationClosedDiagnostic("source declaration provider"));
       return false;
     }
+    const registrar: SourceDeclarationProviderRegistrar = extensionId === undefined
+      ? hostSourceDeclarationProviderRegistrar
+      : Object.freeze({ kind: "extension", extensionId });
     const registration = snapshotSourceDeclarationProviderRegistration(provider, registrar);
     if (registration.kind === "invalid") {
       this.#diagnostics.append(createHostDiagnostic({

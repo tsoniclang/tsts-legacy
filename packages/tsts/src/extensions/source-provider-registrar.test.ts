@@ -22,6 +22,10 @@ import {
 // The registrar of a provider's registration is written by the registry when it makes the registration and is read
 // from the documents that registration produces. Every expectation below follows from that rule; none is taken from
 // a run.
+//
+// Extensions do not initialize in the order of the list a host is given: they initialize in the order of their
+// declared edges (dependsOn, runsAfter) and, among those ready, in ascending extension id. The ids below are chosen
+// so that each case's order is the one its name states, and the cases on order say so.
 
 const hostRegistrar: SourceDeclarationProviderRegistrar = { kind: "host" };
 
@@ -124,18 +128,21 @@ test("the package of a resolved module is not the registrar and the registrar na
 test("a failed initializer leaves no registration, and a later registration of the same provider is the later extension's", () => {
   const shared = provider("test.shared", "@test/shared.js");
   const kept = provider("test.kept", "@test/kept.js");
+  // Initialization order by id: ext.1-kept, ext.2-failed, ext.3-later.
+  const order: string[] = [];
   const host = new ExtensionHost({}, {
     extensions: [
-      registering("ext.kept", [kept]),
-      registering("ext.failed", [shared], { fail: true }),
-      registering("ext.later", [shared]),
+      registering("ext.3-later", [shared], { order }),
+      registering("ext.2-failed", [shared], { fail: true, order }),
+      registering("ext.1-kept", [kept], { order }),
     ],
   });
 
-  assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.kept", "ext.later"]);
-  assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.later"));
-  // The rollback removed only the failed extension's registration.
-  assert.deepEqual(resolvedDocument(host, "@test/kept.js").registrar, extensionRegistrar("ext.kept"));
+  assert.deepEqual(order, ["ext.1-kept", "ext.2-failed", "ext.3-later"]);
+  assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.1-kept", "ext.3-later"]);
+  assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.3-later"));
+  // The rollback removed only the failed extension's registration: the one committed before it stands.
+  assert.deepEqual(resolvedDocument(host, "@test/kept.js").registrar, extensionRegistrar("ext.1-kept"));
   assert.deepEqual(
     host.diagnostics.all().map((diagnostic) => diagnostic.extensionCode),
     ["EXTENSION_INITIALIZE_FAILED"],
@@ -166,34 +173,106 @@ test("after a failed initializer the embedding host can register the same provid
 
 test("registering the same provider object again keeps the first registrar", () => {
   const shared = provider("test.shared", "@test/shared.js");
+  const order: string[] = [];
   const results: boolean[] = [];
   const host = new ExtensionHost({}, {
     extensions: [
-      registering("ext.first", [shared], { results }),
-      registering("ext.second", [shared], { results }),
+      registering("ext.first", [shared], { order, results }),
+      registering("ext.second", [shared], { order, results }),
     ],
   });
   // The embedding host registers the same object after both extensions: again nothing new is registered.
   assert.equal(host.providers.registerSourceDeclarationProvider(shared), true);
 
+  assert.deepEqual(order, ["ext.first", "ext.second"]);
   assert.deepEqual(results, [true, true]);
   assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.first", "ext.second"]);
   assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.first"));
   assert.deepEqual(host.diagnostics.all(), []);
 });
 
-test("a second registration of the same object by an extension that then fails leaves the first registration", () => {
+test("the registrar of an object two extensions register is the one that initializes first: by id, not by list order", () => {
+  for (const listed of [["ext.a", "ext.b"], ["ext.b", "ext.a"]] as const) {
+    const shared = provider("test.shared", "@test/shared.js");
+    const order: string[] = [];
+    const host = new ExtensionHost({}, {
+      extensions: listed.map((extensionId) => registering(extensionId, [shared], { order })),
+    });
+
+    // Both permutations of the supplied list give one order and one registrar.
+    assert.deepEqual(order, ["ext.a", "ext.b"], listed.join(","));
+    assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.a", "ext.b"], listed.join(","));
+    assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.a"), listed.join(","));
+    assert.deepEqual(host.diagnostics.all(), [], listed.join(","));
+  }
+});
+
+test("a declared edge reverses the id order, and the registrar is then the other extension", () => {
+  for (const edge of ["runsAfter", "dependsOn"] as const) {
+    for (const listed of [["ext.a", "ext.b"], ["ext.b", "ext.a"]] as const) {
+      const shared = provider("test.shared", "@test/shared.js");
+      const order: string[] = [];
+      const host = new ExtensionHost({}, {
+        extensions: listed.map((extensionId) => registering(extensionId, [shared], {
+          order,
+          ...(extensionId !== "ext.a" ? {}
+            : { dependencies: edge === "runsAfter" ? { runsAfter: ["ext.b"] } : { dependsOn: ["ext.b"] } }),
+        })),
+      });
+
+      const label = `${edge} ${listed.join(",")}`;
+      assert.deepEqual(order, ["ext.b", "ext.a"], label);
+      assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.b"), label);
+      assert.deepEqual(host.diagnostics.all(), [], label);
+    }
+  }
+});
+
+test("when the first extension by id fails, the registrar is the next one that registers the object", () => {
   const shared = provider("test.shared", "@test/shared.js");
+  const order: string[] = [];
   const host = new ExtensionHost({}, {
     extensions: [
-      registering("ext.first", [shared]),
-      registering("ext.failed", [shared], { fail: true }),
+      registering("ext.b", [shared], { order }),
+      registering("ext.a", [shared], { fail: true, order }),
     ],
   });
 
-  // The failed extension registered nothing (the object was registered), so its rollback removes nothing.
-  assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.first"]);
-  assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.first"));
+  assert.deepEqual(order, ["ext.a", "ext.b"]);
+  assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.b"]);
+  assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.b"));
+});
+
+test("one extension registering the same object twice registers it once", () => {
+  const repeated = provider("test.repeated", "@test/repeated.js");
+  const results: boolean[] = [];
+  const host = new ExtensionHost({}, {
+    extensions: [registering("ext.repeat", [repeated, repeated, repeated], { results })],
+  });
+
+  assert.deepEqual(results, [true, true, true]);
+  assert.deepEqual(resolvedDocument(host, "@test/repeated.js").registrar, extensionRegistrar("ext.repeat"));
+  assert.deepEqual(host.providers.getVirtualDeclarationDocuments().map((document) => document.provider.id), ["test.repeated"]);
+  assert.deepEqual(host.diagnostics.all(), []);
+});
+
+test("a second registration of the same object by an extension that then fails leaves the first registration", () => {
+  const shared = provider("test.shared", "@test/shared.js");
+  // Initialization order by id: ext.1-first, then ext.2-failed.
+  const order: string[] = [];
+  const results: boolean[] = [];
+  const host = new ExtensionHost({}, {
+    extensions: [
+      registering("ext.1-first", [shared], { order, results }),
+      registering("ext.2-failed", [shared], { fail: true, order, results }),
+    ],
+  });
+
+  assert.deepEqual(order, ["ext.1-first", "ext.2-failed"]);
+  // The failed extension's call returned true and registered nothing, so its rollback removes nothing.
+  assert.deepEqual(results, [true, true]);
+  assert.deepEqual(host.extensions.map((extension) => extension.identity.id), ["ext.1-first"]);
+  assert.deepEqual(resolvedDocument(host, "@test/shared.js").registrar, extensionRegistrar("ext.1-first"));
 });
 
 test("a different provider object with a registered identity is refused and the first registrar stands", () => {
@@ -379,11 +458,18 @@ function resolvedDocument(host: ExtensionHost, specifier: string): ProviderVirtu
 function registering(
   extensionId: string,
   providers: readonly SourceDeclarationProvider[],
-  options: { readonly fail?: boolean; readonly results?: boolean[] } = {},
+  options: {
+    readonly fail?: boolean;
+    readonly results?: boolean[];
+    readonly order?: string[];
+    readonly dependencies?: NonNullable<CompilerExtension["dependencies"]>;
+  } = {},
 ): CompilerExtension {
   return {
     identity: { id: extensionId, version: "1.0.0" },
+    ...(options.dependencies === undefined ? {} : { dependencies: options.dependencies }),
     initialize(context): void {
+      options.order?.push(extensionId);
       for (const registered of providers) {
         const result = context.registerSourceDeclarationProvider(registered);
         options.results?.push(result);
