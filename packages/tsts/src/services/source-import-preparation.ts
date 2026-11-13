@@ -15,11 +15,18 @@ import { GetTokenPosOfNode } from "../internal/scanner/scanner.js";
 import { GetLibFileName } from "../internal/tsoptions/enummaps.js";
 import type { ParsedCommandLine } from "../internal/tsoptions/parsedcommandline.js";
 import { ParsedCommandLine_FileNames, ParsedCommandLine_GetConfigFileParsingDiagnostics } from "../internal/tsoptions/parsedcommandline.js";
-import { CombinePaths, GetNormalizedAbsolutePath, ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
+import { ResolveTripleslashReference, ToPath } from "../internal/tspath/path.js";
+import { selectedLibraryFile } from "../internal/compiler/librarybinding.js";
 
 export interface SourceImportPreparationInput {
   readonly host: CompilerHost;
   readonly config: ParsedCommandLine;
+  /**
+   * The program's library files, selected by the caller: library file name (as the compiler's lib names map to
+   * files, e.g. "lib.es5.d.ts") to the file of the program that is that library. When given, an empty map included,
+   * it is the only source of library files; when absent, the host's default library directory is.
+   */
+  readonly libraryFiles?: ReadonlyMap<string, string>;
 }
 
 type SourceReferenceSyntax =
@@ -95,7 +102,8 @@ function resolution(fileName: string | undefined): SourceImportPreparationRefere
 }
 
 export function prepareSourceImports(input: SourceImportPreparationInput): SourceImportPreparation {
-  const processed = processAllProgramFiles({ Host: input.host, Config: input.config }, true);
+  const processed = processAllProgramFiles({ Host: input.host, Config: input.config,
+    ...(input.libraryFiles === undefined ? {} : { SelectedLibraries: input.libraryFiles }) }, true);
   const files: SourceImportPreparationFile[] = [];
   const diagnostics: Diagnostic[] = [];
   const diagnosticIdentities = new Set<Diagnostic>();
@@ -118,12 +126,6 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   }
   const canonicalPath = (fileName: string): string => ToPath(fileName,
     input.host.GetCurrentDirectory(), input.host.FS().UseCaseSensitiveFileNames());
-  // The directory of the SDK's library files as the caller's host states it. This restates the loader's rule for
-  // the one case in which the loader does not compute it (noLib): the loader's defaultLibraryPath is this same
-  // normalisation of the same two host values (fileloader.ts, where the loader is made), and its library file for a
-  // name is CombinePaths of that directory and the name (fileLoader_pathForLibFile). A host made without a default
-  // library path has the SDK's bundled library directory here; nothing is read from it.
-  const defaultLibraryPath = GetNormalizedAbsolutePath(input.host.DefaultLibraryPath(), input.host.GetCurrentDirectory());
   const roots = ParsedCommandLine_FileNames(input.config).map(fileName => ({
     fileName,
     state: processed.filesByPath.get(canonicalPath(fileName)) === undefined ? "missing" : "loaded",
@@ -177,18 +179,19 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
       } else {
         const [name, known] = GetLibFileName(reference.FileName);
         if (known) {
-          // The library file of that name is where the loader put it when it followed the directive. Under noLib
-          // the loader follows no library directive and keeps no library record: the file is then the default
-          // library file of that name, and the row is resolved only when the supplied program contains that file.
-          // Nothing is loaded or probed here.
-          let libraryPath = CombinePaths(defaultLibraryPath, name);
+          // The library file of that name is the program's library binding's, the one the loader derived (the
+          // default library directory, or the caller's selected library files). When the loader recorded a library
+          // of that name, its path is used: it can differ only where the loader resolved a replacement (default
+          // directory, noLib false). The row is resolved only when the program contains that file; nothing is loaded
+          // or probed here.
+          let libraryPath = selectedLibraryFile(processed.libraries, name);
           for (const library of processed.libFiles.values()) {
             if (library?.Name === name) {
               libraryPath = library.path;
               break;
             }
           }
-          const targetFile = processed.filesByPath.get(canonicalPath(libraryPath));
+          const targetFile = libraryPath === undefined ? undefined : processed.filesByPath.get(canonicalPath(libraryPath));
           if (targetFile !== undefined) resolvedFileName = SourceFile_FileName(targetFile);
         }
       }

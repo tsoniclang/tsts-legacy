@@ -215,6 +215,11 @@
       "reason": "Additive compiler extension host public API; target-neutral infrastructure with no upstream Go unit."
     },
     {
+      "match": "packages/tsts/src/internal/compiler/librarybinding.ts",
+      "category": "extension-internal",
+      "reason": "The one selection of a program's library files (the default library directory, or the caller's selected library files) used by the file loader, the library sort and the source import preparation; it owns no upstream Go unit."
+    },
+    {
       "match": "packages/tsts/src/internal/checker/checker/call-evidence.ts",
       "category": "extension-internal",
       "reason": "Additive target-neutral selected-call evidence companion for the TS-Go checker; it owns no upstream Go unit."

@@ -653,6 +653,46 @@ test("a host made without a default library path has the SDK's own library direc
   assert.equal(result.diagnostics.length, 0);
 });
 
+test("selected library files decide a library reference, with no fallback to the default directory", () => {
+  const main = '/// <reference lib="es5" />\nexport {};\n';
+  const resolvedTo = (fileName: string) => [["reference-lib", "es5", "none", fileName]];
+  const unresolved = [["reference-lib", "es5", "none", "unresolved"]];
+
+  // The bound file has its own path and base name; it is a file of the program (a root).
+  const bound = new Map([["/src/main.ts", main], ["/cap/a/es5.d.ts", "interface Es5 {}\n"]]);
+  const selected = prepareSourceImports({ ...fixture(bound, ["/src/main.ts", "/cap/a/es5.d.ts"]),
+    libraryFiles: new Map([["lib.es5.d.ts", "/cap/a/es5.d.ts"]]) });
+  assert.deepEqual(libraryRows(selected, "/src/main.ts"), resolvedTo("/cap/a/es5.d.ts"));
+
+  // An empty selection is authoritative: the default directory's file, rooted, does not satisfy the reference.
+  const defaults = new Map([["/src/main.ts", main], ["/libs/lib.es5.d.ts", "interface Es5 {}\n"]]);
+  const empty = prepareSourceImports({ ...fixture(defaults, ["/src/main.ts", "/libs/lib.es5.d.ts"]), libraryFiles: new Map() });
+  assert.deepEqual(libraryRows(empty, "/src/main.ts"), unresolved);
+  // A selection without that name.
+  const other = prepareSourceImports({ ...fixture(defaults, ["/src/main.ts", "/libs/lib.es5.d.ts"]),
+    libraryFiles: new Map([["lib.es2015.d.ts", "/libs/lib.es5.d.ts"]]) });
+  assert.deepEqual(libraryRows(other, "/src/main.ts"), unresolved);
+  // A selection naming a file that is not a file of the program.
+  const absent = prepareSourceImports({ ...fixture(bound, ["/src/main.ts"]), libraryFiles: new Map([["lib.es5.d.ts", "/cap/a/es5.d.ts"]]) });
+  assert.deepEqual(libraryRows(absent, "/src/main.ts"), unresolved);
+  assert.deepEqual(programFiles(absent), ["/src/main.ts"]);
+});
+
+test("with noLib off the loader's record and the selection give the same bound file", () => {
+  const inputs = new Map([["/src/main.ts", '/// <reference lib="es5" />\nexport {};\n'], ["/cap/a/es5.d.ts", "interface Es5 {}\n"],
+    ["/libs/lib.es5.d.ts", "interface NotSelected {}\n"]]);
+  const result = prepareSourceImports({ ...fixture(inputs, ["/src/main.ts"], { noLib: false, lib: [] }),
+    libraryFiles: new Map([["lib.es5.d.ts", "/cap/a/es5.d.ts"]]) });
+  assert.deepEqual(libraryRows(result, "/src/main.ts"), [["reference-lib", "es5", "none", "/cap/a/es5.d.ts"]]);
+  assert.deepEqual(programFiles(result), ["/cap/a/es5.d.ts", "/src/main.ts"]);
+});
+
+test("a selected name that is not a library file name of the compiler is refused by the preparation", () => {
+  const input = fixture(new Map([["/src/main.ts", "export {};\n"]]), ["/src/main.ts"]);
+  assert.throws(() => prepareSourceImports({ ...input, libraryFiles: new Map([["es5", "/cap/a/es5.d.ts"]]) }),
+    { name: "TypeError", message: "Selected library 'es5' is not a library file name of the compiler." });
+});
+
 test("source import preparation executes real parser and resolver without constructing compiler semantic owners", () => {
   const coverageDirectory = mkdtempSync(join(process.cwd(), ".temp/source-import-preparation-"));
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", `

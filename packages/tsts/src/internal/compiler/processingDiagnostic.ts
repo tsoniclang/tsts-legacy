@@ -7,14 +7,15 @@ import type { Set } from "../collections/set.js";
 import { GetSpellingSuggestionForStrings, IfElse } from "../core/core.js";
 import type { Message } from "../diagnostics/diagnostics.js";
 import { Cannot_find_lib_definition_for_0, Cannot_find_lib_definition_for_0_Did_you_mean_1, Cannot_find_type_definition_file_for_0, The_file_is_in_the_program_because_Colon } from "../diagnostics/generated/messages.js";
-import { Libs } from "../tsoptions/enummaps.js";
+import { GetDefaultLibFileName, GetLibFileName, Libs } from "../tsoptions/enummaps.js";
 import { ToFileNameLowerCase } from "../tspath/path.js";
 import type { Path } from "../tspath/path.js";
 import { Values } from "../../go/slices.js";
-import { fileIncludeKindLibReferenceDirective, fileIncludeKindTypeReferenceDirective, FileIncludeReason_getReferencedLocation, FileIncludeReason_isReferencedFile, FileIncludeReason_toDiagnostic, referenceFileLocation_diagnosticAt } from "./fileInclude.js";
+import { FileIncludeReason_asLibFileIndex, fileIncludeKindLibFile, fileIncludeKindLibReferenceDirective, fileIncludeKindTypeReferenceDirective, FileIncludeReason_getReferencedLocation, FileIncludeReason_isReferencedFile, FileIncludeReason_toDiagnostic, referenceFileLocation_diagnosticAt } from "./fileInclude.js";
 import type { FileIncludeReason } from "./fileInclude.js";
 import { includeProcessor_explainRedirectAndImpliedFormat, includeProcessor_getRelatedInfo, includeProcessor_getReferenceLocation } from "./includeprocessor.js";
 import type { Program } from "./program.js";
+import { Program_Options } from "./program.js";
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/processingDiagnostic.go::type::processingDiagnosticKind","kind":"type","status":"implemented","sigHash":"206597e4b3e5492bed070fc03dfcc895035dc1bf0f57a065b6f6021deca831ee","bodyHash":"bb346ba4b5dd9c7c0d634136ea2a4939fb3cd88f82cacd0e7062c6e905c7e61e"}
@@ -94,6 +95,7 @@ export function processingDiagnostic_asIncludeExplainingDiagnostic(receiver: GoP
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/processingDiagnostic.go::method::processingDiagnostic.toDiagnostic","kind":"method","status":"implemented","sigHash":"f8a7bbbf4d642e66207b5d767ec108073772a4af46c03ec462321279da892744","bodyHash":"90321122e964a36111a1d2c666440924d392eea8ca150ab4d6ab3246989a55aa"}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"Two cases reached only when the caller selected the program's library files: a known library name in a lib directive that the selection does not bind gets the unknown-library diagnostic without a spelling suggestion (one would name another library); the default library or a lib entry the selection does not bind is reported as that diagnostic for the library file name, as a compiler diagnostic. Every other case is the Go body's."}
  *
  * Go source:
  * func (d *processingDiagnostic) toDiagnostic(program *Program) *ast.Diagnostic {
@@ -127,6 +129,13 @@ export function processingDiagnostic_toDiagnostic(receiver: GoPtr<processingDiag
   switch (receiver!.kind) {
     case processingDiagnosticKindUnknownReference: {
       const ref = processingDiagnostic_asFileIncludeReason(receiver);
+      if (ref!.kind === fileIncludeKindLibFile) {
+        // The default library or a lib entry that the caller's selected library files do not bind.
+        const [index, ok] = FileIncludeReason_asLibFileIndex(ref);
+        const options = Program_Options(program);
+        const name = ok ? GetLibFileName(options!.Lib[index]!)[0] : GetDefaultLibFileName(options);
+        return NewCompilerDiagnostic(Cannot_find_lib_definition_for_0, name);
+      }
       const loc = FileIncludeReason_getReferencedLocation(ref, program);
       switch (ref!.kind) {
         case fileIncludeKindTypeReferenceDirective:
@@ -134,7 +143,9 @@ export function processingDiagnostic_toDiagnostic(receiver: GoPtr<processingDiag
         case fileIncludeKindLibReferenceDirective: {
           const libName = ToFileNameLowerCase(loc!.ref!.FileName);
           const unqualifiedLibName = libName.replace(/^lib\./, "").replace(/\.d\.ts$/, "");
-          const suggestion = GetSpellingSuggestionForStrings(unqualifiedLibName, Values(Libs));
+          // A name the compiler knows reaches this only when the caller's selected library files do not bind it;
+          // a spelling suggestion would then name another library.
+          const suggestion = GetLibFileName(libName)[1] ? "" : GetSpellingSuggestionForStrings(unqualifiedLibName, Values(Libs));
           return referenceFileLocation_diagnosticAt(loc, IfElse(
             suggestion !== "",
             Cannot_find_lib_definition_for_0_Did_you_mean_1,
