@@ -3330,20 +3330,37 @@ export function compactAndMergeRelatedInfos(diags: GoSlice<GoPtr<Diagnostic>>): 
       n++;
     }
     if (n > 1) {
-      let relatedInfos: GoPtr<Diagnostic>[] = [];
-      for (let k = 0; k < n; k++) {
-        relatedInfos = [...relatedInfos, ...(Diagnostic_RelatedInformation(diags[i + k]) ?? [])];
-      }
       // A run of two or more is always published as a clone that carries the added diagnostics it stands for, flattened:
       // a member that is itself a published clone contributes its own members, so repeated deduplication loses none.
-      const members: GoPtr<Diagnostic>[] = [];
+      // One pass over the run: related information is appended in run order, and members are kept in first-seen order
+      // with an identity set, so the work is linear in the member references of the run.
+      const relatedInfos: GoPtr<Diagnostic>[] = [];
+      const members: Diagnostic[] = [];
+      const seen = new Set<Diagnostic>();
       for (let k = 0; k < n; k++) {
-        for (const member of diags[i + k]!.runMembers ?? [diags[i + k]]) {
-          if (!members.includes(member)) members.push(member);
+        const entry = diags[i + k];
+        if (entry === undefined) {
+          throw new globalThis.Error("compactAndMergeRelatedInfos: a run of equal diagnostics contains an undefined entry");
+        }
+        for (const info of Diagnostic_RelatedInformation(entry) ?? []) {
+          relatedInfos.push(info);
+        }
+        for (const member of entry.runMembers ?? [entry]) {
+          if (member === undefined) {
+            throw new globalThis.Error("compactAndMergeRelatedInfos: a published diagnostic's run members contain an undefined entry");
+          }
+          if (!seen.has(member)) {
+            seen.add(member);
+            members.push(member);
+          }
         }
       }
-      d = Diagnostic_Clone(d);
-      d!.runMembers = members;
+      const clone = Diagnostic_Clone(d);
+      if (clone === undefined) {
+        throw new globalThis.Error("compactAndMergeRelatedInfos: a run of equal diagnostics has no first diagnostic");
+      }
+      clone.runMembers = members;
+      d = clone;
       if (relatedInfos.length > 0) {
         relatedInfos.sort(CompareDiagnostics);
         // compact: remove adjacent equal entries

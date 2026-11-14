@@ -15,6 +15,13 @@ function added(pos: number, name: string): Diagnostic {
   return diagnostic;
 }
 
+// The one diagnostic a deduplication of one run publishes.
+function onlyPublished(diagnostics: readonly (Diagnostic | undefined)[]): Diagnostic {
+  const [first] = diagnostics;
+  if (diagnostics.length !== 1 || first === undefined) throw new Error(`Expected one published diagnostic, got ${diagnostics.length}.`);
+  return first;
+}
+
 function sameMembers(published: Diagnostic, expected: readonly Diagnostic[]): boolean {
   const members = getDiagnosticRunMembers(published);
   return members.length === expected.length && members.every((member, index) => member === expected[index]);
@@ -33,12 +40,10 @@ test("a run of equal diagnostics without related information is published as a c
   const first = added(0, "a");
   const second = added(0, "a");
   const third = added(0, "a");
-  const published = SortAndDeduplicateDiagnostics([first, second, third]);
-  assert.ok(published.length === 1, "one published diagnostic for the run");
-  const [clone] = published;
-  assert.ok(clone !== undefined && clone !== first && clone !== second && clone !== third, "the published diagnostic is a clone, not an added object");
-  assert.ok(clone!.code === first.code && clone!.loc.pos === first.loc.pos && clone!.loc.end === first.loc.end, "the clone has the run's code and range");
-  assert.ok(sameMembers(clone!, [first, second, third]), "the clone's members are the three added objects in order");
+  const clone = onlyPublished(SortAndDeduplicateDiagnostics([first, second, third]));
+  assert.ok(clone !== first && clone !== second && clone !== third, "the published diagnostic is a clone, not an added object");
+  assert.ok(clone.code === first.code && clone.loc.pos === first.loc.pos && clone.loc.end === first.loc.end, "the clone has the run's code and range");
+  assert.ok(sameMembers(clone, [first, second, third]), "the clone's members are the three added objects in order");
   assert.ok(first.runMembers === undefined && second.runMembers === undefined, "no added object is written");
 });
 
@@ -47,12 +52,10 @@ test("a run whose members carry related information merges it on the clone and k
   const second = added(0, "a");
   const hint = NewDiagnostic(undefined, NewTextRange(20, 21), Did_you_mean_0, "b");
   Diagnostic_SetRelatedInfo(second, [hint]);
-  const published = SortAndDeduplicateDiagnostics([first, second]);
-  assert.ok(published.length === 1, "one published diagnostic for the run");
-  const [clone] = published;
+  const clone = onlyPublished(SortAndDeduplicateDiagnostics([first, second]));
   assert.ok(clone !== first && clone !== second, "the published diagnostic is a clone");
-  assert.ok(clone!.relatedInformation.length === 1 && clone!.relatedInformation[0] === hint, "the related information is merged on the clone");
-  const members = getDiagnosticRunMembers(clone!);
+  assert.ok(clone.relatedInformation.length === 1 && clone.relatedInformation[0] === hint, "the related information is merged on the clone");
+  const members = getDiagnosticRunMembers(clone);
   assert.ok(members.length === 2 && members.includes(first) && members.includes(second), "both added objects are members, in the run's sorted order");
   assert.ok(first.relatedInformation.length === 0, "the first added object is not written");
 });
@@ -60,14 +63,40 @@ test("a run whose members carry related information merges it on the clone and k
 test("deduplicating an already published clone again keeps its members and flattens them with new ones", () => {
   const first = added(0, "a");
   const second = added(0, "a");
-  const [clone] = SortAndDeduplicateDiagnostics([first, second]);
+  const clone = onlyPublished(SortAndDeduplicateDiagnostics([first, second]));
   const later = added(0, "a");
-  const again = SortAndDeduplicateDiagnostics([clone!, later]);
-  assert.ok(again.length === 1, "one published diagnostic");
-  assert.ok(sameMembers(again[0]!, [first, second, later]), "the earlier clone contributes its members, not itself");
-  const reread = SortAndDeduplicateDiagnostics([again[0]!]);
-  assert.ok(reread.length === 1 && reread[0] === again[0], "a published clone alone is a run of one and is kept as it is");
-  assert.ok(sameMembers(reread[0]!, [first, second, later]), "its members survive the second read");
+  const again = onlyPublished(SortAndDeduplicateDiagnostics([clone, later]));
+  assert.ok(sameMembers(again, [first, second, later]), "the earlier clone contributes its members, not itself");
+  const reread = onlyPublished(SortAndDeduplicateDiagnostics([again]));
+  assert.ok(reread === again, "a published clone alone is a run of one and is kept as it is");
+  assert.ok(sameMembers(reread, [first, second, later]), "its members survive the second read");
+});
+
+test("overlapping published clones contribute each shared member once, in first-seen order, without being written", () => {
+  const x = added(0, "a");
+  const y = added(0, "a");
+  const z = added(0, "a");
+  const w = added(0, "a");
+  const left = onlyPublished(SortAndDeduplicateDiagnostics([x, y]));
+  const right = onlyPublished(SortAndDeduplicateDiagnostics([y, z]));
+  const leftMembers = left.runMembers;
+  const rightMembers = right.runMembers;
+  const merged = onlyPublished(SortAndDeduplicateDiagnostics([left, right, w]));
+  assert.ok(sameMembers(merged, [x, y, z, w]), "x, y, z, w: the shared y appears once, where it was first seen");
+  assert.ok(left.runMembers === leftMembers && right.runMembers === rightMembers, "the input clones keep their own member lists");
+  assert.ok(sameMembers(left, [x, y]) && sameMembers(right, [y, z]), "the input clones' members are unchanged");
+  assert.ok([x, y, z, w].every(member => member.runMembers === undefined), "no added diagnostic is written");
+});
+
+test("a wide run keeps every member once and in order", () => {
+  const width = 20000;
+  const run: Diagnostic[] = [];
+  for (let index = 0; index < width; index++) run.push(added(0, "a"));
+  const clone = onlyPublished(SortAndDeduplicateDiagnostics(run));
+  assert.ok(sameMembers(clone, run), "all members, in run order");
+  const doubled = onlyPublished(SortAndDeduplicateDiagnostics([clone, clone, ...run]));
+  assert.ok(sameMembers(doubled, run), "repeating the clone and every member adds no duplicate");
+  assert.ok(run.every(member => member.runMembers === undefined), "no added diagnostic is written");
 });
 
 test("every raw report of a checked file belongs to exactly one published diagnostic of that file", () => {
@@ -82,16 +111,18 @@ test("every raw report of a checked file belongs to exactly one published diagno
   const [checker, done] = Program_GetTypeCheckerForFileExclusive(session.program, WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), file);
   let raw: readonly (Diagnostic | undefined)[];
   try {
-    raw = DiagnosticsCollection_GetDiagnosticsForFile(checker!.diagnostics, "/src/index.ts") ?? [];
+    if (checker === undefined) throw new Error("The checked file has no diagnostics checker.");
+    raw = DiagnosticsCollection_GetDiagnosticsForFile(checker.diagnostics, "/src/index.ts") ?? [];
   } finally {
     done();
   }
-  assert.ok(raw.length > 0 && published.length > 0, "the file has raw and published diagnostics");
+  const reports = raw.filter((report): report is Diagnostic => report !== undefined);
+  assert.ok(reports.length === raw.length && reports.length > 0 && published.length > 0, "the file has raw and published diagnostics");
   assert.ok(published.some(diagnostic => diagnostic !== undefined && diagnostic.file === file && getDiagnosticRunMembers(diagnostic).length >= 2),
     "at least one published diagnostic of the file stands for a run of two or more raw reports");
-  const owners = raw.map(report => published.filter(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report!)).length);
+  const owners = reports.map(report => published.filter(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report)).length);
   assert.ok(owners.every(count => count === 1), "each raw report is a member of exactly one published diagnostic");
   const readAgain = session.getDiagnostics("all");
-  assert.ok(raw.every(report => readAgain.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report!))),
+  assert.ok(reports.every(report => readAgain.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report))),
     "a second read keeps the relation for that read's published objects");
 });
