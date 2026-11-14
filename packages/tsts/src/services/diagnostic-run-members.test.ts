@@ -87,6 +87,8 @@ test("every raw report of a checked file belongs to exactly one published diagno
     done();
   }
   assert.ok(raw.length > 0 && published.length > 0, "the file has raw and published diagnostics");
+  assert.ok(published.some(diagnostic => diagnostic !== undefined && diagnostic.file === file && getDiagnosticRunMembers(diagnostic).length >= 2),
+    "at least one published diagnostic of the file stands for a run of two or more raw reports");
   const owners = raw.map(report => published.filter(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report!)).length);
   assert.ok(owners.every(count => count === 1), "each raw report is a member of exactly one published diagnostic");
   const readAgain = session.getDiagnostics("all");
