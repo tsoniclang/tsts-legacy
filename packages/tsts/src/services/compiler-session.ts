@@ -87,6 +87,8 @@ export interface InMemoryCompilerSessionOptions {
   readonly compilerOptions?: Record<string, unknown>;
   readonly extensionHostOptions?: ExtensionHostOptions;
   readonly useCaseSensitiveFileNames?: boolean;
+  readonly selectedLibraries?: ReadonlyMap<string, string>;
+  readonly includeBundledLibraries?: boolean;
   readonly context?: Context;
 }
 
@@ -347,11 +349,13 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
   const files = options.files instanceof Map ? new Map(options.files) : new Map(Object.entries(options.files));
   const fileSystem = createInMemoryFileSystem({
     files,
+    ...(options.includeBundledLibraries !== undefined ? { includeBundledLibraries: options.includeBundledLibraries } : {}),
     ...(options.useCaseSensitiveFileNames !== undefined ? { useCaseSensitiveFileNames: options.useCaseSensitiveFileNames } : {}),
   });
   const host = createCompilerHost({
     currentDirectory: options.currentDirectory,
     fileSystem,
+    ...(options.includeBundledLibraries !== undefined ? { includeBundledLibraries: options.includeBundledLibraries } : {}),
   } satisfies CompilerHostOptions);
   let config: GoPtr<ParsedCommandLine>;
   if (options.configFileName !== undefined) {
@@ -386,6 +390,7 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
     programOptions: {
       Config: config,
       Host: host,
+      ...(options.selectedLibraries !== undefined ? { SelectedLibraries: options.selectedLibraries } : {}),
     },
     ...(options.extensionHostOptions !== undefined ? { extensionHostOptions: options.extensionHostOptions } : {}),
     ...(options.context !== undefined ? { context: options.context } : {}),

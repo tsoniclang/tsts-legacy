@@ -7,7 +7,7 @@ import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/pro
 import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 
-function identityFixture() {
+function identityFixture(checkers = 4) {
   const checked = createCompilerSessionFromFiles({
     currentDirectory: "/src",
     files: {
@@ -43,7 +43,7 @@ function identityFixture() {
         export const textEntry = new TextEntry();
       `,
     },
-    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
+    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022", checkers },
   }).checkSource();
   assert.equal(checked.diagnostics.length, 0, "the exact identity fixture is checked successfully");
   assert.equal(checked.extensionDiagnostics.length, 0, "the fixture requires no extension diagnostic");
@@ -141,6 +141,23 @@ test("public identity is independent of file query and member inspection order",
     second.typeShape.getPropertyInfos(secondType);
     assert.equal(firstType.checker === secondType.checker, true, "query order preserves the native API owner");
     assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
+  }
+});
+
+test("public generic, mapped, private and contextual identity behavior is unchanged with explicit one or four checkers", () => {
+  for (const checkers of [1, 4]) {
+    const { left, right, typeFor } = identityFixture(checkers);
+    for (const reverse of [false, true]) {
+      const first = reverse ? right : left;
+      const second = reverse ? left : right;
+      for (const name of ["numeric", "mapped", "entry", "first"]) {
+        assertIdentityInBothOrders(first, typeFor(first, name), typeFor(second, name), true, name);
+      }
+      assertIdentityInBothOrders(first, typeFor(left, "numeric"), typeFor(right, "textual"), false, "distinct generic arguments");
+      assertIdentityInBothOrders(first, typeFor(left, "first"), typeFor(right, "second"), false, "distinct private declarations");
+      assertIdentityInBothOrders(first, typeFor(left, "mapped"), typeFor(right, "differentMapped"), false, "distinct mapped payloads");
+      assertIdentityInBothOrders(first, typeFor(left, "entry"), typeFor(right, "textEntry"), false, "distinct outer instantiations");
+    }
   }
 });
 
