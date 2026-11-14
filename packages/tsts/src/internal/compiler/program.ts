@@ -3283,6 +3283,7 @@ export function SortAndDeduplicateDiagnostics(diags: GoSlice<GoPtr<Diagnostic>>)
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/program.go::func::compactAndMergeRelatedInfos","kind":"func","status":"implemented","sigHash":"42709cae8871346e6c6a3377b0e66bcbe09454353ad492549702e97ff9075513","bodyHash":"e765bda8e871e462ee82676791c0e23190a24aa3ca2eb57fefec4b4ae6fb8b40"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"A run of two or more equal diagnostics is always published as a clone carrying runMembers, the added diagnostics it stands for (flattened through earlier published clones), so a cause recorded on any added diagnostic of the run leads to the published one by identity. The Go body publishes the first added diagnostic itself when no member has related information; the published code, range, message and merged related information are unchanged."}
  *
  * Go source:
  * func compactAndMergeRelatedInfos(diagnostics []*ast.Diagnostic) []*ast.Diagnostic {
@@ -3333,6 +3334,16 @@ export function compactAndMergeRelatedInfos(diags: GoSlice<GoPtr<Diagnostic>>): 
       for (let k = 0; k < n; k++) {
         relatedInfos = [...relatedInfos, ...(Diagnostic_RelatedInformation(diags[i + k]) ?? [])];
       }
+      // A run of two or more is always published as a clone that carries the added diagnostics it stands for, flattened:
+      // a member that is itself a published clone contributes its own members, so repeated deduplication loses none.
+      const members: GoPtr<Diagnostic>[] = [];
+      for (let k = 0; k < n; k++) {
+        for (const member of diags[i + k]!.runMembers ?? [diags[i + k]]) {
+          if (!members.includes(member)) members.push(member);
+        }
+      }
+      d = Diagnostic_Clone(d);
+      d!.runMembers = members;
       if (relatedInfos.length > 0) {
         relatedInfos.sort(CompareDiagnostics);
         // compact: remove adjacent equal entries
@@ -3342,7 +3353,7 @@ export function compactAndMergeRelatedInfos(diags: GoSlice<GoPtr<Diagnostic>>): 
             compacted.push(relatedInfos[m]);
           }
         }
-        d = Diagnostic_SetRelatedInfo(Diagnostic_Clone(d), compacted);
+        d = Diagnostic_SetRelatedInfo(d, compacted);
       }
     }
     result.push(d);

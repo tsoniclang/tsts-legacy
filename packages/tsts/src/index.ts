@@ -133,6 +133,7 @@ export type { ParsedBuildCommandLine } from "./internal/tsoptions/parsedbuildcom
 export type { ParsedCommandLine } from "./internal/tsoptions/parsedcommandline.js";
 export { barebonesLibContent, flattenDiagnosticMessageText, formatDiagnostics, transpile, transpileDeclaration, transpileModule } from "./services/transpile.js";
 export type { TranspileCompilerOptions, TranspileCompilerOptionValue, TranspileOptions, TranspileOutput } from "./services/transpile.js";
+export { getDiagnosticRunMembers } from "./services/diagnostic-run-members.js";
 export type {
   ResolvedAliasStep,
   ResolvedSourceCallInfo,
