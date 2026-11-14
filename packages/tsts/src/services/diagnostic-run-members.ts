@@ -6,10 +6,13 @@ import type { Diagnostic } from "../internal/ast/diagnostic.js";
 export function getDiagnosticRunMembers(diagnostic: Diagnostic): readonly Diagnostic[] {
   const members = diagnostic.runMembers;
   if (members === undefined) return [diagnostic];
-  const present: Diagnostic[] = [];
+  if (!completeMembers(members)) throw new Error("A published diagnostic's run members contain an undefined entry.");
+  return members;
+}
+
+function completeMembers(members: readonly (Diagnostic | undefined)[]): members is readonly Diagnostic[] {
   for (const member of members) {
-    if (member === undefined) throw new Error("A published diagnostic's run members contain an undefined entry.");
-    present.push(member);
+    if (member === undefined) return false;
   }
-  return present;
+  return true;
 }

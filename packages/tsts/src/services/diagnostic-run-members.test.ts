@@ -99,6 +99,25 @@ test("a wide run keeps every member once and in order", () => {
   assert.ok(run.every(member => member.runMembers === undefined), "no added diagnostic is written");
 });
 
+test("reading a published run retains its owned member vector without copying", () => {
+  const first = added(0, "a");
+  const second = added(0, "a");
+  const published = onlyPublished(SortAndDeduplicateDiagnostics([first, second]));
+  const members = getDiagnosticRunMembers(published);
+  assert.ok(members === published.runMembers, "the readonly result is the actual published member vector");
+  assert.ok(getDiagnosticRunMembers(published) === members, "repeated reads retain that same vector");
+  assert.ok(sameMembers(published, [first, second]), "the vector retains both actual reports in order");
+});
+
+test("undefined and sparse run members are rejected rather than omitted", () => {
+  const diagnostic = added(0, "a");
+  diagnostic.runMembers = [undefined];
+  assert.throws(() => getDiagnosticRunMembers(diagnostic), /run members contain an undefined entry/);
+  diagnostic.runMembers = [];
+  diagnostic.runMembers.length = 1;
+  assert.throws(() => getDiagnosticRunMembers(diagnostic), /run members contain an undefined entry/);
+});
+
 test("every raw report of a checked file belongs to exactly one published diagnostic of that file", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",
