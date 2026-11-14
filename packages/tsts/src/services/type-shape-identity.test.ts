@@ -7,7 +7,7 @@ import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/pro
 import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 
-function identityFixture() {
+function identityFixture(checkers = 4) {
   const checked = createCompilerSessionFromFiles({
     currentDirectory: "/src",
     files: {
@@ -43,7 +43,7 @@ function identityFixture() {
         export const textEntry = new TextEntry();
       `,
     },
-    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
+    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022", checkers },
   }).checkSource();
   assert.equal(checked.diagnostics.length, 0, "the exact identity fixture is checked successfully");
   assert.equal(checked.extensionDiagnostics.length, 0, "the fixture requires no extension diagnostic");
@@ -75,6 +75,36 @@ function assertIdentityInBothOrders(
   assert.equal(queries.typeShape.isTypeIdenticalTo(left, right), expected, `${label}: forward identity`);
   assert.equal(queries.typeShape.isTypeIdenticalTo(right, left), expected, `${label}: reverse identity`);
 }
+
+test("public error classification uses the actual type owner and preserves the any flag predicate", () => {
+  const foreign = identityFixture(4);
+  const foreignOwner = foreign.typeFor(foreign.left, "numeric").checker;
+  assert.equal(foreignOwner !== undefined, true, "the foreign type has its actual native producer");
+  if (foreignOwner === undefined) throw new Error("Missing native producer");
+  for (const checkers of [1, 4]) {
+    const fixture = identityFixture(checkers);
+    const owner = fixture.typeFor(fixture.left, "numeric").checker;
+    assert.equal(owner !== undefined, true, "the actual checked type retains its native producer");
+    if (owner === undefined) throw new Error("Missing native producer");
+    for (const queries of [fixture.left, fixture.right, foreign.left]) {
+      assert.equal(queries.typeShape.isError(owner.errorType), true, "actual error identity, independent of wrapper owner");
+      assert.equal(queries.typeShape.isAny(owner.errorType), true, "native error retains its actual Any flags");
+      assert.equal(queries.typeShape.isError(owner.anyType), false, "genuine any is not the error sentinel");
+      assert.equal(queries.typeShape.isAny(owner.anyType), true, "genuine any preserves the flag predicate");
+      assert.equal(queries.typeShape.isError(foreignOwner.errorType), true, "foreign input is classified by its own producer");
+      assert.equal(queries.typeShape.isError(foreignOwner.anyType), false, "foreign ordinary any is not an error");
+      assert.equal(queries.typeShape.isError(undefined), false, "the absent Go pointer is not an error");
+    }
+    const [diagnosticOwner, done] = Program_GetTypeCheckerForFileExclusive(fixture.checked.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), fixture.left.sourceFile);
+    try {
+      assert.equal(diagnosticOwner !== undefined, true, "the checked program exposes its actual diagnostic producer");
+      if (diagnosticOwner === undefined) throw new Error("Missing diagnostic producer");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.errorType), true, "diagnostic-owner error identity");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.anyType), false, "diagnostic-owner ordinary any");
+    } finally { done(); }
+  }
+});
 
 test("public identity preserves exact generic instances obtained from different checked files", () => {
   const { left, right, typeFor } = identityFixture();
@@ -141,6 +171,23 @@ test("public identity is independent of file query and member inspection order",
     second.typeShape.getPropertyInfos(secondType);
     assert.equal(firstType.checker === secondType.checker, true, "query order preserves the native API owner");
     assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
+  }
+});
+
+test("public generic, mapped, private and contextual identity behavior is unchanged with explicit one or four checkers", () => {
+  for (const checkers of [1, 4]) {
+    const { left, right, typeFor } = identityFixture(checkers);
+    for (const reverse of [false, true]) {
+      const first = reverse ? right : left;
+      const second = reverse ? left : right;
+      for (const name of ["numeric", "mapped", "entry", "first"]) {
+        assertIdentityInBothOrders(first, typeFor(first, name), typeFor(second, name), true, name);
+      }
+      assertIdentityInBothOrders(first, typeFor(left, "numeric"), typeFor(right, "textual"), false, "distinct generic arguments");
+      assertIdentityInBothOrders(first, typeFor(left, "first"), typeFor(right, "second"), false, "distinct private declarations");
+      assertIdentityInBothOrders(first, typeFor(left, "mapped"), typeFor(right, "differentMapped"), false, "distinct mapped payloads");
+      assertIdentityInBothOrders(first, typeFor(left, "entry"), typeFor(right, "textEntry"), false, "distinct outer instantiations");
+    }
   }
 });
 
