@@ -2,11 +2,11 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeListKey } from "../internal/checker/checker/state.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
-import { Checker_createTypeReference, Checker_getTupleTargetType } from "../internal/checker/checker/types.js";
+import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
 import { Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { ObjectFlagsClassOrInterface, ObjectFlagsReference, ObjectFlagsTuple, TypeFlagsObject, TypeFlagsTypeParameter,
-  Type_AsInterfaceType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
+import { ObjectFlagsClassOrInterface, ObjectFlagsReference, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
+  Type_AsConditionalType, Type_AsInterfaceType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
 export function reacquireDeclarationSignature(source: Checker, producer: Checker, signature: Signature): Signature | undefined {
@@ -101,5 +101,16 @@ export function reacquireDeclaredRestriction(producer: Checker, type: Type): Typ
   if (selected === undefined) throw new Error("The native restriction requires its actual declared parameter");
   const result = Checker_getRestrictiveTypeParameter(producer, selected);
   if (result === undefined) throw new Error("The native parameter restriction did not return its value");
+  return result;
+}
+
+export function reacquireConditionalDeclaration(producer: Checker, type: Type): Type | undefined {
+  if ((type.flags & TypeFlagsConditional) === 0 || type.alias !== undefined) return undefined;
+  const source = type.checker;
+  const node = Type_AsConditionalType(type)?.root?.node;
+  if (source === undefined || node === undefined) throw new TypeError("A native conditional declaration requires its actual source owner");
+  if (LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType !== type) return undefined;
+  const result = Checker_getTypeFromTypeNode(producer, node);
+  if (result === undefined) throw new Error("The native conditional declaration did not return its value");
   return result;
 }

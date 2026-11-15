@@ -32,7 +32,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 import {
   ObjectFlagsAnonymous,
   ObjectFlagsClassOrInterface,
@@ -288,16 +288,15 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (reference !== undefined) return reference;
     const expression = reacquireCachedObjectExpression(producer, type);
     if (expression !== undefined) return expression;
+    const conditional = reacquireConditionalDeclaration(producer, type);
+    if (conditional !== undefined) return conditional;
     if ((flags & TypeFlagsConditional) !== 0) {
       const data = Type_AsConditionalType(type) ?? fail("a conditional type without data", type);
       const root = data.root ?? fail("a conditional type without root", type);
       const owner = type.checker ?? fail("a conditional type without a producer", type);
       const declared = LinkStore_Get(owner.typeNodeLinks, root.node) as GoPtr<TypeNodeLinks>;
       const declaredType = declared?.resolvedType ?? fail("a conditional type node without its type", type);
-      if (declaredType === type) {
-        const links = LinkStore_Get(producer.typeNodeLinks, root.node) as GoPtr<TypeNodeLinks>;
-        return links?.resolvedType ?? fail("the producer has not resolved the conditional type node", type);
-      }
+      if (declaredType === type) return fail("a conditional declaration without its canonical native construction", type);
       const parameters = list(root.outerTypeParameters);
       const mapper = data.mapper ?? fail("a conditional instantiation without a mapper", type);
       const images = list((root.outerTypeParameters ?? []).map(parameter => TypeMapper_Map(mapper, parameter)));

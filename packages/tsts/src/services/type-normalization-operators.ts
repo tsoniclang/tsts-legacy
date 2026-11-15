@@ -1,7 +1,7 @@
 import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_getIndexTypeEx, Checker_getIndexedAccessTypeEx } from "../internal/checker/checker/symbols.js";
 import { Checker_getTemplateLiteralType } from "../internal/checker/checker/types.js";
-import { Checker_getStringMappingType, Checker_getSubstitutionType } from "../internal/checker/checker/inference.js";
+import { Checker_getOrCreateSubstitutionType, Checker_getStringMappingType } from "../internal/checker/checker/inference.js";
 import { Checker_inferTypeForHomomorphicMappedType } from "../internal/checker/inference.js";
 import { TypeFlagsIndex, TypeFlagsIndexedAccess, TypeFlagsTemplateLiteral, TypeFlagsStringMapping, TypeFlagsSubstitution,
   Type_AsIndexType, Type_AsIndexedAccessType, Type_AsTemplateLiteralType, Type_AsStringMappingType, Type_AsSubstitutionType } from "../internal/checker/types.js";
@@ -41,7 +41,10 @@ export function reacquireTypeOperator(producer: Checker, type: Type, normalize: 
   } else if ((type.flags & TypeFlagsSubstitution) !== 0) {
     const data = Type_AsSubstitutionType(type);
     if (data?.baseType === undefined || data.constraint === undefined) throw new TypeError("A native substitution requires its actual operands");
-    result = Checker_getSubstitutionType(producer, normalizedOperand(producer, normalize, data.baseType), normalizedOperand(producer, normalize, data.constraint));
+    const owner = type.checker;
+    if (owner === undefined) throw new TypeError("A native substitution requires its actual producer");
+    if (owner.substitutionTypes.get({ baseId: data.baseType.id, constraintId: data.constraint.id }) !== type) return undefined;
+    result = Checker_getOrCreateSubstitutionType(producer, normalizedOperand(producer, normalize, data.baseType), normalizedOperand(producer, normalize, data.constraint));
   } else if ((type.flags & TypeFlagsObject) !== 0 && (type.objectFlags & ObjectFlagsReverseMapped) !== 0) {
     const data = Type_AsReverseMappedType(type);
     const owner = type.checker;

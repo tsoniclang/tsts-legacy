@@ -13,10 +13,14 @@ import { Checker_getRestrictiveTypeParameter } from "../internal/checker/checker
 import { Checker_getSignatureInstantiationWithoutFillingInTypeArguments } from "../internal/checker/checker/signatures.js";
 import { Checker_cloneTypeReference, Checker_createTypeReference, Checker_getTemplateLiteralType, Checker_getTupleTargetType } from "../internal/checker/checker/types.js";
 import { Checker_getRegularTypeOfObjectLiteral, Checker_getWidenedType, Checker_newAnonymousType } from "../internal/checker/checker/types.js";
+import { Checker_getTypeFromTypeNode, Checker_instantiateType } from "../internal/checker/checker/types.js";
+import { newSimpleTypeMapper } from "../internal/checker/mapper.js";
+import { Type_AsConditionalType } from "../internal/checker/types.js";
 import { Checker_checkExpressionCached, Checker_checkExpressionCachedEx } from "../internal/checker/checker/syntax-checking.js";
 import { CheckModeContextual } from "../internal/checker/checker/state.js";
 import { Checker_getStringMappingType, Checker_getSubstitutionType, Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
 import { Checker_getConstraintTypeFromMappedType } from "../internal/checker/checker/inference.js";
+import { Checker_getNoInferType, Checker_newSubstitutionType } from "../internal/checker/checker/inference.js";
 import { Checker_createReverseMappedType, Checker_inferTypeForHomomorphicMappedType } from "../internal/checker/inference.js";
 import { AccessFlagsIncludeUndefined, AccessFlagsNone, IndexFlagsNoIndexSignatures, IndexFlagsNoReducibleCheck, IndexFlagsNone, IndexFlagsStringsOnly,
   SignatureFlagsIsInnerCallChain, SignatureFlagsIsOuterCallChain, SignatureKindCall, TypeFlagsAny, Type_AsIndexType, Type_AsIndexedAccessType, Type_AsLiteralType } from "../internal/checker/types.js";
@@ -32,7 +36,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 import { FromString } from "../internal/jsnum/string.js";
 import { ParseValidBigInt } from "../internal/jsnum/pseudobigint.js";
 
@@ -122,6 +126,7 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         export enum Values { first=1, second=2, text="x", alias=1 }
         export enum OtherValues { first=1 }
         export function input():number{return 1;}
+        export function conditional<T>(value:T):T extends string ? T:number{throw 0;}
         export enum ComputedValues { first=input() }
         export namespace Left {export class Same {private value!:number;}}
         export namespace Right {export class Same {private value!:number;}}`,
@@ -405,6 +410,7 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
           Checker_getStringMappingType(producer, intrinsicSymbol, targetParameter)],
         [Checker_getSubstitutionType(source, sourceParameter, source.stringType),
           Checker_getSubstitutionType(producer, targetParameter, producer.stringType)],
+        [Checker_getNoInferType(source, sourceParameter), Checker_getNoInferType(producer, targetParameter)],
       ];
       for (const [original, expected] of operations) {
         if (original === undefined || expected === undefined) throw new Error("The actual native type operator must complete");
@@ -414,6 +420,10 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         if (source !== producer) assert.throws(() => reacquireTypeOperator(producer, original, value => value),
           error => error instanceof TypeError && error.message === "A native type operator requires its normalized input producer");
       }
+      const uncachedSubstitution = Checker_newSubstitutionType(source, sourceParameter, source.stringType);
+      if (uncachedSubstitution === undefined) throw new Error("The genuine uncached substitution must exist");
+      assert.equal(reacquireTypeOperator(producer, uncachedSubstitution, normalizeAccessOperand), undefined,
+        "the actual substitution cache distinguishes a fresh constructor from its canonical retained value");
       const label = findNodes(originalFile, queries.ast.children, queries.ast.is.IsParameterDeclaration)[0];
       if (label === undefined) throw new Error("The actual checked tuple label declaration must exist");
       for (const readonly of [false, true]) for (const labeled of [false, true]) {
@@ -551,6 +561,20 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
       if (uncachedReverse === undefined) throw new Error("The genuine uncached reverse-map constructor must complete");
       assert.equal(reacquireTypeOperator(producer, uncachedReverse, normalizeReverse), undefined,
         "the same three operands are not proof an uncached new reverse-map Type is its cached construction");
+      const conditionalNode: Node | undefined = findNodes(originalFile, queries.ast.children, queries.ast.is.IsConditionalTypeNode)[0];
+      if (conditionalNode === undefined) throw new Error("The genuine conditional type syntax must exist");
+      const originalConditional = Checker_getTypeFromTypeNode(source, conditionalNode);
+      const expectedConditional = Checker_getTypeFromTypeNode(producer, conditionalNode);
+      if (originalConditional === undefined || expectedConditional === undefined) throw new Error("The actual native conditional declarations must exist");
+      assert.equal(reacquireConditionalDeclaration(producer, originalConditional) === expectedConditional, true);
+      assert.equal(reacquireConditionalDeclaration(producer, originalConditional) === expectedConditional, true);
+      const originalConditionalParameter = Type_AsConditionalType(originalConditional)?.root?.outerTypeParameters[0];
+      if (originalConditionalParameter === undefined) throw new Error("The real conditional root must retain its actual outer parameter");
+      const conditionalInstance = Checker_instantiateType(source, originalConditional, newSimpleTypeMapper(originalConditionalParameter, sourceParameter));
+      if (conditionalInstance === undefined) throw new Error("The actual native conditional instantiation must complete");
+      assert.equal(conditionalInstance === originalConditional, false);
+      assert.equal(reacquireConditionalDeclaration(producer, conditionalInstance), undefined,
+        "a shared root node does not erase a conditional instance's actual binding context");
     }
   });
 }

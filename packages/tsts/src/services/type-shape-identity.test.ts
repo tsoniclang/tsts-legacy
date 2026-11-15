@@ -76,6 +76,36 @@ function assertIdentityInBothOrders(
   assert.equal(queries.typeShape.isTypeIdenticalTo(right, left), expected, `${label}: reverse identity`);
 }
 
+test("public error classification uses the actual type owner and preserves the any flag predicate", () => {
+  const foreign = identityFixture(4);
+  const foreignOwner = foreign.typeFor(foreign.left, "numeric").checker;
+  assert.equal(foreignOwner !== undefined, true, "the foreign type has its actual native producer");
+  if (foreignOwner === undefined) throw new Error("Missing native producer");
+  for (const checkers of [1, 4]) {
+    const fixture = identityFixture(checkers);
+    const owner = fixture.typeFor(fixture.left, "numeric").checker;
+    assert.equal(owner !== undefined, true, "the actual checked type retains its native producer");
+    if (owner === undefined) throw new Error("Missing native producer");
+    for (const queries of [fixture.left, fixture.right, foreign.left]) {
+      assert.equal(queries.typeShape.isError(owner.errorType), true, "actual error identity, independent of wrapper owner");
+      assert.equal(queries.typeShape.isAny(owner.errorType), true, "native error retains its actual Any flags");
+      assert.equal(queries.typeShape.isError(owner.anyType), false, "genuine any is not the error sentinel");
+      assert.equal(queries.typeShape.isAny(owner.anyType), true, "genuine any preserves the flag predicate");
+      assert.equal(queries.typeShape.isError(foreignOwner.errorType), true, "foreign input is classified by its own producer");
+      assert.equal(queries.typeShape.isError(foreignOwner.anyType), false, "foreign ordinary any is not an error");
+      assert.equal(queries.typeShape.isError(undefined), false, "the absent Go pointer is not an error");
+    }
+    const [diagnosticOwner, done] = Program_GetTypeCheckerForFileExclusive(fixture.checked.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), fixture.left.sourceFile);
+    try {
+      assert.equal(diagnosticOwner !== undefined, true, "the checked program exposes its actual diagnostic producer");
+      if (diagnosticOwner === undefined) throw new Error("Missing diagnostic producer");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.errorType), true, "diagnostic-owner error identity");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.anyType), false, "diagnostic-owner ordinary any");
+    } finally { done(); }
+  }
+});
+
 test("public identity preserves exact generic instances obtained from different checked files", () => {
   const { left, right, typeFor } = identityFixture();
   const numericLeft = typeFor(left, "numeric");
