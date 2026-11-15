@@ -2,7 +2,8 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey } from "../internal/checker/checker/state.js";
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration, Checker_getTypeParameterFromMappedType } from "../internal/checker/checker/signatures.js";
-import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
+import { Checker_getDeclaredTypeOfSymbol, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
+import { SymbolFlagsFunction, SymbolFlagsMethod } from "../internal/ast/generated/flags.js";
 import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
 import { Checker_getObjectTypeInstantiation, Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
 import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
@@ -37,6 +38,22 @@ export function reacquireDeclaredType(producer: Checker, type: Type): Type | und
   const owner = Checker_getDeclaredTypeOfSymbol(producer, symbol);
   const result = Type_AsInterfaceType(owner)?.thisType;
   if (result === undefined) throw new Error("The native declared self constructor did not return its value");
+  return result;
+}
+
+export function reacquireCachedFunctionType(producer: Checker, type: Type): Type | undefined {
+  if (type.alias !== undefined || (type.flags & TypeFlagsObject) === 0) return undefined;
+  const source = type.checker;
+  if (source === undefined) throw new TypeError("A native function value requires its actual producing checker");
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native function value requires the same actual Program");
+  const symbol = type.symbol;
+  if (symbol === undefined || symbol.checkerId !== undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod)) === 0
+    || LinkStore_TryGet(source.valueSymbolLinks, symbol)?.resolvedType !== type) return undefined;
+  const result = Checker_getTypeOfSymbol(producer, symbol);
+  if (result === undefined || result.checker !== producer || result.symbol !== symbol
+    || LinkStore_TryGet(producer.valueSymbolLinks, symbol)?.resolvedType !== result)
+    throw new TypeError("The actual shared function symbol retains its target producer's cached value");
   return result;
 }
 

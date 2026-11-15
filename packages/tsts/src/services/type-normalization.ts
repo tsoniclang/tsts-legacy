@@ -8,7 +8,7 @@ import { reacquireContextualArgument } from "./type-normalization-contextual-arg
 import { reacquireLiteralGraph } from "./type-normalization-spreads.js";
 import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireContextWidening, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireAnonymousInstantiation, reacquireCachedFunctionType, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
 export interface TypeNormalization {
   readonly type: (type: Type) => Type;
@@ -89,6 +89,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireMappedParameter(producer, type, normalize)
       ?? reacquireSignatureType(producer, type, signature => normalizeSignature(source, signature))
       ?? reacquireTypeAlias(producer, type, normalize)
+      ?? reacquireCachedFunctionType(producer, type)
       ?? reacquireCompositeType(producer, type, normalize)
       ?? reacquireAnonymousInstantiation(producer, type, normalize)
       ?? reacquireLiteralType(producer, type)
