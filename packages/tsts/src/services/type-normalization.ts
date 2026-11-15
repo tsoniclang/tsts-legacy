@@ -5,7 +5,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireHigherOrderSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
 export interface TypeNormalization {
   readonly type: (type: Type) => Type;
@@ -82,11 +82,12 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireRestrictiveParameter(producer, type, normalize)
       ?? reacquireSignatureType(producer, type, signature => normalizeSignature(source, signature))
       ?? reacquireTypeAlias(producer, type, normalize)
+      ?? reacquireAnonymousInstantiation(producer, type, normalize)
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)
       ?? reacquireTypeReference(producer, type, normalize)
       ?? reacquireCachedObjectExpression(producer, type)
-      ?? reacquireConditionalDeclaration(producer, type);
+      ?? reacquireCachedTypeNode(producer, type);
     if (result === undefined) {
       throw new Error("Native type normalization is unfinished for this producing relation");
     }

@@ -1,11 +1,13 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeListKey } from "../internal/checker/checker/state.js";
+import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey, getTypeListKey } from "../internal/checker/checker/state.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
-import { Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
+import { Checker_getObjectTypeInstantiation, Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
+import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
+import { IsTypeNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { ObjectFlagsClassOrInterface, ObjectFlagsReference, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
+import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
   Type_AsConditionalType, Type_AsInterfaceType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
@@ -107,13 +109,56 @@ export function reacquireRestrictiveParameter(producer: Checker, type: Type, nor
   return result;
 }
 
-export function reacquireConditionalDeclaration(producer: Checker, type: Type): Type | undefined {
-  if ((type.flags & TypeFlagsConditional) === 0 || type.alias !== undefined) return undefined;
+export function reacquireCachedTypeNode(producer: Checker, type: Type): Type | undefined {
+  if (type.alias !== undefined) return undefined;
   const source = type.checker;
-  const node = Type_AsConditionalType(type)?.root?.node;
-  if (source === undefined || node === undefined) throw new TypeError("A native conditional declaration requires its actual source owner");
+  if (source === undefined) throw new TypeError("A native cached type node requires its actual source owner");
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native cached type node requires the same actual Program");
+  const node = (type.flags & TypeFlagsConditional) !== 0 ? Type_AsConditionalType(type)?.root?.node
+    : type.symbol?.Declarations?.find(declaration => declaration !== undefined && IsTypeNode(declaration)
+      && LinkStore_TryGet(source.typeNodeLinks, declaration)?.resolvedType === type);
+  if (node === undefined) return undefined;
   if (LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType !== type) return undefined;
   const result = Checker_getTypeFromTypeNode(producer, node);
-  if (result === undefined) throw new Error("The native conditional declaration did not return its value");
+  if (result === undefined) throw new Error("The native cached type node did not return its value");
+  return result;
+}
+
+export function reacquireAnonymousInstantiation(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+  if (type.alias !== undefined || (type.flags & TypeFlagsObject) === 0 || (type.objectFlags & ObjectFlagsInstantiated) === 0
+    || (type.objectFlags & (ObjectFlagsReference | ObjectFlagsSingleSignatureType)) !== 0) return undefined;
+  const source = type.checker;
+  if (source === undefined) throw new TypeError("A native anonymous instantiation requires its actual source owner");
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native anonymous instantiation requires the same actual Program");
+  const data = Type_AsObjectType(type);
+  if (data === undefined) return undefined;
+  const target = data.target;
+  if (target === undefined || target === type || target.checker !== source) return undefined;
+  const declaration = target.symbol?.Declarations?.[0];
+  const parameters = declaration === undefined ? undefined : LinkStore_TryGet(source.typeNodeLinks, declaration)?.outerTypeParameters;
+  if (parameters === undefined || parameters.length === 0) return undefined;
+  const arguments_: Type[] = [];
+  for (const parameter of parameters) {
+    if (parameter === undefined) throw new TypeError("A native anonymous instantiation retains its actual outer parameters");
+    const argument = TypeMapper_Map(data.mapper, parameter);
+    if (argument === undefined) throw new TypeError("A native anonymous instantiation retains its actual outer arguments");
+    arguments_.push(argument);
+  }
+  if (Type_AsObjectType(target)?.instantiations?.get(getTypeInstantiationKey(arguments_, undefined, false)) !== type) return undefined;
+  const selected = normalize(target);
+  const selectedParameters: Type[] = [];
+  const selectedArguments: Type[] = [];
+  for (const parameter of parameters) {
+    if (parameter === undefined) throw new TypeError("A native anonymous instantiation retains its actual outer parameters");
+    selectedParameters.push(normalize(parameter));
+  }
+  for (const argument of arguments_) selectedArguments.push(normalize(argument));
+  if (selected.checker !== producer || selectedParameters.some(parameter => parameter.checker !== producer)
+    || selectedArguments.some(argument => argument.checker !== producer))
+    throw new TypeError("A native anonymous instantiation requires its normalized input producer");
+  const result = Checker_getObjectTypeInstantiation(producer, selected, newTypeMapper(selectedParameters, selectedArguments), undefined);
+  if (result === undefined) throw new Error("The native cached anonymous instantiation did not return its value");
   return result;
 }

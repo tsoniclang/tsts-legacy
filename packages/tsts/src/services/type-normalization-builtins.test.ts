@@ -37,7 +37,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 import { FromString } from "../internal/jsnum/string.js";
 import { ParseValidBigInt } from "../internal/jsnum/pseudobigint.js";
 
@@ -622,14 +622,14 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
       const originalConditional = Checker_getTypeFromTypeNode(source, conditionalNode);
       const expectedConditional = Checker_getTypeFromTypeNode(producer, conditionalNode);
       if (originalConditional === undefined || expectedConditional === undefined) throw new Error("The actual native conditional declarations must exist");
-      assert.equal(reacquireConditionalDeclaration(producer, originalConditional) === expectedConditional, true);
-      assert.equal(reacquireConditionalDeclaration(producer, originalConditional) === expectedConditional, true);
+      assert.equal(reacquireCachedTypeNode(producer, originalConditional) === expectedConditional, true);
+      assert.equal(reacquireCachedTypeNode(producer, originalConditional) === expectedConditional, true);
       const originalConditionalParameter = Type_AsConditionalType(originalConditional)?.root?.outerTypeParameters[0];
       if (originalConditionalParameter === undefined) throw new Error("The real conditional root must retain its actual outer parameter");
       const conditionalInstance = Checker_instantiateType(source, originalConditional, newSimpleTypeMapper(originalConditionalParameter, sourceParameter));
       if (conditionalInstance === undefined) throw new Error("The actual native conditional instantiation must complete");
       assert.equal(conditionalInstance === originalConditional, false);
-      assert.equal(reacquireConditionalDeclaration(producer, conditionalInstance), undefined,
+      assert.equal(reacquireCachedTypeNode(producer, conditionalInstance), undefined,
         "a shared root node does not erase a conditional instance's actual binding context");
     }
   });

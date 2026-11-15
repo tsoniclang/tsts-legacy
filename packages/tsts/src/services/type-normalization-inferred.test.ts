@@ -11,11 +11,12 @@ import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import { CheckModeNormal } from "../internal/checker/checker/state.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { SignatureFlagsConstruct, Type_AsTypeParameter } from "../internal/checker/types.js";
+import { SignatureFlagsConstruct, Type_AsObjectType, Type_AsTypeParameter } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 import { createTypeNormalization } from "./type-normalization.js";
 import { cachedSignatureArguments, reacquireHigherOrderSignature, reacquireSignatureInstantiation } from "./type-normalization-signatures.js";
-import { reacquireDeclarationSignature } from "./type-normalization-declarations.js";
+import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature } from "./type-normalization-declarations.js";
+import { Checker_instantiateAnonymousType } from "../internal/checker/checker/types.js";
 
 interface InferredRow {
   readonly call: Node;
@@ -220,6 +221,8 @@ for (const checkers of [1, 4]) test(`published conditional higher-order candidat
 
 for (const checkers of [1, 4]) test(`two public rejected overloads preserve their actual ordinary cached construction with ${checkers} checkers`, () => {
   const current = fixture(checkers, true, true);
+  const foreign = fixture(1, true, true).owners[0];
+  if (foreign === undefined) throw new Error("The independent actual Program owns its checker");
   const answers = (owner: Checker, call: Node) => {
     Checker_getResolvedSignature(owner, call, undefined, CheckModeNormal);
     const answer = Checker_getResolvedCallSelectionEvidence(owner, call);
@@ -255,6 +258,24 @@ for (const checkers of [1, 4]) test(`two public rejected overloads preserve thei
         const matches = targets.filter(value => value.application.signature === selected && value.application.kind === original.application.kind);
         assert.equal(matches.length === 1 && matches[0]?.application.instantiatedSignature === result, true,
           "actual original-signature identity and call/construct kind select exactly one native candidate, never an ordinal");
+        const originalReturn = Checker_getReturnTypeOfSignature(source, signature);
+        const targetReturn = Checker_getReturnTypeOfSignature(producer, result);
+        if (originalReturn === undefined || targetReturn === undefined) throw new Error("The real ordinary instantiated return types exist");
+        assert.equal(normalize.type(originalReturn) === targetReturn, true,
+          "the exact native anonymous instantiation cache and actual normalized outer arguments retain the complete returned type");
+        assert.equal(reacquireCachedTypeNode(producer, originalReturn), undefined,
+          "an instantiated return cannot borrow its target's original type-node cache identity");
+        const data = Type_AsObjectType(originalReturn);
+        if (data?.target === undefined) throw new Error("The native cached return retains its actual anonymous target");
+        const uncached = Checker_instantiateAnonymousType(source, data.target, data.mapper, undefined);
+        if (uncached === undefined) throw new Error("The real uncached native constructor returns its fresh value");
+        assert.equal(reacquireAnonymousInstantiation(producer, uncached, () => {
+          throw new Error("An uncached anonymous clone cannot borrow the cached result's construction");
+        }), undefined);
+        assert.throws(() => reacquireAnonymousInstantiation(foreign, originalReturn, value => value),
+          error => error instanceof TypeError && error.message === "A native anonymous instantiation requires the same actual Program");
+        if (source !== producer) assert.throws(() => reacquireAnonymousInstantiation(producer, originalReturn, value => value),
+          error => error instanceof TypeError && error.message === "A native anonymous instantiation requires its normalized input producer");
         const other = targets.find(value => value.application.signature !== selected);
         assert.equal(other !== undefined && other.application.instantiatedSignature !== result, true,
           "two distinct original overloads at the SAME invocation do not share a cached instantiation");
