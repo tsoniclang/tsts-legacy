@@ -6471,7 +6471,7 @@ export function Checker_checkMetaPropertyKeyword(receiver: GoPtr<Checker>, node:
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkIdentifier","kind":"method","status":"implemented","sigHash":"e9a0175eaea65200220166cc3e50540931a8a88829684e8eeacf1be5a4eaeba7","bodyHash":"6ba6f3033cf51bb621524af70f6dc4d76f82fc1d415f1b812cdea626e961305f"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"After exact TS-Go symbol and alias selection accepts an identifier use, direct-call evidence retains the already-selected callee provenance without re-querying the checker; source diagnostics and no-extension behavior are unchanged."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"After exact TS-Go symbol and alias selection, retain direct-call callee provenance and the completed immutable assignment failure with its actually emitted Diagnostic in the existing paired type-answer links; speculative or suppressed failures create no stored answer."}
  *
  * Go source:
  * func (c *Checker) checkIdentifier(node *ast.Node, checkMode CheckMode) *Type {
@@ -6668,9 +6668,9 @@ export function Checker_checkIdentifier(receiver: GoPtr<Checker>, node: GoPtr<No
   let t = Checker_getNarrowedTypeOfSymbol(receiver, localOrExportSymbol, node);
   const assignmentKind = getAssignmentTargetKind(node);
   if (assignmentKind !== AssignmentKindNone) {
+    let assignmentError: GoPtr<Message>;
     if ((localOrExportSymbol!.Flags & SymbolFlagsVariable) === 0 &&
         !(IsInJSFile(node) && (localOrExportSymbol!.Flags & SymbolFlagsValueModule) !== 0)) {
-      let assignmentError: GoPtr<Message>;
       if ((localOrExportSymbol!.Flags & SymbolFlagsEnum) !== 0) {
         assignmentError = Cannot_assign_to_0_because_it_is_an_enum;
       } else if ((localOrExportSymbol!.Flags & SymbolFlagsClass) !== 0) {
@@ -6684,14 +6684,23 @@ export function Checker_checkIdentifier(receiver: GoPtr<Checker>, node: GoPtr<No
       } else {
         assignmentError = Cannot_assign_to_0_because_it_is_not_a_variable;
       }
-      Checker_error(receiver, node, assignmentError, Checker_symbolToString(receiver, symbol_));
-      return receiver!.errorType;
-    }
-    if (Checker_isReadonlySymbol(receiver, localOrExportSymbol)) {
+    } else if (Checker_isReadonlySymbol(receiver, localOrExportSymbol)) {
       if ((localOrExportSymbol!.Flags & SymbolFlagsVariable) !== 0) {
-        Checker_error(receiver, node, Cannot_assign_to_0_because_it_is_a_constant, Checker_symbolToString(receiver, symbol_));
+        assignmentError = Cannot_assign_to_0_because_it_is_a_constant;
       } else {
-        Checker_error(receiver, node, Cannot_assign_to_0_because_it_is_a_read_only_property, Checker_symbolToString(receiver, symbol_));
+        assignmentError = Cannot_assign_to_0_because_it_is_a_read_only_property;
+      }
+    }
+    if (assignmentError !== undefined) {
+      const retained = LinkStore_TryGet(receiver!.typeNodeLinks, node);
+      if (retained !== undefined && retained.resolvedType === receiver!.errorType && retained.resolutionFailure !== undefined) {
+        return retained.resolvedType;
+      }
+      const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(node, assignmentError, Checker_symbolToString(receiver, symbol_)));
+      if (checkMode === CheckModeNormal && receiver!.flowLoopStack.length === 0 && failure !== undefined) {
+        const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+        links.resolvedType = receiver!.errorType;
+        links.resolutionFailure = failure;
       }
       return receiver!.errorType;
     }
