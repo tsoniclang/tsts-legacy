@@ -1,9 +1,38 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { getIntersectionKey, getUnionKey, IntersectionFlagsNone, IntersectionFlagsNoConstraintReduction,
+import { getIntersectionKey, getUnionKey, insertType, IntersectionFlagsNone, IntersectionFlagsNoConstraintReduction,
   UnionReductionNone } from "../internal/checker/checker/state.js";
-import { Checker_getIntersectionTypeEx, Checker_getUnionTypeEx } from "../internal/checker/checker/types.js";
-import { TypeFlagsIntersection, TypeFlagsUnion, Type_AsUnionType, Type_Types } from "../internal/checker/types.js";
+import { Checker_getIntersectionTypeEx, Checker_getUnionTypeEx, Checker_newIntersectionType, Checker_newUnionType } from "../internal/checker/checker/types.js";
+import { ObjectFlagsNone, TypeFlagsIntersection, TypeFlagsUnion, Type_AsUnionType, Type_Types } from "../internal/checker/types.js";
 import type { Type } from "../internal/checker/types.js";
+
+function normalizeMembers(source: Checker, producer: Checker, type: Type, normalize: (type: Type) => Type): Type[] {
+  const selected: Type[] = [];
+  for (const member of Type_Types(type)) {
+    if (member === undefined || member.checker !== source)
+      throw new TypeError("A native composite type retains its actual member producers");
+    const value = normalize(member);
+    if (value.checker !== producer) throw new TypeError("A native composite type requires normalized member producers");
+    selected.push(value);
+  }
+  return selected;
+}
+
+function normalizeOrigin(source: Checker, producer: Checker, origin: Type, normalize: (type: Type) => Type): Type {
+  if (origin.checker !== source) throw new TypeError("A native union origin retains its actual source producer");
+  if ((origin.flags & (TypeFlagsUnion | TypeFlagsIntersection)) === 0) return normalize(origin);
+  const members = normalizeMembers(source, producer, origin, normalize);
+  const union = (origin.flags & TypeFlagsUnion) !== 0;
+  let selected: (Type | undefined)[] = members;
+  if (union) {
+    selected = [];
+    for (const member of members) [selected] = insertType(selected, member);
+  }
+  const result = union ? Checker_newUnionType(producer, ObjectFlagsNone, selected)
+    : Checker_newIntersectionType(producer, ObjectFlagsNone, selected);
+  if (result === undefined || result.checker !== producer)
+    throw new Error("The native union-origin constructor retains its actual result producer");
+  return result;
+}
 
 export function reacquireCompositeType(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
   if (type.alias !== undefined || (type.flags & (TypeFlagsUnion | TypeFlagsIntersection)) === 0) return undefined;
@@ -20,15 +49,8 @@ export function reacquireCompositeType(producer: Checker, type: Type, normalize:
     intersectionFlags = IntersectionFlagsNoConstraintReduction;
     if (source.intersectionTypes.get(getIntersectionKey(members, intersectionFlags, undefined)) !== type) return undefined;
   }
-  const selected: Type[] = [];
-  for (const member of members) {
-    if (member === undefined || member.checker !== source)
-      throw new TypeError("A native composite type retains its actual member producers");
-    const value = normalize(member);
-    if (value.checker !== producer) throw new TypeError("A native composite type requires normalized member producers");
-    selected.push(value);
-  }
-  const selectedOrigin = origin === undefined ? undefined : normalize(origin);
+  const selected = normalizeMembers(source, producer, type, normalize);
+  const selectedOrigin = origin === undefined ? undefined : normalizeOrigin(source, producer, origin, normalize);
   if (selectedOrigin !== undefined && selectedOrigin.checker !== producer)
     throw new TypeError("A native union origin requires its normalized producer");
   const result = union ? Checker_getUnionTypeEx(producer, selected, UnionReductionNone, undefined, selectedOrigin)
