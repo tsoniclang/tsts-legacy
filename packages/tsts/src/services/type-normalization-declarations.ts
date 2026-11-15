@@ -12,8 +12,8 @@ import { Checker_getObjectTypeInstantiation, Checker_getTypeAliasInstantiation }
 import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
 import { GetSourceFileOfNode, IsTypeNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsMapped, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
-  Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_Target } from "../internal/checker/types.js";
+import { ObjectFlagsAnonymous, ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsMapped, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsIntersection, TypeFlagsObject, TypeFlagsTypeParameter,
+  Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_Target, Type_Types } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
 export function reacquireDeclarationSignature(source: Checker, producer: Checker, signature: Signature): Signature | undefined {
@@ -64,21 +64,38 @@ export function reacquireCachedLateBoundSymbol(source: Checker, producer: Checke
   return result;
 }
 
+function classConstructorChild(value: Type | undefined, symbol: NativeSymbol, owner: Checker): Type | undefined {
+  if (value === undefined || value.checker !== owner || (value.flags & TypeFlagsIntersection) === 0) return undefined;
+  let selected: Type | undefined;
+  for (const child of Type_Types(value)) {
+    if (child === undefined || child.checker !== owner) return undefined;
+    if (child.symbol !== symbol) continue;
+    if (selected !== undefined || (child.flags & TypeFlagsObject) === 0 || (child.objectFlags & ObjectFlagsAnonymous) === 0) return undefined;
+    selected = child;
+  }
+  return selected;
+}
+
 export function reacquireCachedValueType(producer: Checker, type: Type): Type | undefined {
   if (type.alias !== undefined || (type.flags & TypeFlagsObject) === 0) return undefined;
   const source = type.checker;
   if (source === undefined) throw new TypeError("A native symbol value requires its actual producing checker");
   const symbol = type.symbol;
-  if (symbol === undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod | SymbolFlagsClass | SymbolFlagsEnum | SymbolFlagsValueModule)) === 0
-    || LinkStore_TryGet(source.valueSymbolLinks, symbol)?.resolvedType !== type) return undefined;
+  if (symbol === undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod | SymbolFlagsClass | SymbolFlagsEnum | SymbolFlagsValueModule)) === 0) return undefined;
+  const cached = LinkStore_TryGet(source.valueSymbolLinks, symbol)?.resolvedType;
+  const nested = cached !== type;
+  if (nested && ((symbol.Flags & SymbolFlagsClass) === 0 || classConstructorChild(cached, symbol, source) !== type)) return undefined;
   const selected = symbol.checkerId === undefined ? symbol : reacquireCachedLateBoundSymbol(source, producer, symbol);
   if (selected === undefined) return undefined;
   if (symbol.checkerId === undefined && source.program.SourceFiles() !== producer.program.SourceFiles())
     throw new TypeError("A native symbol value requires the same actual Program");
-  const result = Checker_getTypeOfSymbol(producer, selected);
-  if (result === undefined || result.checker !== producer || result.symbol !== selected
-    || LinkStore_TryGet(producer.valueSymbolLinks, selected)?.resolvedType !== result)
+  const value = Checker_getTypeOfSymbol(producer, selected);
+  if (value === undefined || value.checker !== producer
+    || LinkStore_TryGet(producer.valueSymbolLinks, selected)?.resolvedType !== value)
     throw new TypeError("The actual symbol retains its target producer's cached value");
+  const result = nested ? classConstructorChild(value, selected, producer) : value;
+  if (result === undefined || result.checker !== producer || result.symbol !== selected)
+    throw new TypeError("The actual symbol retains its unique target-owned native constructor value");
   return result;
 }
 
