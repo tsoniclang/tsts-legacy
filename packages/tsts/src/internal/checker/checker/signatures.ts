@@ -2529,14 +2529,10 @@ export function Checker_getResolvedSignature(receiver: GoPtr<Checker>, node: GoP
       throw new Error("Resolved call evidence does not belong to the source-order selected signature.");
     }
     if (receiver!.flowLoopStack.length === 0) {
-      if (result?.derivation?.kind === "higher-order" && result.derivation.at === node) {
-        const returned = result.derivation.returned;
-        for (const [index, parameter] of returned.typeParameters.entries()) {
-          if (parameter?.derivation?.kind !== "unique-inference") continue;
-          if (Type_AsTypeParameter(parameter)?.target !== parameter.derivation.source)
-            throw new Error("A fresh inferred parameter retains its actual native construction");
-          parameter.derivation = { kind: "inferred-parameter", signature: returned, index };
-        }
+      retainHigherOrderParameterOwners(node, result);
+      if (selectedEvidence?.kind === "conditional-candidates") {
+        for (const candidate of selectedEvidence.candidates)
+          retainHigherOrderParameterOwners(node, candidate.application.instantiatedSignature);
       }
       links!.resolvedSignature = result;
       if (IsCallOrNewExpression(node)) {
@@ -2561,6 +2557,17 @@ export function Checker_getResolvedSignature(receiver: GoPtr<Checker>, node: GoP
     } else {
       rollbackSelectedCallEvidenceFrame(receiver!, signatureDecision);
     }
+  }
+}
+
+function retainHigherOrderParameterOwners(node: GoPtr<Node>, signature: GoPtr<Signature>): void {
+  if (signature?.derivation?.kind !== "higher-order" || signature.derivation.at !== node) return;
+  const returned = signature.derivation.returned;
+  for (const [index, parameter] of returned.typeParameters.entries()) {
+    if (parameter?.derivation?.kind !== "unique-inference") continue;
+    if (Type_AsTypeParameter(parameter)?.target !== parameter.derivation.source)
+      throw new Error("A fresh inferred parameter retains its actual native construction");
+    parameter.derivation = { kind: "inferred-parameter", signature: returned, index };
   }
 }
 

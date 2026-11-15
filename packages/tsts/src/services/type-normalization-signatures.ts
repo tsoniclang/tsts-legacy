@@ -19,10 +19,31 @@ export function reacquireHigherOrderSignature(source: Checker, producer: Checker
   if (source.program.SourceFiles() !== producer.program.SourceFiles())
     throw new TypeError("A native higher-order signature requires the same actual Program");
   if (derivation.kind === "higher-order") {
-    if (LinkStore_TryGet(source.signatureLinks, derivation.at)?.resolvedSignature !== signature) return undefined;
-    const result = Checker_getResolvedSignature(producer, derivation.at, undefined, CheckModeNormal);
+    const original = LinkStore_TryGet(source.signatureLinks, derivation.at);
+    let result: Signature | undefined;
+    if (original?.resolvedSignature === signature) {
+      result = Checker_getResolvedSignature(producer, derivation.at, undefined, CheckModeNormal);
+    } else {
+      const evidence = original?.resolvedCallSelectionEvidence;
+      if (evidence?.kind !== "conditional-candidates") return undefined;
+      const candidates = evidence.candidates.filter(candidate => candidate.application.instantiatedSignature === signature);
+      const candidate = candidates.length === 1 ? candidates[0] : undefined;
+      if (candidate === undefined) return undefined;
+      const selected = normalize(candidate.application.signature);
+      if (selected.checkerId !== producer.id)
+        throw new TypeError("A native conditional candidate requires its normalized original signature producer");
+      Checker_getResolvedSignature(producer, derivation.at, undefined, CheckModeNormal);
+      const completed = LinkStore_TryGet(producer.signatureLinks, derivation.at)?.resolvedCallSelectionEvidence;
+      if (completed?.kind !== "conditional-candidates")
+        throw new Error("The native invocation retains its actual conditional candidate answer");
+      const matching = completed.candidates.filter(value => value.application.signature === selected
+        && value.application.kind === candidate.application.kind);
+      if (matching.length !== 1)
+        throw new Error("Native conditional candidate normalization is unfinished for this producing relation");
+      result = matching[0]?.application.instantiatedSignature;
+    }
     if (result === undefined || result.checkerId !== producer.id || result.derivation?.kind !== "higher-order")
-      throw new Error("The native selected invocation retains its actual higher-order result");
+      throw new Error("The native invocation retains its actual higher-order result");
     return result;
   }
   const owner = derivation.signature;
