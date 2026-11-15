@@ -2,12 +2,15 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey } from "../internal/checker/checker/state.js";
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration, Checker_getTypeParameterFromMappedType } from "../internal/checker/checker/signatures.js";
-import { Checker_getDeclaredTypeOfSymbol, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
+import { Checker_getDeclaredTypeOfSymbol, Checker_getSymbolOfDeclaration, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import { SymbolFlagsFunction, SymbolFlagsMethod } from "../internal/ast/generated/flags.js";
+import { CheckFlagsLate } from "../internal/ast/checkflags.js";
+import { Node_Symbol, SourceFile_FileName } from "../internal/ast/ast.js";
+import type { Symbol as NativeSymbol } from "../internal/ast/symbol.js";
 import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
 import { Checker_getObjectTypeInstantiation, Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
 import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
-import { IsTypeNode } from "../internal/ast/utilities.js";
+import { GetSourceFileOfNode, IsTypeNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsMapped, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
   Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_Target } from "../internal/checker/types.js";
@@ -41,19 +44,41 @@ export function reacquireDeclaredType(producer: Checker, type: Type): Type | und
   return result;
 }
 
+export function reacquireCachedLateBoundSymbol(source: Checker, producer: Checker, symbol: NativeSymbol): NativeSymbol | undefined {
+  if (symbol.checkerId !== source.id) throw new TypeError("A native late-bound symbol requires its actual producing checker");
+  const declaration = symbol.ValueDeclaration;
+  const early = declaration === undefined ? undefined : Node_Symbol(declaration);
+  if ((symbol.CheckFlags & CheckFlagsLate) === 0 || declaration === undefined || early === undefined
+    || early.checkerId !== undefined) return undefined;
+  const file = GetSourceFileOfNode(declaration);
+  if (file === undefined || source.program.GetSourceFile(SourceFile_FileName(file)) !== file
+    || LinkStore_TryGet(source.symbolNodeLinks, declaration)?.resolvedSymbol !== symbol
+    || LinkStore_TryGet(source.lateBoundLinks, early)?.lateSymbol !== symbol) return undefined;
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native late-bound symbol requires the same actual Program");
+  const result = Checker_getSymbolOfDeclaration(producer, declaration);
+  if (result === undefined || result.checkerId !== producer.id
+    || LinkStore_TryGet(producer.symbolNodeLinks, declaration)?.resolvedSymbol !== result
+    || LinkStore_TryGet(producer.lateBoundLinks, early)?.lateSymbol !== result)
+    throw new TypeError("The actual declaration retains both target-owned late-bound symbol cache relations");
+  return result;
+}
+
 export function reacquireCachedFunctionType(producer: Checker, type: Type): Type | undefined {
   if (type.alias !== undefined || (type.flags & TypeFlagsObject) === 0) return undefined;
   const source = type.checker;
   if (source === undefined) throw new TypeError("A native function value requires its actual producing checker");
-  if (source.program.SourceFiles() !== producer.program.SourceFiles())
-    throw new TypeError("A native function value requires the same actual Program");
   const symbol = type.symbol;
-  if (symbol === undefined || symbol.checkerId !== undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod)) === 0
+  if (symbol === undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod)) === 0
     || LinkStore_TryGet(source.valueSymbolLinks, symbol)?.resolvedType !== type) return undefined;
-  const result = Checker_getTypeOfSymbol(producer, symbol);
-  if (result === undefined || result.checker !== producer || result.symbol !== symbol
-    || LinkStore_TryGet(producer.valueSymbolLinks, symbol)?.resolvedType !== result)
-    throw new TypeError("The actual shared function symbol retains its target producer's cached value");
+  const selected = symbol.checkerId === undefined ? symbol : reacquireCachedLateBoundSymbol(source, producer, symbol);
+  if (selected === undefined) return undefined;
+  if (symbol.checkerId === undefined && source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native function value requires the same actual Program");
+  const result = Checker_getTypeOfSymbol(producer, selected);
+  if (result === undefined || result.checker !== producer || result.symbol !== selected
+    || LinkStore_TryGet(producer.valueSymbolLinks, selected)?.resolvedType !== result)
+    throw new TypeError("The actual function symbol retains its target producer's cached value");
   return result;
 }
 
