@@ -7,11 +7,16 @@ import { Background } from "../go/context.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
 import { Checker_getTargetOfAliasDeclaration } from "../internal/checker/checker/symbols.js";
+import { maxSerializationLevel } from "../internal/checker/checker.js";
+import { Checker_resolveExternalModule } from "../internal/checker/checker/modules.js";
+import { LinkStore_TryGet } from "../internal/core/linkstore.js";
+import { Node_Text } from "../internal/ast/ast.js";
+import { Cannot_find_module_0_or_its_corresponding_type_declarations } from "../internal/diagnostics/generated/messages.js";
 
 const compilerOptions = { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024" };
 
-function open(files: Record<string, string>, options: Record<string, unknown> = {}) {
-  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles: Object.keys(files), compilerOptions: { ...compilerOptions, ...options } });
+function open(files: Record<string, string>, options: Record<string, unknown> = {}, rootFiles: readonly string[] = Object.keys(files)) {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles, compilerOptions: { ...compilerOptions, ...options } });
   const checked = session.checkSource();
   const ast = checked.ast;
   const queries = (fileName: string) => {
@@ -64,6 +69,147 @@ function declarations(symbol: Symbol | undefined): readonly Node[] {
 function sameNodes(left: readonly Node[], right: readonly Node[]): boolean {
   return left.length === right.length && left.every((node, index) => node === right[index]);
 }
+
+for (const count of [1, 4]) test(`failed module alias answers retain the emitted original module cause with ${count} checkers`, () => {
+  const files = {
+    "/case/first.mts": "import { missing, other } from './absent.mjs';",
+    "/case/second.mts": "import defaulted from './absent.mjs';",
+    "/case/third.mts": "import * as namespace from './absent.mjs';",
+    "/case/fourth.mts": "export { missing } from './absent.mjs';",
+    "/case/plain.mts": "const local = 1;",
+    "/case/fifth.mts": "import { missing } from './plain.mjs';",
+    "/case/good.mts": "export const available = 1;",
+    "/case/sixth.mts": "import { available } from './good.mjs';",
+    "/case/seventh.cts": "import external = require('./absent.cjs');",
+    "/case/eighth.mts": "export * as external from './absent.mjs';",
+  };
+  const program = open(files, { checkers: count });
+  const roots = program.session.getDiagnostics("all");
+  const members = roots.flatMap(diagnostic => {
+    if (diagnostic === undefined) throw new Error("The actual diagnostic root inventory is dense");
+    return getDiagnosticRunMembers(diagnostic);
+  });
+  const selections = [
+    ["/case/first.mts", "ImportSpecifier", "missing"],
+    ["/case/first.mts", "ImportSpecifier", "other"],
+    ["/case/second.mts", "ImportClause", "defaulted"],
+    ["/case/third.mts", "NamespaceImport", "* as namespace"],
+    ["/case/fourth.mts", "ExportSpecifier", "missing"],
+    ["/case/fifth.mts", "ImportSpecifier", "missing"],
+    ["/case/seventh.cts", "ImportEqualsDeclaration", "import external = require('./absent.cjs');"],
+    ["/case/eighth.mts", "NamespaceExport", "* as external"],
+  ] as const;
+  const rows = selections.map(([file, kind, text]) => {
+    const view = program.queries(file);
+    const declaration = program.only(view.sourceFile, kind, text);
+    const symbol = view.checker.getSymbolAtLocation(program.nameOf(declaration));
+    if (symbol === undefined) throw new Error("The actual module alias retains its binding symbol");
+    return { ...view, symbol };
+  });
+  for (const order of [rows, [...rows].reverse()]) for (const row of order) {
+    const answer = row.checker.getAliasStep(row.symbol);
+    assert.equal(answer?.kind === "unresolved", true, "a failed module answer retains its actual emitted cause");
+    if (answer?.kind !== "unresolved") throw new Error("The module failure requires its original cause");
+    assert.equal(answer.cause.file === row.sourceFile && members.includes(answer.cause), true,
+      "the cause belongs to this actual file and the already-published run");
+    const repeated = row.checker.getAliasStep(row.symbol);
+    assert.equal(repeated?.kind === "unresolved" && repeated.cause === answer.cause, true, "repeated module answer identity");
+  }
+  const first = rows[0];
+  const second = rows[1];
+  if (first === undefined || second === undefined) throw new Error("Both actual bindings share the same failed module selection");
+  const firstAnswer = first.checker.getAliasStep(first.symbol);
+  const secondAnswer = second.checker.getAliasStep(second.symbol);
+  assert.equal(firstAnswer?.kind === "unresolved" && secondAnswer?.kind === "unresolved"
+    && firstAnswer.cause === secondAnswer.cause, true, "two bindings preserve the one actual module producer cause");
+  const after = program.session.getDiagnostics("all").flatMap(diagnostic => {
+    if (diagnostic === undefined) throw new Error("The actual diagnostic root inventory is dense");
+    return getDiagnosticRunMembers(diagnostic);
+  });
+  assert.equal(after.length === members.length && after.every((diagnostic, index) => diagnostic === members[index]), true,
+    "module answer reads never re-emit even a deduplicated diagnostic");
+  const good = program.queries("/case/sixth.mts");
+  const goodSymbol = good.checker.getSymbolAtLocation(program.nameOf(program.only(good.sourceFile, "ImportSpecifier", "available")));
+  assert.equal(good.checker.getAliasStep(goodSymbol)?.kind === "symbol", true, "successful module binding remains a symbol");
+  const suppressed = open({ "/case/u.mts": files["/case/first.mts"] }, { noCheck: true, checkers: count });
+  const absentRoots = suppressed.session.getDiagnostics("all");
+  const view = suppressed.queries("/case/u.mts");
+  const symbol = view.checker.getSymbolAtLocation(suppressed.nameOf(suppressed.only(view.sourceFile, "ImportSpecifier", "missing")));
+  assert.equal(view.checker.getAliasStep(symbol) === undefined, true, "a missing original module diagnostic stays unavailable");
+  assert.equal(view.checker.getAliasStep(symbol) === undefined, true, "an unavailable repeated view cannot acquire a new cause");
+  const absentAfter = suppressed.session.getDiagnostics("all");
+  assert.equal(absentAfter.length === absentRoots.length && absentAfter.every((root, index) => root === absentRoots[index]), true,
+    "a no-check view does not create diagnostics that its original producer never emitted");
+  assert.equal(rows[0]?.checker.getAliasStep(symbol) === undefined, true, "a foreign Program cannot supply a module cause");
+});
+
+for (const count of [1, 4]) test(`failed implicit-any module answers retain only the original error with ${count} checkers`, () => {
+  const files = { "/case/u.mts": "import { value } from './untyped.js'; export { value };", "/case/untyped.js": "exports.value = 1;" };
+  const program = open(files, { checkers: count }, ["/case/u.mts"]);
+  const view = program.queries("/case/u.mts");
+  const symbol = view.checker.getSymbolAtLocation(program.nameOf(program.only(view.sourceFile, "ImportSpecifier", "value")));
+  const members = program.session.getDiagnostics("all").flatMap(root => {
+    if (root === undefined) throw new Error("The actual diagnostic roots are dense");
+    return getDiagnosticRunMembers(root);
+  });
+  assert.equal(members.length > 0, true, "the actual untyped module produces its original error");
+  const answer = view.checker.getAliasStep(symbol);
+  assert.equal(answer?.kind === "unresolved", true, "the actual error answer retains its original cause");
+  if (answer?.kind !== "unresolved") throw new Error("The implicit-any failure requires its actual original cause");
+  assert.equal(answer.cause.file === view.sourceFile && members.includes(answer.cause), true,
+    "the exact cause belongs to its actual file and published run");
+  const repeated = view.checker.getAliasStep(symbol);
+  assert.equal(repeated?.kind === "unresolved" && repeated.cause === answer.cause, true, "repeat does not produce a replacement cause");
+  const after = program.session.getDiagnostics("all").flatMap(root => {
+    if (root === undefined) throw new Error("The actual diagnostic roots are dense");
+    return getDiagnosticRunMembers(root);
+  });
+  assert.equal(after.length === members.length && after.every((diagnostic, index) => diagnostic === members[index]), true,
+    "implicit-any answer reads never re-emit or reconstruct diagnostics");
+  for (const options of [{ strict: false, noImplicitAny: false }, { noCheck: true }]) {
+    const nonerror = open(files, { ...options, checkers: count }, ["/case/u.mts"]);
+    const before = nonerror.session.getDiagnostics("all");
+    const selected = nonerror.queries("/case/u.mts");
+    const binding = selected.checker.getSymbolAtLocation(nonerror.nameOf(nonerror.only(selected.sourceFile, "ImportSpecifier", "value")));
+    assert.equal(selected.checker.getAliasStep(binding) === undefined, true, "a non-error or missing original is not fabricated into a cause");
+    assert.equal(selected.checker.getAliasStep(binding) === undefined, true, "repeated non-error view stays unavailable");
+    const current = nonerror.session.getDiagnostics("all");
+    assert.equal(current.length === before.length && current.every((root, index) => root === before[index]), true,
+      "the non-error view preserves its actual root inventory");
+  }
+});
+
+for (const untyped of [false, true]) test(`a suppressed native module failure cannot retain an un-emitted diagnostic, untyped=${untyped}`, () => {
+  const target = untyped ? "./untyped.js" : "./absent.mjs";
+  const source = `import { missing } from '${target}';`;
+  const program = open({ "/case/u.mts": source, "/case/untyped.js": "exports.missing = 1;" }, {}, ["/case/u.mts"]);
+  const view = program.queries("/case/u.mts");
+  const declaration = program.only(view.sourceFile, "ImportDeclaration", source);
+  const specifier = program.only(view.sourceFile, "StringLiteral", `'${target}'`);
+  const nativeProgram = program.session.program;
+  if (nativeProgram === undefined) throw new Error("The original module failure requires its actual native Program");
+  const roots = program.session.getDiagnostics("all");
+  const [owner, release] = Program_GetTypeCheckerForFileExclusive(nativeProgram,
+    WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), view.sourceFile);
+  if (owner === undefined) throw new Error("The actual checker producer must remain available");
+  const level = owner.serializationLevel;
+  try {
+    assert.equal(LinkStore_TryGet(owner.nodeLinks, specifier)?.externalModuleFailure !== undefined, true,
+      "the prior actual producer retained its emitted cause");
+    owner.serializationLevel = maxSerializationLevel;
+    assert.equal(Checker_resolveExternalModule(owner, declaration, Node_Text(specifier),
+      Cannot_find_module_0_or_its_corresponding_type_declarations, specifier, false) === undefined, true,
+    "the native resolution still has no successful target");
+    assert.equal(LinkStore_TryGet(owner.nodeLinks, specifier)?.externalModuleFailure === undefined, true,
+      "the new suppressed producer replaces rather than reuses the old original cause");
+  } finally {
+    owner.serializationLevel = level;
+    release();
+  }
+  const after = program.session.getDiagnostics("all");
+  assert.equal(after.length === roots.length && after.every((root, index) => root === roots[index]), true,
+    "suppression did not publish or reconstruct a diagnostic");
+});
 
 for (const count of [1, 4]) test(`failed immediate alias answers retain only their original member causes with ${count} checkers`, () => {
   const program = open({
@@ -443,10 +589,14 @@ test("getAliasStep over a module whose export = does not resolve: every binding 
   const { bindingOf } = walker(program);
   const diagnosticsBefore = program.session.getDiagnostics("all").length;
 
-  // The failing alias itself: nothing from either query.
   const inner = bindingOf("/case/eqm.cts", "ImportEqualsDeclaration", "import inner = require(\"./missing.cjs\");");
   assert.deepEqual(inner.steps, []);
-  assert.ok(inner.first === undefined, "the failing alias itself has no step");
+  assert.equal(inner.first?.kind === "unresolved", true, "the failing alias retains its original module cause");
+  if (inner.first?.kind !== "unresolved") throw new Error("The failing native alias requires its original cause");
+  const innerCause = inner.first.cause;
+  assert.equal(program.session.getDiagnostics("all").some(diagnostic => diagnostic !== undefined
+    && getDiagnosticRunMembers(diagnostic).includes(innerCause)), true,
+    "the failed assignment dependency retains its actual published root");
   assert.ok(inner.target === undefined, "the failing alias itself has no final target");
 
   // Every form reaches the failing alias by steps: the assignment, then the import that does not resolve. The final
@@ -466,9 +616,8 @@ test("getAliasStep over a module whose export = does not resolve: every binding 
   assert.deepEqual(km.steps, ["member of [/case/eqm.cts:KindExportAssignment:export = inner;]: nothing"]);
   assert.ok(km.target === undefined, "a named member of an unresolved export = has no final target");
 
-  // The opposite: a module that does not resolve at all has no boundary; the step is nothing.
   const gone = bindingOf("/case/u.mts", "ImportSpecifier", "gone");
-  assert.ok(gone.first === undefined, "a module that does not resolve gives no step");
+  assert.equal(gone.first?.kind === "unresolved", true, "an unresolved module has its original cause, not an export boundary");
   assert.ok(gone.target === undefined, "a module that does not resolve gives no final target");
 
   assert.equal(program.session.getDiagnostics("all").length, diagnosticsBefore, "the query reports no diagnostic");

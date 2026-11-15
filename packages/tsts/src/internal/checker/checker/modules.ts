@@ -38,6 +38,7 @@ import { Checker_errorNoModuleMemberSymbol, Checker_getMergedSymbol, Checker_get
 import type { Checker } from "./state.js";
 import { resolutionExtensionIsTSOrJson } from "./state.js";
 import { Checker_addDiagnostic } from "../checker.js";
+import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.mergeModuleAugmentation","kind":"method","status":"implemented","sigHash":"2180b8be90753b343b6f30f261b683d348387d3a1b55268c2d0ae7421d6dbeae","bodyHash":"a6bc03af285f7b6510ad1b0f4c130967a7b3531d8d19adfcfacf8d96144f8681"}
@@ -623,6 +624,8 @@ export function Checker_getEmitSyntaxForModuleSpecifierExpression(receiver: GoPt
  * }
  */
 export function Checker_resolveExternalModule(receiver: GoPtr<Checker>, location: GoPtr<Node>, moduleReference: string, moduleNotFoundError: GoPtr<Message>, errorNode: GoPtr<Node>, isForAugmentation: bool): GoPtr<Symbol> {
+  const retained = errorNode === undefined ? undefined : LinkStore_TryGet(receiver!.nodeLinks, errorNode);
+  if (retained !== undefined) delete retained.externalModuleFailure;
   if (errorNode !== undefined && moduleReference.startsWith("@types/")) {
     const withoutAtTypePrefix = moduleReference.slice("@types/".length);
     Checker_error(receiver, errorNode, Cannot_import_type_declaration_files_Consider_importing_0_instead_of_1, withoutAtTypePrefix, moduleReference);
@@ -828,7 +831,8 @@ export function Checker_resolveExternalModule(receiver: GoPtr<Checker>, location
       return Checker_getMergedSymbol(receiver, sourceFileSymbol);
     }
     if (errorNode !== undefined && moduleNotFoundError !== undefined && !isSideEffectImport(errorNode)) {
-      Checker_error(receiver, errorNode, File_0_is_not_a_module, resolvedModule!.ResolvedFileName);
+      const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, File_0_is_not_a_module, resolvedModule!.ResolvedFileName));
+      if (failure !== undefined) LinkStore_Get(receiver!.nodeLinks, errorNode)!.externalModuleFailure = failure;
     }
     return undefined;
   }
@@ -850,17 +854,18 @@ export function Checker_resolveExternalModule(receiver: GoPtr<Checker>, location
 
   if ((ResolvedModule_IsResolved(resolvedModule) && !ResolvedModule_IsProviderVirtual(resolvedModule) && !resolutionExtensionIsTSOrJson(resolvedModule!.Extension) && resolutionDiagnostic === undefined) ||
     resolutionDiagnostic === Could_not_find_a_declaration_file_for_module_0_1_implicitly_has_an_any_type) {
+    let failure: GoPtr<Diagnostic>;
     if (isForAugmentation) {
-      Checker_error(
-        receiver,
+      failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(
         errorNode,
         Invalid_module_name_in_augmentation_Module_0_resolves_to_an_untyped_module_at_1_which_cannot_be_augmented,
         moduleReference,
         resolvedModule!.ResolvedFileName,
-      );
+      ));
     } else {
-      Checker_errorOnImplicitAnyModule(receiver, receiver!.noImplicitAny && moduleNotFoundError !== undefined, errorNode, mode, resolvedModule, moduleReference);
+      failure = Checker_errorOnImplicitAnyModule(receiver, receiver!.noImplicitAny && moduleNotFoundError !== undefined, errorNode, mode, resolvedModule, moduleReference);
     }
+    if (failure !== undefined) LinkStore_Get(receiver!.nodeLinks, errorNode)!.externalModuleFailure = failure;
     return undefined;
   }
 
@@ -868,33 +873,36 @@ export function Checker_resolveExternalModule(receiver: GoPtr<Checker>, location
     if (ResolvedModule_IsResolved(resolvedModule)) {
       const redirect = receiver!.program.GetProjectReferenceFromSource(ToPath(resolvedModule!.ResolvedFileName, receiver!.program.GetCurrentDirectory(), receiver!.program.UseCaseSensitiveFileNames()));
       if (redirect !== undefined && redirect.OutputDts !== "") {
-        Checker_error(receiver, errorNode, Output_file_0_has_not_been_built_from_source_file_1, redirect.OutputDts, resolvedModule!.ResolvedFileName);
+        const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, Output_file_0_has_not_been_built_from_source_file_1, redirect.OutputDts, resolvedModule!.ResolvedFileName));
+        if (failure !== undefined) LinkStore_Get(receiver!.nodeLinks, errorNode)!.externalModuleFailure = failure;
         return undefined;
       }
     }
 
+    let failure: GoPtr<Diagnostic>;
     if (resolutionDiagnostic !== undefined) {
-      Checker_error(receiver, errorNode, resolutionDiagnostic, moduleReference, resolvedModule?.ResolvedFileName ?? "");
+      failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, resolutionDiagnostic, moduleReference, resolvedModule?.ResolvedFileName ?? ""));
     } else {
       const isExtensionlessRelativePathImport = PathIsRelative(moduleReference) && !HasExtension(moduleReference);
       const resolutionIsNode16OrNext = receiver!.moduleResolutionKind === ModuleResolutionKindNode16 || receiver!.moduleResolutionKind === ModuleResolutionKindNodeNext;
       if (!CompilerOptions_GetResolveJsonModule(receiver!.compilerOptions) && FileExtensionIs(moduleReference, ExtensionJson)) {
-        Checker_error(receiver, errorNode, Cannot_find_module_0_Consider_using_resolveJsonModule_to_import_module_with_json_extension, moduleReference);
+        failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, Cannot_find_module_0_Consider_using_resolveJsonModule_to_import_module_with_json_extension, moduleReference));
       } else if (mode === ResolutionModeESM && resolutionIsNode16OrNext && isExtensionlessRelativePathImport) {
         const absoluteRef = GetNormalizedAbsolutePath(moduleReference, GetDirectoryPath(SourceFile_FileName(importingSourceFile)));
         const suggestedExt = Checker_getSuggestedImportExtension(receiver, absoluteRef);
         if (suggestedExt !== "") {
-          Checker_error(receiver, errorNode, Relative_import_paths_need_explicit_file_extensions_in_ECMAScript_imports_when_moduleResolution_is_node16_or_nodenext_Did_you_mean_0, moduleReference + suggestedExt);
+          failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, Relative_import_paths_need_explicit_file_extensions_in_ECMAScript_imports_when_moduleResolution_is_node16_or_nodenext_Did_you_mean_0, moduleReference + suggestedExt));
         } else {
-          Checker_error(receiver, errorNode, Relative_import_paths_need_explicit_file_extensions_in_ECMAScript_imports_when_moduleResolution_is_node16_or_nodenext_Consider_adding_an_extension_to_the_import_path);
+          failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, Relative_import_paths_need_explicit_file_extensions_in_ECMAScript_imports_when_moduleResolution_is_node16_or_nodenext_Consider_adding_an_extension_to_the_import_path));
         }
       } else if (resolvedModule !== undefined && resolvedModule.AlternateResult !== "") {
         const errorInfo = Checker_createModuleNotFoundChain(receiver, resolvedModule, errorNode, moduleReference, mode, moduleReference);
-        Checker_addDiagnostic(receiver, NewDiagnosticChainForNode(errorInfo, errorNode, moduleNotFoundError, moduleReference));
+        failure = Checker_addDiagnostic(receiver, NewDiagnosticChainForNode(errorInfo, errorNode, moduleNotFoundError, moduleReference));
       } else {
-        Checker_error(receiver, errorNode, moduleNotFoundError, moduleReference);
+        failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorNode, moduleNotFoundError, moduleReference));
       }
     }
+    if (failure !== undefined) LinkStore_Get(receiver!.nodeLinks, errorNode)!.externalModuleFailure = failure;
   }
 
   return undefined;

@@ -4436,6 +4436,7 @@ export function Checker_resolveExternalModuleTypeByLiteral(receiver: GoPtr<Check
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.errorOnImplicitAnyModule","kind":"method","status":"implemented","sigHash":"25f4f2ad1fc8a64d2e3724ec143e55738e84c3603916e8c4c6fa0b9f23f3fb79","bodyHash":"3714b02d8d2d3784717c2541354f2e439685a3262aa18a951754ab7d84890a15"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Transport only the same actually emitted original error Diagnostic through the existing native helper; a suggestion, suppressed error or absent producer returns no cause.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/core/compileroptions.ts::ResolutionMode,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedModule>,string)=>void","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/core/compileroptions.ts::ResolutionMode,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/module/types.ts::ResolvedModule>,string)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>"}
  *
  * Go source:
  * func (c *Checker) errorOnImplicitAnyModule(isError bool, errorNode *ast.Node, mode core.ResolutionMode, resolvedModule *module.ResolvedModule, moduleReference string) {
@@ -4459,16 +4460,16 @@ export function Checker_resolveExternalModuleTypeByLiteral(receiver: GoPtr<Check
  * 	)
  * }
  */
-export function Checker_errorOnImplicitAnyModule(receiver: GoPtr<Checker>, isError: bool, errorNode: GoPtr<Node>, mode: ResolutionMode, resolvedModule: GoPtr<ResolvedModule>, moduleReference: string): void {
+export function Checker_errorOnImplicitAnyModule(receiver: GoPtr<Checker>, isError: bool, errorNode: GoPtr<Node>, mode: ResolutionMode, resolvedModule: GoPtr<ResolvedModule>, moduleReference: string): GoPtr<Diagnostic> {
   if (isSideEffectImport(errorNode)) {
-    return;
+    return undefined;
   }
 
   let errorInfo: GoPtr<Diagnostic>;
   if (!IsExternalModuleNameRelative(moduleReference) && resolvedModule!.PackageId.Name !== "") {
     errorInfo = Checker_createModuleNotFoundChain(receiver, resolvedModule, errorNode, moduleReference, mode, resolvedModule!.PackageId.Name);
   }
-  Checker_addErrorOrSuggestion(
+  return Checker_addErrorOrSuggestion(
     receiver,
     isError,
     NewDiagnosticChainForNode(

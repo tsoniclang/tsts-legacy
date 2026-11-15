@@ -351,6 +351,7 @@ export function Checker_checkCollisionWithGlobalObjectInGeneratedCode(receiver: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.addDiagnostic","kind":"method","status":"implemented","sigHash":"c245f83ad6b1b61ff59661705c0c44e5d9f6ba820211ac05481f23f348039643","bodyHash":"509c27d0820361e19284d0e8ddf566cb737624a6de87e5387aef246b02dfbe6e"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Return the same original Diagnostic only from the existing actual publication arm so an answer producer cannot retain a suppressed diagnostic as a cause.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>)=>void","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>"}
  *
  * Go source:
  * func (c *Checker) addDiagnostic(diagnostic *ast.Diagnostic) {
@@ -360,13 +361,15 @@ export function Checker_checkCollisionWithGlobalObjectInGeneratedCode(receiver: 
  * 	}
  * }
  */
-export function Checker_addDiagnostic(receiver: GoPtr<Checker>, diagnostic: GoPtr<Diagnostic>): void {
+export function Checker_addDiagnostic(receiver: GoPtr<Checker>, diagnostic: GoPtr<Diagnostic>): GoPtr<Diagnostic> {
   // Discard diagnostics created while at the maximum number of recursive TypeToString invocations.
   if (receiver!.serializationLevel < maxSerializationLevel) {
     observeBackingDiagnostic(receiver!, diagnostic);
     observePublishedDiagnostic(receiver!, diagnostic);
     DiagnosticsCollection_Add(receiver!.diagnostics, diagnostic);
+    return diagnostic;
   }
+  return undefined;
 }
 
 /**
