@@ -7,7 +7,7 @@ import { hasDotDotDotToken } from "../internal/checker/utilities.js";
 import { Node_Symbol } from "../internal/ast/ast.js";
 import { IsBindingElement, IsObjectBindingPattern, IsObjectLiteralExpression } from "../internal/ast/generated/predicates.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { ObjectFlagsObjectRestType, TypeFlagsObject } from "../internal/checker/types.js";
+import { ObjectFlagsObjectRestType, TypeFlagsObject, TypeFlagsUnion, Type_Types } from "../internal/checker/types.js";
 import type { Type } from "../internal/checker/types.js";
 
 export function reacquireExpressionConstruction(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
@@ -45,6 +45,26 @@ export function reacquireContextWidening(producer: Checker, type: Type, normaliz
     throw new TypeError("A contextual widening retains its actual source root and producing checker");
   const originalKey = contextWideningKey(derivation.root, derivation.path, derivation.source);
   if (originalKey === undefined || source.contextWidened?.get(originalKey) !== type) return undefined;
+  const widened = source.cachedTypes.get({ kind: CachedTypeKindWidened, typeId: derivation.root.id });
+  if (widened?.derivation?.kind === "inferred-at") {
+    const selected = normalize(widened);
+    if (selected.checker !== producer) throw new TypeError("The actual inferred argument is normalized by its target producer");
+    const members = (selected.flags & TypeFlagsUnion) !== 0 ? Type_Types(selected) : [selected];
+    let result: Type | undefined;
+    for (const member of members ?? []) {
+      const record = member?.derivation;
+      if (record?.kind !== "widened-in" || record.root.checker !== producer
+        || producer.cachedTypes.get({ kind: CachedTypeKindWidened, typeId: record.root.id }) !== selected) continue;
+      const key = contextWideningKey(record.root, derivation.path, derivation.source);
+      const value = key === undefined ? undefined : producer.contextWidened?.get(key);
+      if (value === undefined) continue;
+      if (value.checker !== producer || result !== undefined && result !== value)
+        throw new Error("The actual inferred widening retains one result for its source literal and property path");
+      result = value;
+    }
+    if (result === undefined) throw new Error("The actual inferred argument retains its context-produced member");
+    return result;
+  }
   const root = normalize(derivation.root);
   const input = normalize(derivation.source);
   if (root.checker !== producer || input.checker !== producer)

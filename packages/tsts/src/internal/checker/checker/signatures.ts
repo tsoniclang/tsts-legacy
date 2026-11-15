@@ -15,7 +15,7 @@ import {
   selectedCallFrameInferenceJournal,
 } from "./selected-call-evidence-transaction.js";
 import type { SelectedCallEvidenceFrame } from "./selected-call-evidence-transaction.js";
-import { selectedCallInferenceEvidence, withSelectedCallInferenceOrigin, withSelectedCallInferenceProjection } from "./selected-call-inference-evidence.js";
+import { retainContextualArgumentOwners, selectedCallInferenceEvidence, withSelectedCallInferenceOrigin, withSelectedCallInferenceProjection } from "./selected-call-inference-evidence.js";
 import { retainCallArgumentOrigins } from "./call-evidence.js";
 import { readOriginalSignature } from "../original-signature-evidence.js";
 import { callDeclarationOrder } from "../call-declaration-order.js";
@@ -2431,7 +2431,7 @@ export function Checker_isSymbolOrSymbolForCall(receiver: GoPtr<Checker>, node: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getResolvedSignature","kind":"method","status":"implemented","sigHash":"6e07804e3f703a58b1aa0928481fd12ea132aadd55c97ab134180b75f6514591","bodyHash":"74d5204a564f7e9db52bc5cb606cb05647d136732d76b5ef07aeb9e879c450c0"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"TS-Go's source-order and flow-loop signature cache arbitration is preserved exactly while immutable evidence from the same resolution attempt is committed, reused, or restored atomically with resolvedSignature."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"TS-Go's source-order and flow-loop signature cache arbitration is preserved exactly while immutable evidence from the same resolution attempt is committed, reused, or restored atomically with resolvedSignature. R5-18 retains only this final application's own contextual arguments, without overwriting call-free or previously owned derivations."}
  *
  * Go source:
  * func (c *Checker) getResolvedSignature(node *ast.Node, candidatesOutArray *[]*Signature, checkMode CheckMode) *Signature {
@@ -2529,6 +2529,8 @@ export function Checker_getResolvedSignature(receiver: GoPtr<Checker>, node: GoP
       throw new Error("Resolved call evidence does not belong to the source-order selected signature.");
     }
     if (receiver!.flowLoopStack.length === 0) {
+      if (selectedEvidence?.kind === "applicable")
+        retainContextualArgumentOwners(receiver!, node!, result!, selectedEvidence.selection.application);
       retainHigherOrderParameterOwners(node, result);
       if (selectedEvidence?.kind === "conditional-candidates") {
         for (const candidate of selectedEvidence.candidates)

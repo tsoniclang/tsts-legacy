@@ -1651,6 +1651,7 @@ export function TypeAlias_TypeArguments(receiver: GoPtr<TypeAlias>): GoSlice<GoP
 }
 
 export type TypeDerivation =
+  | { readonly kind: "inferred-at"; readonly at: Node; readonly index: number }
   | { readonly kind: "object-literal"; readonly node: Node; readonly mode: CheckMode }
   | { readonly kind: "regular-of" | "widened-from"; readonly source: Type }
   | { readonly kind: "widened-in"; readonly source: Type; readonly root: Type; readonly path: readonly string[] }

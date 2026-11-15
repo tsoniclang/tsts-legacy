@@ -1,7 +1,12 @@
 import type { InferenceContext, InferenceInfo } from "./state.js";
+import { CheckModeNormal } from "./state.js";
+import type { Checker } from "./state.js";
+import type { Node } from "../../ast/spine.js";
+import { IsCallOrNewExpression } from "../../ast/utilities.js";
 import { TypeFlagsUnion, Type_Types } from "../types.js";
 import type {
   ResolvedCallInferenceContribution,
+  ResolvedCallApplicationEvidence,
   ResolvedCallInferenceEvidence,
   ResolvedCallInferenceOrigin,
   ResolvedCallInferencePathPart,
@@ -367,4 +372,41 @@ function currentTrace(
   inferences: InferenceContext["inferences"],
 ): SelectedInferenceTrace | undefined {
   return journal?.complete ? journal.traces.findLast(trace => trace.context.inferences === inferences) : undefined;
+}
+
+function ownedContextualInput(type: Type, at: Node): boolean {
+  const pending = [type];
+  while (pending.length !== 0) {
+    const current = pending.pop();
+    if (current === undefined) throw new Error("Contextual construction inputs are dense");
+    const recipe = current.derivation;
+    if (recipe?.kind === "object-literal") {
+      if (recipe.mode === CheckModeNormal) continue;
+      for (let node: Node | undefined = recipe.node; node !== undefined; node = node.Parent) {
+        if (node === at) return true;
+        if (IsCallOrNewExpression(node)) break;
+      }
+    } else if (recipe?.kind === "regular-of" || recipe?.kind === "widened-from" || recipe?.kind === "widened-in") {
+      pending.push(recipe.source);
+    } else if (recipe === undefined && (current.flags & TypeFlagsUnion) !== 0) {
+      for (const member of Type_Types(current) ?? []) {
+        if (member === undefined) throw new Error("A contextual union retains every actual native member");
+        pending.push(member);
+      }
+    }
+  }
+  return false;
+}
+
+export function retainContextualArgumentOwners(checker: Checker, at: Node, signature: Signature,
+  application: ResolvedCallApplicationEvidence): void {
+  if (application.invocation !== at || application.instantiatedSignature !== signature || signature.checkerId !== checker.id)
+    throw new Error("A contextual argument belongs to its actual final selected application");
+  for (const [index, argument] of application.signatureTypeArguments.entries()) {
+    const value = argument.checkedArgument;
+    if (value === undefined || value.checker !== checker) continue;
+    const recipe = value.derivation;
+    if (recipe !== undefined && recipe.kind !== "regular-of" && recipe.kind !== "widened-from" && recipe.kind !== "widened-in") continue;
+    if (ownedContextualInput(value, at)) value.derivation = { kind: "inferred-at", at, index };
+  }
 }

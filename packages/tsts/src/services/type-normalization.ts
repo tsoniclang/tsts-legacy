@@ -4,6 +4,7 @@ import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normaliz
 import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireCompositeType } from "./type-normalization-composites.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
+import { reacquireContextualArgument } from "./type-normalization-contextual-arguments.js";
 import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireContextWidening, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
@@ -80,7 +81,8 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       types.set(type, selected);
       return selected;
     }
-    const result = reacquireBuiltinType(producer, type)
+    const result = reacquireContextualArgument(producer, type)
+      ?? reacquireBuiltinType(producer, type)
       ?? reacquireDeclaredType(producer, type)
       ?? reacquireRestrictiveParameter(producer, type, normalize)
       ?? reacquireMappedParameter(producer, type, normalize)
