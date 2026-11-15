@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
-import { SymbolFlagsAlias, createCompilerSessionFromFiles } from "../index.js";
+import { SymbolFlagsAlias, createCompilerSessionFromFiles, getDiagnosticRunMembers } from "../index.js";
 import type { Node, Symbol, TypeCheckerQueries } from "../index.js";
+import { Background } from "../go/context.js";
+import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
+import { Checker_getTargetOfAliasDeclaration } from "../internal/checker/checker/symbols.js";
 
 const compilerOptions = { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024" };
 
-function open(files: Record<string, string>) {
-  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles: Object.keys(files), compilerOptions });
+function open(files: Record<string, string>, options: Record<string, unknown> = {}) {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles: Object.keys(files), compilerOptions: { ...compilerOptions, ...options } });
   const checked = session.checkSource();
   const ast = checked.ast;
   const queries = (fileName: string) => {
@@ -61,6 +65,90 @@ function sameNodes(left: readonly Node[], right: readonly Node[]): boolean {
   return left.length === right.length && left.every((node, index) => node === right[index]);
 }
 
+for (const count of [1, 4]) test(`failed immediate alias answers retain only their original member causes with ${count} checkers`, () => {
+  const program = open({
+    "/case/m.mts": "export const known = 1; const hidden = 2; export default 3;",
+    "/case/plain.mts": "export const known = 1;",
+    "/case/first.mts": "import { missing, knwon, hidden } from './m.mjs'; export { missing, knwon, hidden };",
+    "/case/second.mts": "import { missing } from './m.mjs'; export { missing };",
+    "/case/reexport.mts": "export { missing as forwarded } from './plain.mjs';",
+    "/case/use.mts": "import { forwarded } from './reexport.mjs'; export { forwarded };",
+    "/case/good.mts": "import { known } from './m.mjs'; export { known };",
+  }, { checkers: count });
+  const before = program.session.getDiagnostics("all");
+  const originalMembers = before.flatMap(diagnostic => {
+    if (diagnostic === undefined) throw new Error("The actual published diagnostic inventory must be dense");
+    return getDiagnosticRunMembers(diagnostic);
+  });
+  const read = (file: string, kind: string, text: string) => {
+    const { sourceFile, checker } = program.queries(file);
+    const declaration = program.only(sourceFile, kind, text);
+    const symbol = checker.getSymbolAtLocation(program.nameOf(declaration));
+    if (symbol === undefined) throw new Error("An actual alias declaration requires its binding symbol");
+    return { checker, symbol, sourceFile, declaration, answer: checker.getAliasStep(symbol) };
+  };
+  const first = read("/case/first.mts", "ImportSpecifier", "missing");
+  const second = read("/case/second.mts", "ImportSpecifier", "missing");
+  const typo = read("/case/first.mts", "ImportSpecifier", "knwon");
+  const hidden = read("/case/first.mts", "ImportSpecifier", "hidden");
+  const reexport = read("/case/reexport.mts", "ExportSpecifier", "missing as forwarded");
+  const rows = [first, second, typo, hidden, reexport];
+  for (const order of [rows, [...rows].reverse()]) for (const row of order) {
+    if (row.answer?.kind !== "unresolved") throw new Error("The failed native immediate answer must retain its actual cause");
+    const cause = row.answer.cause;
+    assert.equal(cause.file === row.sourceFile, true, "the actual producer retains its original source object");
+    assert.equal(before.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(cause)), true,
+      "the cause is in the actual published run, without code/span reconstruction");
+    const repeated = row.checker.getAliasStep(row.symbol);
+    assert.equal(repeated?.kind === "unresolved" && repeated.cause === cause, true, "repeated answer identity");
+    assert.equal(row.checker.getAliasedSymbol(row.symbol) === undefined, true, "no fabricated successful target");
+  }
+  assert.equal(first.answer?.kind === "unresolved" && second.answer?.kind === "unresolved"
+    && first.answer.cause !== second.answer.cause, true, "equal names/messages do not merge producing lifetimes");
+  const use = read("/case/use.mts", "ImportSpecifier", "forwarded");
+  assert.equal(use.answer?.kind === "symbol" && use.answer.symbol === reexport.symbol, true,
+    "a retained intermediate binding edge is not replaced by the downstream error");
+  assert.equal(read("/case/good.mts", "ImportSpecifier", "known").answer?.kind, "symbol", "ordinary success remains a symbol");
+  assert.equal(first.checker.getAliasStep(undefined) === undefined, true, "absent input is not an error");
+  assert.equal(program.session.getDiagnostics("all").length, before.length, "answer reads do not re-emit diagnostics");
+  const afterMembers = program.session.getDiagnostics("all").flatMap(diagnostic => {
+    if (diagnostic === undefined) throw new Error("The actual published diagnostic inventory must remain dense");
+    return getDiagnosticRunMembers(diagnostic);
+  });
+  assert.equal(afterMembers.length === originalMembers.length
+    && afterMembers.every((diagnostic, index) => diagnostic === originalMembers[index]), true,
+    "forward and reverse view reads do not create even deduplicated replacement diagnostics");
+  const suppressed = open({
+    "/case/m.mts": "export const known = 1;",
+    "/case/u.mts": "import { missing } from './m.mjs'; export { missing };",
+  }, { noCheck: true });
+  const suppressedView = suppressed.queries("/case/u.mts");
+  const absentSymbol = suppressedView.checker.getSymbolAtLocation(suppressed.nameOf(suppressed.only(suppressedView.sourceFile, "ImportSpecifier", "missing")));
+  assert.equal(suppressedView.checker.getAliasStep(absentSymbol) === undefined, true,
+    "no emitted original diagnostic remains missing evidence, not an invented error");
+  const foreign = open({ "/case/m.mts": "export const known = 1;", "/case/u.mts": "import { missing } from './m.mjs'; export { missing };" });
+  const foreignView = foreign.queries("/case/u.mts");
+  const foreignSymbol = foreignView.checker.getSymbolAtLocation(foreign.nameOf(foreign.only(foreignView.sourceFile, "ImportSpecifier", "missing")));
+  assert.equal(first.checker.getAliasStep(foreignSymbol) === undefined, true, "a foreign Program cannot lend an original alias answer");
+  const nativeProgram = program.session.program;
+  if (nativeProgram === undefined) throw new Error("The fixture requires its actual native Program");
+  const [owner, release] = Program_GetTypeCheckerForFileExclusive(nativeProgram,
+    WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), first.sourceFile);
+  try {
+    if (owner === undefined) throw new Error("The actual diagnostic producer must remain available");
+    assert.equal(Checker_getTargetOfAliasDeclaration(owner, first.declaration) === undefined, true,
+      "a genuine native re-evaluation still has no fabricated successful target");
+  } finally {
+    release();
+  }
+  const renewed = first.checker.getAliasStep(first.symbol);
+  assert.equal(renewed?.kind === "unresolved" && first.answer?.kind === "unresolved"
+    && renewed.cause !== first.answer.cause, true, "a new actual producer lifetime replaces the old failure, not first-record-wins");
+  if (renewed?.kind !== "unresolved") throw new Error("The renewed actual answer requires its own original cause");
+  assert.equal(program.session.getDiagnostics("all").some(diagnostic => diagnostic !== undefined
+    && getDiagnosticRunMembers(diagnostic).includes(renewed.cause)), true, "the renewed original appears in the actual published run");
+});
+
 // Two steps of the same kind whose symbols are one object.
 function stepsToSameSymbol(left: ReturnType<TypeCheckerQueries["getAliasStep"]>, right: ReturnType<TypeCheckerQueries["getAliasStep"]>): boolean {
   return left?.kind === "symbol" && right?.kind === "symbol" && left.symbol === right.symbol;
@@ -69,12 +157,12 @@ function stepsToSameSymbol(left: ReturnType<TypeCheckerQueries["getAliasStep"]>,
 // The step of a binding whose step is a symbol. A step of the other kind fails the case.
 function symbolStep(checker: TypeCheckerQueries, symbol: Symbol | undefined): Symbol | undefined {
   const step = checker.getAliasStep(symbol);
-  if (step === undefined) return undefined;
+  if (step === undefined || step.kind === "unresolved") return undefined;
   if (step.kind !== "symbol") throw new Error("A step that is a symbol was expected.");
   return step.symbol;
 }
 
-test("getAliasStep steps one alias at a time, closes a circular chain, and returns nothing without throwing for a non-alias and for a step that did not resolve", () => {
+test("getAliasStep steps one alias at a time, closes a circular chain, and retains the original failed immediate answer", () => {
   const program = open({
     "/case/m.mts": "export const a = 1;\n",
     "/case/r.mts": "export { a as b } from \"./m.mjs\";\n",
@@ -117,11 +205,17 @@ test("getAliasStep steps one alias at a time, closes a circular chain, and retur
   const viaZ = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ExportSpecifier", "z as viaZ")));
   assert.ok(symbolStep(checker, viaZ) === z, "a re-export of an import steps to that import binding");
 
-  // An alias whose member does not exist: flagged as an alias, and both queries return nothing.
   const nope = checker.getSymbolAtLocation(program.nameOf(program.only(sourceFile, "ImportSpecifier", "nope")));
   assert.equal(isAlias(nope), true);
   assert.ok(checker.getAliasedSymbol(nope) === undefined, "a missing member has no final target");
-  assert.ok(symbolStep(checker, nope) === undefined, "a missing member has no step");
+  const missing = checker.getAliasStep(nope);
+  assert.equal(missing?.kind, "unresolved", "a failed member retains its actual producing diagnostic");
+  if (missing?.kind !== "unresolved") throw new Error("The actual failed alias answer must carry its original cause");
+  assert.equal(program.checked.diagnostics.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(missing.cause)), true,
+    "the cause is an original member of an actual published diagnostic, never a code or span match");
+  const repeatedMissing = checker.getAliasStep(nope);
+  assert.equal(repeatedMissing?.kind === "unresolved" && repeatedMissing.cause === missing.cause, true,
+    "a repeated read borrows the same actual failure without emitting another diagnostic");
 
   // An import through a circular re-export: its final target is unresolved, and its steps lead into the cycle and
   // return to a symbol already visited. The cycle's members are the two export specifiers; the importer is not one.
@@ -161,8 +255,8 @@ function walker(program: ReturnType<typeof open>) {
     let current = symbol;
     for (let count = 0; count < 12; count += 1) {
       const step = checker.getAliasStep(current);
-      if (step === undefined) break;
-      const next = step.kind === "symbol" ? step.symbol : step.member;
+      if (step === undefined || step.kind === "unresolved") break;
+      const next = step.kind === "symbol" ? step.symbol : step.member?.kind === "symbol" ? step.member.symbol : undefined;
       if (step.kind === "exported-value-member") {
         steps.push(`member of [${describe(step.exportAssignment)}]: ${next === undefined ? "nothing" : row(next)}`);
       } else {
@@ -319,6 +413,12 @@ test("getAliasStep over a module with export =: every binding form steps to the 
   assert.deepEqual(absent.steps, ["member of [/case/eq.cts:KindExportAssignment:export = obj;]: nothing"]);
   assert.equal(absent.first?.kind === "exported-value-member" && absent.first.exportAssignment === (d.first?.kind === "symbol" ? d.first.symbol : undefined), true,
     "the boundary is the same assignment symbol the other forms step to");
+  assert.equal(absent.first?.kind === "exported-value-member" && absent.first.member?.kind === "unresolved", true,
+    "the failed member retains its original failure without erasing the exported-value boundary");
+  if (absent.first?.kind !== "exported-value-member" || absent.first.member?.kind !== "unresolved") throw new Error("A failed exported-value member requires its actual cause");
+  const absentCause = absent.first.member.cause;
+  assert.equal(program.checked.diagnostics.some(diagnostic => diagnostic !== undefined
+    && getDiagnosticRunMembers(diagnostic).includes(absentCause)), true, "the boundary's failed member retains an actual published original");
   assert.equal(absent.target, undefined);
 
   // The final target of a namespace import, in an ECMAScript-format file, of a CommonJS-format file is a symbol the
