@@ -3553,6 +3553,7 @@ export function Checker_hasEmptyObjectIntersection(receiver: GoPtr<Checker>, t: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkObjectLiteral","kind":"method","status":"implemented","sigHash":"76f563d67df11b553d680ffb6444ff025f6b4ee91def1549b368ae23496e6879","bodyHash":"9571affc8c9b52f6a243b629f696c4a557d4fe3118b672d3688976e1de2c96cf"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual node and check mode on fresh complete literal results only; spread fragments and shared results receive no cached-owner recipe."}
  *
  * Go source:
  * func (c *Checker) checkObjectLiteral(node *ast.Node, checkMode CheckMode) *Type {
@@ -3771,6 +3772,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     if (IsInJSFile(node) && !IsInJsonFile(node)) {
       result!.objectFlags |= ObjectFlagsJSLiteral;
     }
+    result!.derivation = { kind: "object-literal", node: node!, mode: checkMode };
     return result;
   }
   const inDestructuringPattern = IsAssignmentTarget(node);
@@ -3957,7 +3959,9 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
       return t;
     });
   }
-  return createObjectLiteralType();
+  const result = createObjectLiteralType();
+  result!.derivation = { kind: "object-literal", node: node!, mode: checkMode };
+  return result;
 }
 
 /**
@@ -5739,6 +5743,7 @@ export function Checker_getWidenedTypeWithContext(receiver: GoPtr<Checker>, t: G
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getWidenedTypeOfObjectLiteral","kind":"method","status":"implemented","sigHash":"163fdd0db7ac9e847f751cdde45ad5320063756fa71f541b20d428778db60e5e","bodyHash":"a679dbd3c5beb1e9122be6e722462b9c1bd4639acb00ddf20f4283d8eb2ef512"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual input on a fresh context-free widened result; contextual widening remains a distinct producer relation and native caches are unchanged."}
  *
  * Go source:
  * func (c *Checker) getWidenedTypeOfObjectLiteral(t *Type, context *WideningContext) *Type {
@@ -5800,6 +5805,7 @@ export function Checker_getWidenedTypeOfObjectLiteral(receiver: GoPtr<Checker>, 
     core.SameMap(Checker_getIndexInfosOfType(receiver, t), (info: GoPtr<IndexInfo>): GoPtr<IndexInfo> => Checker_newIndexInfo(receiver, info!.keyType, Checker_getWidenedType(receiver, info!.valueType), info!.isReadonly, info!.declaration, info!.components)),
   );
   result!.objectFlags = (result!.objectFlags | (t!.objectFlags & (ObjectFlagsJSLiteral | ObjectFlagsNonInferrableType))) as ObjectFlags;
+  if (context === undefined) result!.derivation = { kind: "widened-from", source: t! };
   if (context !== undefined && context!.parent !== undefined) {
     if (context!.widenedTypes === undefined) {
       context!.widenedTypes = new Map<GoPtr<Type>, GoPtr<Type>>();
@@ -13674,6 +13680,7 @@ export function Checker_extractTypesOfKind(receiver: GoPtr<Checker>, t: GoPtr<Ty
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getRegularTypeOfObjectLiteral","kind":"method","status":"implemented","sigHash":"10e0c21b3347afb7a4f90d581a2b5eb6ecc2bcb031e822d0e11ba57a001da004","bodyHash":"0e14797b79b92eb97f4339baf3724f09668e44b2ae0484e37b3b97715d21f9d5"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual source on the freshly allocated regular literal before its native cache publication; existing cached results are never rewritten."}
  *
  * Go source:
  * func (c *Checker) getRegularTypeOfObjectLiteral(t *Type) *Type {
@@ -13708,6 +13715,7 @@ export function Checker_getRegularTypeOfObjectLiteral(receiver: GoPtr<Checker>, 
   const resolvedType = (resolved as unknown as TypeData).AsType();
   regular!.flags = resolvedType!.flags;
   regular!.objectFlags |= (resolvedType!.objectFlags & ~ObjectFlagsFreshLiteral) as ObjectFlags;
+  regular!.derivation = { kind: "regular-of", source: t! };
   receiver!.cachedTypes.set(key, regular);
   return regular;
 }

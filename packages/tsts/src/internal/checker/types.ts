@@ -23,7 +23,7 @@ import {
 } from "../core/compileroptions.js";
 import type { Tristate } from "../core/tristate.js";
 import type { Result } from "../evaluator/evaluator.js";
-import type { CacheHashKey, Checker } from "./checker/state.js";
+import type { CacheHashKey, Checker, CheckMode } from "./checker/state.js";
 import { isTupleType } from "./checker/state.js";
 import type { TypeMapper } from "./mapper.js";
 import { ValueToString } from "./utilities.js";
@@ -1651,6 +1651,8 @@ export function TypeAlias_TypeArguments(receiver: GoPtr<TypeAlias>): GoSlice<GoP
 }
 
 export type TypeDerivation =
+  | { readonly kind: "object-literal"; readonly node: Node; readonly mode: CheckMode }
+  | { readonly kind: "regular-of" | "widened-from"; readonly source: Type }
   | { readonly kind: "restrictive"; readonly source: Type }
   | { readonly kind: "unique-inference"; readonly source: Type }
   | { readonly kind: "mapped-parameter"; readonly mapped: Type }
