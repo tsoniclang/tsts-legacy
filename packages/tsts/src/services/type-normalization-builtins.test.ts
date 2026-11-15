@@ -32,6 +32,7 @@ import type { Type } from "../internal/checker/types.js";
 import { checkerPool_as_compiler_CheckerPool, newCheckerPool } from "../internal/compiler/checkerpool.js";
 import type { checkerPool } from "../internal/compiler/checkerpool.js";
 import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normalization-builtins.js";
+import { createTypeNormalization } from "./type-normalization.js";
 import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
@@ -164,8 +165,18 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
     const wrapped = createCompilerSessionFromProgram(program, session.host, session.config);
     assert.equal(wrapped.program === program, true);
     assert.equal(wrapped.checkSource().diagnostics.length, 0);
+    const foreign = createCompilerSessionFromFiles({ currentDirectory: "/builtins", includeBundledLibraries: false,
+      files: { "/builtins/a.ts": "export const a = 1;" },
+      compilerOptions: { ...testNoLibCompilerOptions, checkers: 1 } });
+    foreign.checkSource();
+    const foreignOwner = foreign.program?.compilerCheckerPool?.checkers[0];
+    if (foreignOwner === undefined || foreignOwner.anyType === undefined) throw new Error("The foreign Program requires its actual native producer");
+    const foreignAny = foreignOwner.anyType;
     for (const source of owners) for (const producer of owners) {
       assert.equal(source.program.SourceFiles() === producer.program.SourceFiles(), true, "actual same-Program outer admission");
+      const normalization = createTypeNormalization(producer);
+      assert.throws(() => normalization.type(foreignAny),
+        error => error instanceof TypeError && error.message === "Native type normalization requires the same actual Program");
       for (const anchor of anchors) {
         const original = source[anchor];
         const expected = producer[anchor];
@@ -173,6 +184,8 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         assert.equal(original.checker === source, true, anchor);
         assert.equal(reacquireBuiltinType(producer, original) === expected, true, anchor);
         assert.equal(reacquireBuiltinType(producer, original) === expected, true, `${anchor}: repeated exact acquisition`);
+        assert.equal(normalization.type(original) === expected, true, `${anchor}: unwired dispatcher uses the same closed construction`);
+        assert.equal(normalization.type(original) === expected, true, `${anchor}: repeated dispatcher identity`);
       }
       assert.equal(source.anyType === source.wildcardType, false, "same native flags/name do not make the roles identical");
       assert.equal(source.undefinedOrMissingType === (exactOptionalPropertyTypes ? source.missingType : source.undefinedType), true);
@@ -185,6 +198,8 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         "a different actual native construction is not guessed to be a builtin by flags or name");
       assert.throws(() => reacquireBuiltinType(producer, { ...constructed, checker: undefined }),
         error => error instanceof TypeError && error.message === "A native type construction requires its actual producer");
+      assert.throws(() => normalization.type({ ...constructed, checker: undefined }),
+        error => error instanceof TypeError && error.message === "Native type normalization requires its actual producing checker");
       for (const anchor of ["anySignature", "unknownSignature", "resolvingSignature", "silentNeverSignature"] as const) {
         const original = source[anchor];
         const expected = producer[anchor];
@@ -204,6 +219,7 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         const expected = Checker_getStringLiteralType(producer, value);
         if (original === undefined || expected === undefined) throw new Error("The native string constructors must return their values");
         assert.equal(reacquireLiteralType(producer, original) === expected, true);
+        assert.equal(normalization.type(original) === expected, true, "the dispatcher preserves the actual native literal construction");
         const fresh = Checker_getFreshTypeOfLiteralType(source, original);
         if (fresh === undefined) throw new Error("The native fresh constructor must return its value");
         assert.equal(reacquireLiteralType(producer, fresh) === Checker_getFreshTypeOfLiteralType(producer, expected), true);
@@ -283,6 +299,8 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
         };
         assert.equal(reacquireSignatureType(producer, originalIsolated, normalizeSignature) === expectedIsolated, true);
         assert.equal(reacquireSignatureType(producer, originalIsolated, normalizeSignature) === expectedIsolated, true);
+        assert.equal(normalization.type(originalIsolated) === expectedIsolated, true, "the dispatcher uses actual declared/cached signature inputs");
+        assert.equal(normalization.type(originalIsolated) === expectedIsolated, true, "the same isolated Type retains repeated identity");
         if (source !== producer) {
           assert.throws(() => cachedSignatureConstruction(producer, original), error => error instanceof TypeError);
           assert.throws(() => reacquireCachedSignature(producer, kind, sourceSignature), error => error instanceof TypeError);
