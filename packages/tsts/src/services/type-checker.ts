@@ -13,6 +13,7 @@ import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
 import { readInvocationReturnType } from "./signature-returns.js";
+import { withOwnedChecker } from "./checker-ownership.js";
 import type { TypeIndexInfo } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
@@ -77,8 +78,7 @@ import {
   Checker_getResolvedCallSelectionEvidence,
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
-import { CheckModeNormal, getNumberLiteralValue, getTypeReferenceName } from "../internal/checker/checker/state.js";
-import { KindExpressionWithTypeArguments, KindTypeReference } from "../internal/ast/generated/kinds.js";
+import { CheckModeNormal, getNumberLiteralValue } from "../internal/checker/checker/state.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import {
   Checker_GetAliasedSymbol,
@@ -381,17 +381,8 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         Program_IsSourceFileDefaultLibrary(program, SourceFile_Path(file));
     },
     getAwaitedType(type) {
-      if (type?.checker === undefined ||
-        Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
-      const owner = type.checker;
-      return withChecker(program, defaultOptions.sourceFile, defaultOptions, checker => {
-        if (checker === undefined) return undefined;
-        if (checker !== owner && checker.program !== owner.program) {
-          const extensionHost = getExtensionHost(checker.program);
-          if (extensionHost === undefined || extensionHost !== getExtensionHost(owner.program)) return undefined;
-        }
-        return Checker_getAwaitedType(owner, type);
-      });
+      return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+        defaultOptions.context ?? Background(), owner => Checker_getAwaitedType(owner, type));
     },
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
@@ -400,10 +391,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       return withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, checker => {
         const type = Checker_GetTypeFromTypeNode(checker, node);
         if (type === undefined) return undefined;
-        const name = node.Kind === KindTypeReference || node.Kind === KindExpressionWithTypeArguments
-          ? getTypeReferenceName(node) : undefined;
-        const cause = name === undefined ? undefined
-          : LinkStore_TryGet(checker!.symbolNodeLinks, name)?.resolutionFailure;
+        const cause = LinkStore_TryGet(checker!.typeNodeLinks, node)?.resolutionFailure;
         return { type, cause };
       });
     },

@@ -96,12 +96,12 @@ import { Checker_checkSourceElement, Checker_checkSourceElements, Checker_error,
 import { Checker_TypeToString, Checker_TypeToStringEx, Checker_symbolToString } from "../printer.js";
 import { Checker_checkGrammarForGenerator, Checker_checkGrammarFunctionLikeDeclaration, Checker_checkGrammarObjectLiteralExpression, Checker_checkGrammarTypeOperatorNode, Checker_checkGrammarRegularExpressionLiteral, Checker_grammarErrorOnNode, Checker_checkGrammarTaggedTemplateChain, Checker_checkGrammarTypeArguments, Checker_checkGrammarMethod, Checker_grammarErrorAtPos, Checker_checkGrammarMappedType } from "../grammarchecks.js";
 import type { LinkStore } from "../../core/linkstore.js";
-import { LinkStore_Get } from "../../core/linkstore.js";
+import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
 import { Checker_isYieldIteratorResult, Checker_isReturnIteratorResult, Checker_errorAndMaybeSuggestAwait, Checker_checkExpressionEx, Checker_checkExpression, Checker_checkExpressionForMutableLocation, Checker_checkExpressionCached, Checker_checkExpressionCachedEx, Checker_checkNodeDeferred, Checker_checkReturnExpression, Checker_getCombinedNodeFlagsCached, Checker_getContextNode, Checker_functionHasImplicitReturn, Checker_findContextualNode } from "./syntax-checking.js";
 import { Checker_checkTruthinessExpression, Checker_checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType, Checker_removeDefinitelyFalsyTypes, Checker_getConditionalFlowTypeOfType, Checker_getFlowTypeOfDestructuring, Checker_isPossiblyDiscriminantValue, Checker_isDiscriminantWithNeverType } from "./flow-narrowing.js";
 import { Checker_checkPropertyAssignment, Checker_checkShorthandPropertyAssignment, Checker_isTypeAssignableToKind, Checker_allTypesAssignableToKind, Checker_allTypesAssignableToKindEx, Checker_removeSubtypes, Checker_removeRedundantSupertypes, Checker_getSingleBaseForNonAugmentingSubtype, Checker_getContextualTypeForAssignmentExpression } from "./relations.js";
 import { Checker_getBaseConstraintOrType } from "./inference.js";
-import { instantiateList } from "./state.js";
+import { getTypeReferenceName, instantiateList } from "./state.js";
 import { IterationUseForAwaitOf, IterationUseForOf } from "./state.js";
 import { SkipParentheses, SkipTypeParentheses, IsRightSideOfQualifiedNameOrPropertyAccess, FindAncestor, IsExpressionOfOptionalChainRoot, IsOptionalChain, IsOutermostOptionalChain, IsEntityName, IsStatic, IsInJSFile, IsInJsonFile, IsEntityNameExpression, GetFirstIdentifier, GetReparsedNodeForNode, IsFunctionExpressionOrArrowFunction, IsObjectLiteralMethod, SkipOuterExpressions, OEKAll, HasModifier, HasSyntacticModifier, GetClassLikeDeclarationOfSymbol, GetDeclarationOfKind, GetContainingFunction, FindAncestorOrQuit, FindAncestorTrue, FindAncestorFalse, FindAncestorQuit, IsAssertionExpression, GetSourceFileOfNode, WalkUpParenthesizedTypes, IsRequireCall, IsImportCall, IsLiteralExpression, IsBooleanLiteral, IsConstTypeReference, IsValidTypeOnlyAliasUseSite, NodeIsMissing, IsBindingPattern, IsPartOfParameterDeclaration, WalkUpBindingElementsAndPatterns, IsAutoAccessorPropertyDeclaration, IsComputedNonLiteralName, IsConstAssertion, IndexOfNode, HasDynamicName, GetNameOfDeclaration, IsPartOfTypeNode, ForEachReturnStatement, GetExtendsHeritageClauseElements, IsAssignmentTarget, HasContextSensitiveParameters, IsCheckJSEnabledForFile, IsTypeNodeKind, IsExternalOrCommonJSModule, TryGetClassImplementingOrExtendingExpressionWithTypeArguments, IsExpressionNode, IsTypeDeclaration, IsTypeDeclarationName, IsDeclaration, IsDeclarationNameOrImportPropertyName } from "../../ast/utilities.js";
 import { ScanTokenAtPosition, SkipTrivia, TokenToString } from "../../scanner/scanner.js";
@@ -8394,11 +8394,19 @@ export function Checker_getTypeFromTypeOperatorNode(receiver: GoPtr<Checker>, no
 export function Checker_getTypeFromTypeReference(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
   const links = LinkStore_Get<Node, TypeNodeLinks>(receiver!.typeNodeLinks as GoPtr<LinkStore<Node, TypeNodeLinks>>, node!);
   if (links!.resolvedType === undefined) {
+    delete links!.resolutionFailure;
     if (isConstTypeReference(node) && IsAssertionExpression(node!.Parent)) {
       links!.resolvedType = Checker_checkExpressionCached(receiver, Node_Expression(node!.Parent)!);
     } else {
       const intendedType = Checker_getIntendedTypeFromJSDocTypeReference(receiver, node);
-      links!.resolvedType = intendedType !== undefined ? intendedType : Checker_getTypeReferenceType(receiver, node, Checker_getSymbolFromTypeReference(receiver, node));
+      if (intendedType !== undefined) links!.resolvedType = intendedType;
+      else {
+        const symbol = Checker_getSymbolFromTypeReference(receiver, node);
+        const name = getTypeReferenceName(node);
+        const failure = name === undefined ? undefined : LinkStore_TryGet(receiver!.symbolNodeLinks, name)?.resolutionFailure;
+        if (failure !== undefined) links!.resolutionFailure = failure;
+        links!.resolvedType = Checker_getTypeReferenceType(receiver, node, symbol);
+      }
     }
   }
   return links!.resolvedType;
@@ -8644,7 +8652,10 @@ export function Checker_getTypeFromClassOrInterfaceReference(receiver: GoPtr<Che
         }
       }
       const typeStr = Checker_TypeToStringEx(receiver, t, undefined, TypeFormatFlagsWriteArrayAsGenericType, undefined);
-      Checker_error(receiver, node, message, typeStr, minTypeArgumentCount, typeParameters.length);
+      const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(node, message, typeStr, minTypeArgumentCount, typeParameters.length));
+      const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+      if (failure === undefined) delete links.resolutionFailure;
+      else links.resolutionFailure = failure;
       if (!isJs) {
         return receiver!.errorType;
       }

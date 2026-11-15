@@ -15957,7 +15957,10 @@ export function Checker_getTypeFromTypeAliasReference(receiver: GoPtr<Checker>, 
         Generic_type_0_requires_1_type_argument_s,
         Generic_type_0_requires_between_1_and_2_type_arguments,
       );
-      Checker_error(receiver, node, message, Checker_symbolToString(receiver, symbol_), minTypeArgumentCount, typeParameters.length);
+      const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(node, message, Checker_symbolToString(receiver, symbol_), minTypeArgumentCount, typeParameters.length));
+      const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+      if (failure === undefined) delete links.resolutionFailure;
+      else links.resolutionFailure = failure;
       return receiver!.errorType;
     }
     const aliasSymbol = Checker_getAliasSymbolForTypeNode(receiver, node);

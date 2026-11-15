@@ -37,7 +37,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 import { FromString } from "../internal/jsnum/string.js";
 import { ParseValidBigInt } from "../internal/jsnum/pseudobigint.js";
 
@@ -344,6 +344,8 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
       const sourceParameter = sourceSignature.typeParameters[0];
       const targetParameter = targetSignature.typeParameters[0];
       if (sourceParameter === undefined || targetParameter === undefined) throw new Error("The actual declared type parameters must exist");
+      assert.equal(Checker_getRestrictiveTypeParameter(source, sourceParameter) === sourceParameter &&
+        sourceParameter.derivation === undefined, true, "the native unconstrained identity path allocates no derivation record");
       assert.equal(reacquireDeclaredType(producer, sourceParameter) === targetParameter, true);
       const clonedParameter = Checker_cloneTypeParameter(source, sourceParameter);
       if (clonedParameter === undefined) throw new Error("The actual native cloned parameter must exist");
@@ -505,13 +507,47 @@ for (const count of [1, 4]) for (const custom of [false, true]) for (const exact
       const expectedRestriction = Checker_getRestrictiveTypeParameter(producer, expectedConstrained);
       if (restriction === undefined || expectedRestriction === undefined) throw new Error("The native restrictions must exist");
       assert.equal(restriction === originalConstrained, false);
-      assert.equal(reacquireDeclaredRestriction(producer, restriction) === expectedRestriction, true);
-      assert.equal(reacquireDeclaredRestriction(producer, restriction) === expectedRestriction, true);
-      assert.equal(reacquireDeclaredRestriction(producer, originalConstrained), undefined);
+      assert.equal(restriction.derivation?.source === originalConstrained, true,
+        "the fresh native result retains its actual restrictive input before cache publication");
+      const normalizeConstraint = (value: Type): Type => {
+        if (value !== originalConstrained) throw new Error("The restriction uses its actual original parameter");
+        return expectedConstrained;
+      };
+      assert.equal(reacquireRestrictiveParameter(producer, restriction, normalizeConstraint) === expectedRestriction, true);
+      assert.equal(reacquireRestrictiveParameter(producer, restriction, normalizeConstraint) === expectedRestriction, true);
+      assert.equal(createTypeNormalization(producer).type(restriction) === expectedRestriction, true);
+      assert.equal(reacquireRestrictiveParameter(producer, originalConstrained, normalizeConstraint), undefined);
       const restrictionClone = Checker_cloneTypeParameter(source, restriction);
       if (restrictionClone === undefined) throw new Error("The genuine restriction clone must exist");
-      assert.equal(reacquireDeclaredRestriction(producer, restrictionClone), undefined,
+      assert.equal(restrictionClone.derivation === undefined, true, "native clones never inherit another output's construction recipe");
+      assert.equal(reacquireRestrictiveParameter(producer, restrictionClone, normalizeConstraint), undefined,
         "shared parameter symbol alone does not prove a restrictive construction");
+      const retainedRestriction = restriction.derivation;
+      if (retainedRestriction === undefined) throw new Error("The native fresh restriction retains its construction");
+      restrictionClone.derivation = retainedRestriction;
+      assert.equal(reacquireRestrictiveParameter(producer, restrictionClone, normalizeConstraint), undefined,
+        "even a copied recipe cannot make a native clone the exact cached construction result");
+      delete restrictionClone.derivation;
+      const originalClone = Checker_cloneTypeParameter(source, originalConstrained);
+      const expectedClone = Checker_cloneTypeParameter(producer, expectedConstrained);
+      if (originalClone === undefined || expectedClone === undefined) throw new Error("Actual native input clones exist");
+      const clonedRestriction = Checker_getRestrictiveTypeParameter(source, originalClone);
+      const expectedClonedRestriction = Checker_getRestrictiveTypeParameter(producer, expectedClone);
+      if (clonedRestriction === undefined || expectedClonedRestriction === undefined)
+        throw new Error("The native cloned-input restriction completes");
+      assert.equal(clonedRestriction !== restriction && clonedRestriction.derivation?.source === originalClone, true,
+        "equal source symbols do not merge distinct restrictive input constructions");
+      assert.equal(reacquireRestrictiveParameter(producer, clonedRestriction, value => {
+        assert.equal(value === originalClone, true, "the cloned input, not its declaration, is normalized");
+        return expectedClone;
+      }) === expectedClonedRestriction, true);
+      assert.equal(Checker_getRestrictiveTypeParameter(source, clonedRestriction) === clonedRestriction &&
+        clonedRestriction.derivation?.source === originalClone, true, "the native identity arm never overwrites an earlier recipe");
+      if (source !== producer) assert.throws(() => reacquireRestrictiveParameter(producer, restriction, value => value),
+        error => error instanceof TypeError && error.message === "A native parameter restriction requires its normalized input producer");
+      assert.throws(() => reacquireRestrictiveParameter(foreignOwner, restriction, () => {
+        throw new Error("Foreign Program refusal occurs before normalization");
+      }), error => error instanceof TypeError && error.message === "A native parameter restriction requires the same actual Program");
       for (const expression of findNodes(originalFile, queries.ast.children, queries.ast.is.IsObjectLiteralExpression)) {
         const original = Checker_checkExpressionCached(source, expression);
         const expected = Checker_checkExpressionCached(producer, expression);

@@ -90,15 +90,18 @@ export function reacquireTypeAlias(producer: Checker, type: Type, normalize: (ty
   return result;
 }
 
-export function reacquireDeclaredRestriction(producer: Checker, type: Type): Type | undefined {
-  if ((type.flags & TypeFlagsTypeParameter) === 0 || type.symbol === undefined) return undefined;
+export function reacquireRestrictiveParameter(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+  if ((type.flags & TypeFlagsTypeParameter) === 0 || type.derivation?.kind !== "restrictive") return undefined;
   const source = type.checker;
   if (source === undefined) throw new TypeError("A native parameter restriction requires its actual producer");
-  const declared = LinkStore_TryGet(source.declaredTypeLinks, type.symbol)?.declaredType;
-  if (declared === undefined || (declared.flags & TypeFlagsTypeParameter) === 0 ||
-    source.cachedTypes.get({ kind: CachedTypeKindRestrictiveTypeParameter, typeId: declared.id }) !== type) return undefined;
-  const selected = Checker_getDeclaredTypeOfSymbol(producer, type.symbol);
-  if (selected === undefined) throw new Error("The native restriction requires its actual declared parameter");
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native parameter restriction requires the same actual Program");
+  const original = type.derivation.source;
+  if (original.checker !== source ||
+    source.cachedTypes.get({ kind: CachedTypeKindRestrictiveTypeParameter, typeId: original.id }) !== type) return undefined;
+  const selected = normalize(original);
+  if (selected.checker !== producer || (selected.flags & TypeFlagsTypeParameter) === 0)
+    throw new TypeError("A native parameter restriction requires its normalized input producer");
   const result = Checker_getRestrictiveTypeParameter(producer, selected);
   if (result === undefined) throw new Error("The native parameter restriction did not return its value");
   return result;

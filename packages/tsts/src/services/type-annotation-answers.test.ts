@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, getDiagnosticRunMembers } from "../index.js";
-import type { Node } from "../index.js";
+import type { Node, Type } from "../index.js";
 import { Background } from "../go/context.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
 import { Checker_resolveEntityName } from "../internal/checker/checker/symbols.js";
+import { Checker_GetTypeFromTypeNode } from "../internal/checker/exports.js";
 import { getTypeReferenceName } from "../internal/checker/checker/state.js";
 import { SymbolFlagsType } from "../internal/ast/generated/flags.js";
 import { maxSerializationLevel } from "../internal/checker/checker.js";
 import { Node_Text } from "../internal/ast/ast.js";
 
-function open(files: Record<string, string>, checkers: number) {
+function open(files: Record<string, string>, checkers: number, noCheck = false) {
   const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles: Object.keys(files),
-    compilerOptions: { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024", checkers } });
+    compilerOptions: { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024", checkers, noCheck } });
   const checked = session.checkSource();
   const view = (fileName: string) => {
     const sourceFile = checked.getSourceFile(fileName);
@@ -84,7 +85,7 @@ for (const checkers of [1, 4]) {
   });
 
   test(`annotation answer absence and ungrounded errors remain distinct with ${checkers} checkers`, () => {
-    const files = { "/case/use.mts": "class Box<Value> {} export let ordinary: any; export let valid: number; export let invalid: Box;" };
+    const files = { "/case/use.mts": "export let ordinary: any; export let valid: number; export let invalid: this;" };
     const current = open(files, checkers);
     const source = current.view("/case/use.mts");
     const before = current.members();
@@ -121,10 +122,78 @@ for (const checkers of [1, 4]) {
       Checker_resolveEntityName(owner, getTypeReferenceName(syntax), SymbolFlagsType, false, false, undefined);
     } finally { owner.serializationLevel = previous; release(); }
     const suppressed = source.checker.getTypeFromTypeNode(syntax);
-    assert.equal(suppressed?.type === original?.type && suppressed?.cause === undefined, true,
-      "a new suppressed producer clears its old cause and never retains an un-emitted Diagnostic");
+    assert.equal(suppressed?.type === original?.type && suppressed?.cause === original?.cause, true,
+      "a separate name evaluation cannot erase the completed type answer's original cause");
     const after = current.members();
     assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
       "suppressed production leaves the original published inventory unchanged");
+  });
+
+  test(`type-reference arity answers retain their own emitted causes with ${checkers} checkers`, () => {
+    const current = open({
+      "/case/first.mts": `class Exact<Value> {} interface Range<First, Last = string> {}
+        type Alias<Value> = { value: Value }; type Plain = number; class Ordinary {}
+        export let missingClass: Exact; export let extraClass: Exact<number, string>;
+        export let missingInterface: Range; export let extraInterface: Range<number, string, boolean>;
+        export let missingAlias: Alias; export let extraAlias: Alias<number, string>;
+        export let nonGenericAlias: Plain<number>; export let nonGenericClass: Ordinary<number>;
+        export let validClass: Exact<number>; export let validInterface: Range<number>;
+        export let validAlias: Alias<string>;`,
+      "/case/second.mts": "type Other<Value> = Value; export let missingOther: Other;",
+    }, checkers);
+    const before = current.members();
+    const reader = current.view("/case/second.mts").checker;
+    const rows = ["missingClass", "extraClass", "missingInterface", "extraInterface", "missingAlias", "extraAlias",
+      "nonGenericAlias", "nonGenericClass"].map(name => {
+      const syntax = current.annotation("/case/first.mts", name);
+      const answer = reader.getTypeFromTypeNode(syntax);
+      assert.equal(answer !== undefined && answer.cause !== undefined && before.includes(answer.cause), true,
+        `${name}: the actual emitted arity cause is an original published member`);
+      if (answer === undefined || answer.cause === undefined) throw new Error("The authored failed type has its original answer");
+      assert.equal(answer.cause.file === current.view("/case/first.mts").sourceFile, true,
+        "a cross-file query retains the actual producer's file");
+      return { syntax, answer };
+    });
+    assert.equal(new Set(rows.map(row => row.answer.cause)).size === rows.length, true,
+      "distinct failed type occurrences never borrow a shared error type's cause");
+    assert.equal(rows[0]!.answer.type === rows[1]!.answer.type, true,
+      "the opposite actually exercises the shared native singleton error type");
+    for (const order of [rows, [...rows].reverse()]) for (const row of order) {
+      const repeated = reader.getTypeFromTypeNode(row.syntax);
+      assert.equal(repeated?.type === row.answer.type && repeated.cause === row.answer.cause, true,
+        "repeated reads retain the one completed type answer without diagnostic emission");
+    }
+    for (const name of ["validClass", "validInterface", "validAlias"]) {
+      const answer = reader.getTypeFromTypeNode(current.annotation("/case/first.mts", name));
+      assert.equal(answer !== undefined && answer.cause === undefined, true, "ordinary generic success has no cause");
+    }
+    const other = reader.getTypeFromTypeNode(current.annotation("/case/second.mts", "missingOther"));
+    assert.equal(other?.cause !== undefined && before.includes(other.cause) &&
+      rows.every(row => row.answer.cause !== other.cause), true, "the second file retains its own actual original cause");
+    const after = current.members();
+    assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
+      "all annotation views preserve the exact original published inventory");
+  });
+
+  test(`a suppressed first type-reference producer retains no cause with ${checkers} checkers`, () => {
+    const current = open({ "/case/use.mts": "class Generic<Value> {} export let invalid: Generic;" }, checkers, true);
+    const source = current.view("/case/use.mts");
+    const syntax = current.annotation("/case/use.mts", "invalid");
+    const before = current.members();
+    const [owner, release] = Program_GetTypeCheckerForFileExclusive(current.session.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), source.sourceFile);
+    if (owner === undefined) throw new Error("The genuine file owns its checker");
+    const previous = owner.serializationLevel;
+    let produced: Type | undefined;
+    try {
+      owner.serializationLevel = maxSerializationLevel;
+      produced = Checker_GetTypeFromTypeNode(owner, syntax);
+    } finally { owner.serializationLevel = previous; release(); }
+    const answer = source.checker.getTypeFromTypeNode(syntax);
+    assert.equal(produced !== undefined && answer?.type === produced && answer.cause === undefined, true,
+      "the genuine suppressed cache fill returns its native type but no unemitted Diagnostic");
+    const after = current.members();
+    assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
+      "reading the completed suppressed answer never re-emits its discarded diagnostic");
   });
 }

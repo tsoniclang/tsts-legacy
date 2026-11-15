@@ -14,7 +14,7 @@ import {
 import type { Program } from "../internal/compiler/program.js";
 import { Program_GetSourceFile, Program_GetTypeChecker } from "../internal/compiler/program.js";
 import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
-import { getExtensionHost } from "../extensions/host.js";
+import { withOwnedChecker } from "./checker-ownership.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import {
@@ -233,12 +233,12 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
     ),
-    getTypeAliasApplication: (type) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
+    getTypeAliasApplication: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeAliasApplication(checker, type),
     ),
-    getIndexedAccessComponents: (type) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
+    getIndexedAccessComponents: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeIndexedAccessComponents(checker, type),
     ),
     selectIndexedAccess: (objectType, indexType) => withCheckerForSourceFile(
@@ -307,15 +307,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
         ? Checker_GetTypeArguments(checker, type)
         : []) ?? [],
     getInstantiatedBaseTypes(type) {
-      const owner = type?.checker;
-      if (owner === undefined ||
-        Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile) return undefined;
-      return withCheckerForSourceFile(program, defaultOptions.sourceFile, defaultOptions, checker => {
-        if (checker === undefined) return undefined;
-        if (checker !== owner && checker.program !== owner.program) {
-          const host = getExtensionHost(checker.program);
-          if (host === undefined || host !== getExtensionHost(owner.program)) return undefined;
-        }
+      return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+        defaultOptions.context ?? Background(), owner => {
         const bases = Checker_getInstantiatedBaseTypes(owner, type);
         if (bases === undefined) return undefined;
         const selected: Type[] = [];

@@ -5,7 +5,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
-import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireDeclaredRestriction, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
+import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
 export interface TypeNormalization {
   readonly type: (type: Type) => Type;
@@ -68,7 +68,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (known !== undefined) return known;
     const result = reacquireBuiltinType(producer, type)
       ?? reacquireDeclaredType(producer, type)
-      ?? reacquireDeclaredRestriction(producer, type)
+      ?? reacquireRestrictiveParameter(producer, type, normalize)
       ?? reacquireSignatureType(producer, type, signature => normalizeSignature(source, signature))
       ?? reacquireTypeAlias(producer, type, normalize)
       ?? reacquireLiteralType(producer, type)

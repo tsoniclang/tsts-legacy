@@ -10107,7 +10107,10 @@ export function Checker_getTypeArgumentsFromNode(receiver: GoPtr<Checker>, node:
 export function Checker_checkNoTypeArguments(receiver: GoPtr<Checker>, node: GoPtr<Node>, symbol_: GoPtr<Symbol>): bool {
   if ((Node_TypeArguments(node)?.length ?? 0) !== 0) {
     const typeName = symbol_ !== undefined ? Checker_symbolToString(receiver, symbol_) : DeclarationNameToString(AsTypeReferenceNode(node)!.TypeName);
-    Checker_error(receiver, node, Type_0_is_not_generic, typeName);
+    const failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(node, Type_0_is_not_generic, typeName));
+    const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+    if (failure === undefined) delete links.resolutionFailure;
+    else links.resolutionFailure = failure;
     return false;
   }
   return true;
@@ -10430,6 +10433,7 @@ export function Checker_getRestrictiveTypeParameter(receiver: GoPtr<Checker>, t:
   }
   const result = Checker_newTypeParameter(receiver, t!.symbol);
   Type_AsTypeParameter(result)!.constraint = receiver!.noConstraintType;
+  result!.derivation = { kind: "restrictive", source: t! };
   receiver!.cachedTypes.set(key, result);
   return result;
 }
