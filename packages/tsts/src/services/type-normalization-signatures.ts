@@ -2,11 +2,11 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import type { GoPtr } from "../go/compat.js";
 import { goReceiverKey } from "../internal/ast/spine.js";
 import { CheckModeNormal, SignatureKeyBase, SignatureKeyCanonical, SignatureKeyErased, SignatureKeyInner, SignatureKeyOuter, getTypeListKey } from "../internal/checker/checker/state.js";
-import { Checker_getBaseSignature, Checker_getCanonicalSignature, Checker_getErasedSignature, Checker_getOptionalCallSignature, Checker_getOrCreateTypeFromSignature, Checker_getResolvedSignature, Checker_getSignatureInstantiationWithoutFillingInTypeArguments } from "../internal/checker/checker/signatures.js";
+import { Checker_getBaseSignature, Checker_getCanonicalSignature, Checker_getErasedSignature, Checker_getOptionalCallSignature, Checker_getOrCreateTypeFromSignature, Checker_getResolvedSignature, Checker_getSignaturesOfType, Checker_getSignatureInstantiationWithoutFillingInTypeArguments } from "../internal/checker/checker/signatures.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { TypeMapper_Kind, TypeMapperKindArray, TypeMapperKindSimple } from "../internal/checker/mapper.js";
 import type { ArrayTypeMapper, SimpleTypeMapper } from "../internal/checker/mapper.js";
-import { ObjectFlagsSingleSignatureType, SignatureFlagsIsInnerCallChain, SignatureFlagsIsOuterCallChain, TypeFlagsObject, Type_AsStructuredType } from "../internal/checker/types.js";
+import { ObjectFlagsSingleSignatureType, SignatureFlagsIsInnerCallChain, SignatureFlagsIsOuterCallChain, SignatureKindCall, SignatureKindConstruct, TypeFlagsObject, Type_AsStructuredType } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
 export type CachedSignatureConstruction = "erased" | "canonical" | "base" | "inner-call" | "outer-call";
@@ -46,6 +46,7 @@ export function reacquireHigherOrderSignature(source: Checker, producer: Checker
       throw new Error("The native invocation retains its actual higher-order result");
     return result;
   }
+  if (derivation.kind !== "higher-order-return") return undefined;
   const owner = derivation.signature;
   if (owner.checkerId !== source.id || owner.derivation?.kind !== "higher-order"
     || owner.derivation.returned !== signature) return undefined;
@@ -53,6 +54,26 @@ export function reacquireHigherOrderSignature(source: Checker, producer: Checker
   if (selected.checkerId !== producer.id || selected.derivation?.kind !== "higher-order")
     throw new TypeError("A native higher-order return requires its normalized signature producer");
   return selected.derivation.returned;
+}
+
+export function reacquireMemberSignature(source: Checker, producer: Checker, signature: Signature,
+  normalize: (type: Type) => Type): Signature | undefined {
+  if (signature.checkerId !== source.id) throw new TypeError("A native member signature requires its actual producer");
+  const derivation = signature.derivation;
+  if (derivation?.kind !== "member") return undefined;
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native member signature requires the same actual Program");
+  if (derivation.owner.checker !== source) throw new TypeError("A native member signature retains its actual type owner");
+  const kind = derivation.signatureKind === "call" ? SignatureKindCall : SignatureKindConstruct;
+  if (Checker_getSignaturesOfType(source, derivation.owner, kind)[derivation.index] !== signature) return undefined;
+  const owner = normalize(derivation.owner);
+  if (owner.checker !== producer) throw new TypeError("A native member signature requires its normalized type owner");
+  const result = Checker_getSignaturesOfType(producer, owner, kind)[derivation.index];
+  if (result === undefined || result.checkerId !== producer.id || result.derivation?.kind !== "member"
+    || result.derivation.owner !== owner || result.derivation.signatureKind !== derivation.signatureKind
+    || result.derivation.index !== derivation.index)
+    throw new Error("The native resolved type retains its actual instantiated member signature");
+  return result;
 }
 
 export function cachedSignatureArguments(source: Checker, signature: Signature): readonly GoPtr<Type>[] | undefined {

@@ -84,7 +84,7 @@ function fixture(checkers: number, rejected = false, overloaded = false) {
       const fresh = returned.typeParameters[1];
       assert.equal(declared !== undefined && declared.derivation === undefined, true,
         "the genuinely shared declared parameter never receives or overwrites a call-owner recipe");
-      assert.equal(fresh?.derivation?.kind === "inferred-parameter" && fresh.derivation.signature === returned &&
+      assert.equal(fresh?.derivation?.kind === "signature-parameter" && fresh.derivation.signature === returned &&
         fresh.derivation.index === 1 && Type_AsTypeParameter(fresh)?.target !== undefined, true,
         "the real fresh unique parameter belongs to the FINAL selected return, never a preliminary candidate");
     }
@@ -181,7 +181,7 @@ for (const checkers of [1, 4]) test(`published conditional higher-order candidat
         assert.equal(LinkStore_TryGet(owner.signatureLinks, call)?.resolvedSignature !== signature, true,
           "a published conditional candidate is not falsely treated as the selected cache answer");
         const fresh = returned.typeParameters[1];
-        assert.equal(fresh?.derivation?.kind === "inferred-parameter" && fresh.derivation.signature === returned &&
+        assert.equal(fresh?.derivation?.kind === "signature-parameter" && fresh.derivation.signature === returned &&
           fresh.derivation.index === 1 && returned.typeParameters[0]?.derivation === undefined, true,
           "the published final candidate owns only its genuinely fresh parameter, not a shared declaration");
         values.push({ call, signature, returned, result, original: candidate.application.signature, kind: candidate.application.kind });

@@ -13268,6 +13268,17 @@ function referenceMemberArguments(receiver: GoPtr<Checker>, type: GoPtr<Type>): 
   return [source, parameters, arguments_.length === parameters.length - 1 ? [...arguments_, type] : arguments_];
 }
 
+function retainInstantiatedSignatureOwners(owner: Type, originals: GoSlice<GoPtr<Signature>>,
+  signatures: GoSlice<GoPtr<Signature>>, signatureKind: "call" | "construct"): void {
+  for (const [index, signature] of signatures.entries()) {
+    const original = originals[index];
+    if (signature === original) continue;
+    if (signature === undefined || original === undefined || signature.target !== original)
+      throw new Error("A fresh resolved member signature retains its actual original instantiation");
+    signature.derivation = { kind: "member", owner, signatureKind, index };
+  }
+}
+
 function objectMemberMapper(parameters: GoSlice<GoPtr<Type>>, arguments_: GoSlice<GoPtr<Type>>): GoPtr<TypeMapper> {
   return parameters.length === arguments_.length && parameters.every((parameter, index) => parameter === arguments_[index])
     ? undefined : newTypeMapper(parameters, arguments_);
@@ -13293,6 +13304,7 @@ export function Checker_getInstantiatedBaseTypes(receiver: GoPtr<Checker>, type:
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveObjectTypeMembers","kind":"method","status":"implemented","sigHash":"e295384186d7b85ac1b326e2459c86f58c814740c1039d61d603883cce5f62aa","bodyHash":"39e69dc06f5f662afc7b58d6bef95adc28144304768dd09944dba3ce3b201cc1"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual instantiated member signature owner and declared position before native member cache publication; inherited shared signatures retain their original owner."}
  *
  * Go source:
  * func (c *Checker) resolveObjectTypeMembers(t *Type, source *Type, typeParameters []*Type, typeArguments []*Type) {
@@ -13363,6 +13375,8 @@ export function Checker_resolveObjectTypeMembers(receiver: GoPtr<Checker>, t: Go
     members = Checker_instantiateSymbolTable(receiver, resolved!.declaredMembers, mapper, typeParameters.length === 1);
     callSignatures = Checker_instantiateSignatures(receiver, resolved!.declaredCallSignatures ?? [], mapper);
     constructSignatures = Checker_instantiateSignatures(receiver, resolved!.declaredConstructSignatures ?? [], mapper);
+    retainInstantiatedSignatureOwners(t!, resolved!.declaredCallSignatures ?? [], callSignatures, "call");
+    retainInstantiatedSignatureOwners(t!, resolved!.declaredConstructSignatures ?? [], constructSignatures, "construct");
     indexInfos = Checker_instantiateIndexInfos(receiver, resolved!.declaredIndexInfos ?? [], mapper);
   }
   const baseTypes = Checker_getBaseTypes(receiver, source);
@@ -13934,6 +13948,7 @@ export function Checker_instantiateIndexInfo(receiver: GoPtr<Checker>, info: GoP
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveAnonymousTypeMembers","kind":"method","status":"implemented","sigHash":"d4b772955b848a9485d8ea411d304b1fedf08cea50f5c9308403c408cf1574e7","bodyHash":"caa27a9002f4de332c6b5dfa86554c5dd13a72960a7e4448887a8cfd662efe18"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain only actual fresh instantiated anonymous member signatures against their producing type and declared position before native cache publication."}
  *
  * Go source:
  * func (c *Checker) resolveAnonymousTypeMembers(t *Type) {
@@ -14021,8 +14036,12 @@ export function Checker_resolveAnonymousTypeMembers(receiver: GoPtr<Checker>, t:
   if (d!.target !== undefined) {
     Checker_setStructuredTypeMembers(receiver, t, undefined as unknown as SymbolTable, [], [], []);
     const members = Checker_createInstantiatedSymbolTable(receiver, Checker_getPropertiesOfObjectType(receiver, d!.target), d!.mapper);
-    const callSignatures = Checker_instantiateSignatures(receiver, Checker_getSignaturesOfType(receiver, d!.target, SignatureKindCall), d!.mapper);
-    const constructSignatures = Checker_instantiateSignatures(receiver, Checker_getSignaturesOfType(receiver, d!.target, SignatureKindConstruct), d!.mapper);
+    const originalCalls = Checker_getSignaturesOfType(receiver, d!.target, SignatureKindCall);
+    const originalConstructs = Checker_getSignaturesOfType(receiver, d!.target, SignatureKindConstruct);
+    const callSignatures = Checker_instantiateSignatures(receiver, originalCalls, d!.mapper);
+    const constructSignatures = Checker_instantiateSignatures(receiver, originalConstructs, d!.mapper);
+    retainInstantiatedSignatureOwners(t!, originalCalls, callSignatures, "call");
+    retainInstantiatedSignatureOwners(t!, originalConstructs, constructSignatures, "construct");
     const indexInfos = Checker_instantiateIndexInfos(receiver, Checker_getIndexInfosOfType(receiver, d!.target), d!.mapper);
     Checker_setStructuredTypeMembers(receiver, t, members, callSignatures, constructSignatures, indexInfos);
     return;

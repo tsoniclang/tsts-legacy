@@ -2567,7 +2567,7 @@ function retainHigherOrderParameterOwners(node: GoPtr<Node>, signature: GoPtr<Si
     if (parameter?.derivation?.kind !== "unique-inference") continue;
     if (Type_AsTypeParameter(parameter)?.target !== parameter.derivation.source)
       throw new Error("A fresh inferred parameter retains its actual native construction");
-    parameter.derivation = { kind: "inferred-parameter", signature: returned, index };
+    parameter.derivation = { kind: "signature-parameter", signature: returned, index };
   }
 }
 
@@ -8879,7 +8879,7 @@ export function Checker_instantiateSignature(receiver: GoPtr<Checker>, sig: GoPt
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.instantiateSignatureEx","kind":"method","status":"implemented","sigHash":"e80862e53012f4cee5dd56ba1e2fc5f06c3144351fab423715142fe48ce5470c","bodyHash":"3d5e7825ffb4b7fabec26cf378a70c0568856ed9647608841e1f7d6a7dbc65bc"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Constructs immutable factual original constructor-class provenance before publishing each native Signature; ordinary clones preserve it and derived implicit constructors receive their actual producer class, without a Source answer or lazy Type query.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>,packages/tsts/src/go/scalars.ts::bool)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>"}
+ * @tsgo-override {"category":"extension-host","allow":["signature","body"],"reason":"Constructs immutable factual original constructor-class provenance before publishing each native Signature; ordinary clones preserve it and derived implicit constructors receive their actual producer class, without a Source answer or lazy Type query. R5-15–18 retain actual freshly cloned type-parameter coordinates on this new signature before publication; shared declared parameters are never annotated.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>,packages/tsts/src/go/scalars.ts::bool)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>"}
  *
  * Go source:
  * func (c *Checker) instantiateSignatureEx(sig *Signature, m *TypeMapper, eraseTypeParameters bool) *Signature {
@@ -8917,6 +8917,10 @@ export function Checker_instantiateSignatureEx(receiver: GoPtr<Checker>, sig: Go
   const result = Checker_newSignature(receiver, (sig!.flags & SignatureFlagsPropagatingFlags) as SignatureFlags, sig!.declaration, freshTypeParameters, Checker_instantiateSymbol(receiver, sig!.thisParameter, m), Checker_instantiateSymbols(receiver, sig!.parameters, m), undefined, undefined, sig!.minArgumentCount, constructorClass);
   result!.target = sig;
   result!.mapper = m;
+  for (const [index, parameter] of freshTypeParameters.entries()) {
+    if (parameter === undefined) throw new Error("An instantiated signature retains every genuinely fresh type parameter");
+    parameter.derivation = { kind: "signature-parameter", signature: result!, index };
+  }
   return result;
 }
 
