@@ -124,12 +124,12 @@ test("checked source exposes authored assertion syntax and semantic source and t
     "Animal",
   );
   assert.equal(
-    source.checker.typeToString(source.checker.getTypeFromTypeNode(assertion?.Type)),
+    source.checker.typeToString(source.checker.getTypeFromTypeNode(assertion?.Type)?.type),
     "Dog",
   );
   assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(assertions[0])), "Dog");
   assert.ok(
-    source.checker.getTypeFromTypeNode(assertion?.Type)
+    source.checker.getTypeFromTypeNode(assertion?.Type)?.type
       === source.checker.getTypeAtLocation(assertions[0]),
     "Assertion target syntax and checked result must retain the same target type.",
   );

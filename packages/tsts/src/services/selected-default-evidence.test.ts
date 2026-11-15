@@ -72,7 +72,7 @@ test("an inferred equal backing type does not acquire authored default authority
   const argument = actual.evidence.selection.application.signatureTypeArguments?.[0];
   const syntax = AsTypeParameterDeclaration(Node_TypeParameters(actual.declaration)?.[0])?.DefaultType;
   assert.equal(argument !== undefined && syntax !== undefined, true, "the inferred call has a genuine authored default");
-  assert.equal(argument!.checkedArgument === queries.getTypeFromTypeNode(syntax), true,
+  assert.equal(argument!.checkedArgument === queries.getTypeFromTypeNode(syntax)?.type, true,
     "the inferred value and default really have the identical native backing Type");
   assert.equal(selectedDefault(argument!) === undefined, true, "equal backing identity does not select the default");
 });

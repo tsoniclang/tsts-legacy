@@ -382,7 +382,11 @@ export function Checker_createNameResolver(receiver: GoPtr<Checker>): GoPtr<Name
     SetRequiresScopeChangeCache: (node, value) => Checker_setRequiresScopeChangeCache(receiver, node, value),
     GetRequiresScopeChangeCache: (node) => Checker_getRequiresScopeChangeCache(receiver, node),
     OnPropertyWithInvalidInitializer: (location, name, declaration, result) => Checker_checkAndReportErrorForInvalidInitializer(receiver, location, name, declaration, result),
-    OnFailedToResolveSymbol: (location, name, meaning, nameNotFoundMessage) => Checker_onFailedToResolveSymbol(receiver, location, name, meaning, nameNotFoundMessage),
+    OnFailedToResolveSymbol: (location, name, meaning, nameNotFoundMessage) => {
+      const failure = Checker_onFailedToResolveSymbol(receiver, location, name, meaning, nameNotFoundMessage);
+      if (location !== undefined && failure !== undefined)
+        LinkStore_Get(receiver!.symbolNodeLinks, location)!.resolutionFailure = failure;
+    },
     OnSuccessfullyResolvedSymbol: (location, result, meaning, lastLocation, associatedDeclaration, withinDeferredContext) => Checker_onSuccessfullyResolvedSymbol(receiver, location, result, meaning, lastLocation, associatedDeclaration, withinDeferredContext),
   };
 }
@@ -447,6 +451,7 @@ export function Checker_setRequiresScopeChangeCache(receiver: GoPtr<Checker>, no
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.onFailedToResolveSymbol","kind":"method","status":"implemented","sigHash":"1b3f268b58f74d1ec2633504901de9e8981b7ffee588780473b6915298c69a42","bodyHash":"3802e3fc0ef406c635b993dfb682fa8b3bd99a4a806de296b59759067eb1e29f"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Return only the original Diagnostic admitted by the actual existing missing-name error producer; suppressed and unassociated answers remain absent.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,string,packages/tsts/src/internal/ast/generated/flags.ts::SymbolFlags,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/diagnostics/diagnostics.ts::Message>)=>void","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,string,packages/tsts/src/internal/ast/generated/flags.ts::SymbolFlags,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/diagnostics/diagnostics.ts::Message>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>"}
  *
  * Go source:
  * func (c *Checker) onFailedToResolveSymbol(errorLocation *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message) {
@@ -488,7 +493,7 @@ export function Checker_setRequiresScopeChangeCache(receiver: GoPtr<Checker>, no
  * 	c.error(errorLocation, nameNotFoundMessage, declarationName)
  * }
  */
-export function Checker_onFailedToResolveSymbol(receiver: GoPtr<Checker>, errorLocation: GoPtr<Node>, name: string, meaning: SymbolFlags, nameNotFoundMessage: GoPtr<Message>): void {
+export function Checker_onFailedToResolveSymbol(receiver: GoPtr<Checker>, errorLocation: GoPtr<Node>, name: string, meaning: SymbolFlags, nameNotFoundMessage: GoPtr<Message>): GoPtr<Diagnostic> {
   if (errorLocation !== undefined && (errorLocation!.Parent!.Kind === KindJSDocLink ||
     Checker_checkAndReportErrorForMissingPrefix(receiver, errorLocation, name) ||
     Checker_checkAndReportErrorForExtendingInterface(receiver, errorLocation) ||
@@ -505,8 +510,7 @@ export function Checker_onFailedToResolveSymbol(receiver: GoPtr<Checker>, errorL
   // Report missing lib first
   const suggestedLib = Checker_getSuggestedLibForNonExistentName(receiver, name);
   if (suggestedLib !== "") {
-    Checker_error(receiver, errorLocation, nameNotFoundMessage, declarationName, suggestedLib);
-    return;
+    return Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorLocation, nameNotFoundMessage, declarationName, suggestedLib));
   }
   // Then spelling suggestions
   const suggestion = Checker_getSuggestedSymbolForNonexistentSymbol(receiver, errorLocation, name, meaning);
@@ -522,11 +526,10 @@ export function Checker_onFailedToResolveSymbol(receiver: GoPtr<Checker>, errorL
     if (suggestion!.ValueDeclaration !== undefined) {
       Diagnostic_AddRelatedInfo(diagnostic, NewDiagnosticForNode(suggestion!.ValueDeclaration, X_0_is_declared_here, suggestionName));
     }
-    Checker_addErrorOrSuggestion(receiver, !isUncheckedJS as bool, diagnostic);
-    return;
+    return Checker_addErrorOrSuggestion(receiver, !isUncheckedJS as bool, diagnostic);
   }
   // And then fall back to unspecified "not found"
-  Checker_error(receiver, errorLocation, nameNotFoundMessage, declarationName);
+  return Checker_addDiagnostic(receiver, NewDiagnosticForNode(errorLocation, nameNotFoundMessage, declarationName));
 }
 
 /**
@@ -10645,6 +10648,10 @@ export function Checker_getTargetOfAliasDeclaration(receiver: GoPtr<Checker>, no
 export function Checker_resolveEntityName(receiver: GoPtr<Checker>, name: GoPtr<Node>, meaning: SymbolFlags, ignoreErrors: bool, dontResolveAlias: bool, location: GoPtr<Node>): GoPtr<Symbol> {
   if (NodeIsMissing(name)) {
     return undefined;
+  }
+  if (!ignoreErrors) {
+    const retained = LinkStore_TryGet(receiver!.symbolNodeLinks, location ?? name);
+    if (retained !== undefined) delete retained.resolutionFailure;
   }
   let symbol_: GoPtr<Symbol>;
   switch (name!.Kind) {

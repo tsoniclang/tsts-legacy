@@ -150,6 +150,7 @@ export type {
   ResolvedSourcePropertyNameInfo,
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceStorageInfo,
+  ResolvedSourceTypeInfo,
   ResolvedSourceWellKnownSymbolInfo,
   ResolvedSourceYieldInfo,
   TypeCheckerQueries,

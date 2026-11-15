@@ -596,7 +596,7 @@ test("the public document and the canonical owner document of one provider both 
   const checker = checked.getSourceFileQueries(sourceFile).checker;
   const statement = checked.ast.as.AsVariableStatement(checked.ast.statements(sourceFile)[1]);
   const variables = checked.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
-  const symbol = checker.getTypeSymbol(checker.getTypeFromTypeNode(Node_Type(variables?.[0])));
+  const symbol = checker.getTypeSymbol(checker.getTypeFromTypeNode(Node_Type(variables?.[0]))?.type);
   const fact = checked.sourceFacts.getFact(symbol, providerVirtualDeclarationFactKey);
   assert.ok(fact);
   // The reader a consumer of a checked program has: the facts' document lookup.

@@ -77,7 +77,8 @@ import {
   Checker_getResolvedCallSelectionEvidence,
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
-import { CheckModeNormal, getNumberLiteralValue } from "../internal/checker/checker/state.js";
+import { CheckModeNormal, getNumberLiteralValue, getTypeReferenceName } from "../internal/checker/checker/state.js";
+import { KindExpressionWithTypeArguments, KindTypeReference } from "../internal/ast/generated/kinds.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import {
   Checker_GetAliasedSymbol,
@@ -263,13 +264,18 @@ export interface ResolvedSourceStorageInfo {
   readonly writable: boolean;
 }
 
+export interface ResolvedSourceTypeInfo {
+  readonly type: Type;
+  readonly cause: Diagnostic | undefined;
+}
+
 export interface TypeCheckerQueries {
   readonly getBackingConstraints: () => readonly ResolvedCheckerBackingConstraint[];
   readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
   readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
   readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
-  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
+  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
   readonly getEffectivePropertyName: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyNameInfo>;
   readonly getSymbolAtLocation: (node: GoPtr<Node>) => GoPtr<Symbol>;
@@ -389,8 +395,18 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     },
     getTypeAtLocation: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
-    getTypeFromTypeNode: (node) =>
-      withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
+    getTypeFromTypeNode(node) {
+      if (node === undefined) return undefined;
+      return withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, checker => {
+        const type = Checker_GetTypeFromTypeNode(checker, node);
+        if (type === undefined) return undefined;
+        const name = node.Kind === KindTypeReference || node.Kind === KindExpressionWithTypeArguments
+          ? getTypeReferenceName(node) : undefined;
+        const cause = name === undefined ? undefined
+          : LinkStore_TryGet(checker!.symbolNodeLinks, name)?.resolutionFailure;
+        return { type, cause };
+      });
+    },
     getContextualType: (node, contextFlags = ContextFlagsNone) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getContextualType(checker, node, contextFlags)),
     getEffectivePropertyName(node) {

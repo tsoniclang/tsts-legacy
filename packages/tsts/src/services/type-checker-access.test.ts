@@ -114,7 +114,7 @@ test("awaited queries use the existing checked Promise and thenable semantics wi
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
   for (const [position, expected] of ["number", "number", "string", "number | undefined"].entries()) {
-    const type = queries.getTypeFromTypeNode(Node_Type(aliases[position]));
+    const type = queries.getTypeFromTypeNode(Node_Type(aliases[position]))?.type;
     assert.equal(type !== undefined, true, `awaited input ${position} is an actual checked type`);
     const awaited = queries.getAwaitedType(type);
     assert.equal(queries.typeToString(awaited), expected, `awaited input ${position} uses the checker result`);
@@ -126,7 +126,7 @@ test("awaited queries use the existing checked Promise and thenable semantics wi
   assertCleanSemanticDiagnostics(shadow.program, shadow.index);
   const shadowQueries = createTypeCheckerQueries(shadow.program, { sourceFile: shadow.index });
   const shadowAlias = findNodesByKind(shadow.index, KindTypeAliasDeclaration)[0];
-  const shadowType = shadowQueries.getTypeFromTypeNode(Node_Type(shadowAlias));
+  const shadowType = shadowQueries.getTypeFromTypeNode(Node_Type(shadowAlias))?.type;
   assert.equal(shadowType !== undefined && shadowQueries.getAwaitedType(shadowType) === shadowType, true,
     "a user class called Promise is not unwrapped by its name");
 });
@@ -143,7 +143,7 @@ test("awaited queries reject foreign types and admit only the actual same-progra
   const secondQueries = createTypeCheckerQueries(second.program, { sourceFile: second.index });
   const unrelatedQueries = createTypeCheckerQueries(unrelated.program, { sourceFile: unrelated.index });
   const typeOf = (queries: typeof firstQueries, index: typeof first.index) =>
-    queries.getTypeFromTypeNode(Node_Type(findNodesByKind(index, KindTypeAliasDeclaration)[0]));
+    queries.getTypeFromTypeNode(Node_Type(findNodesByKind(index, KindTypeAliasDeclaration)[0]))?.type;
   const firstType = typeOf(firstQueries, first.index);
   const secondType = typeOf(secondQueries, second.index);
   const unrelatedType = typeOf(unrelatedQueries, unrelated.index);

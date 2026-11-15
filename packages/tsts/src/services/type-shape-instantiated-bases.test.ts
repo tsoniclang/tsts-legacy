@@ -17,7 +17,7 @@ function checked(source: string) {
   const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
   const type = (name: string): Type => {
     const declaration = aliases.find(node => Node_Text(Node_Name(node)) === name);
-    const selected = checker.getTypeFromTypeNode(Node_Type(declaration));
+    const selected = checker.getTypeFromTypeNode(Node_Type(declaration))?.type;
     assert.ok(selected !== undefined, `${name}: actual checked alias type`);
     return selected;
   };
@@ -226,7 +226,7 @@ test("instantiated base queries validate actual source identity and same-program
     const checker = createTypeCheckerQueries(source.program, { sourceFile: source.index });
     const types = createTypeShapeQueries(source.program, { sourceFile: source.index });
     const declaration = findNodesByKind(source.index, KindTypeAliasDeclaration)[0];
-    const type = checker.getTypeFromTypeNode(Node_Type(declaration));
+    const type = checker.getTypeFromTypeNode(Node_Type(declaration))?.type;
     assert.ok(type !== undefined, "each real source program owns an actual derived type");
     return { types, type };
   };

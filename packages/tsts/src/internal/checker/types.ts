@@ -818,6 +818,7 @@ export interface NodeLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::SymbolNodeLinks","kind":"type","status":"implemented","sigHash":"89abee6a144d3c12d35aae2dafa85f43053a44ca076f706149c4a8a6b46bc41f","bodyHash":"3faf90619306b4dfc2120b485483753ef9d58f708195079aafbad05751e49d4c"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the actually emitted original failed name-resolution Diagnostic alongside that same native symbol answer, without expression frames, diagnostic joins or a parallel resolution cache.","goSignature":"interface{resolvedSymbol:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>}","tsSignature":"interface{resolutionFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;resolvedSymbol:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>}"}
  *
  * Go source:
  * SymbolNodeLinks struct {
@@ -826,6 +827,7 @@ export interface NodeLinks {
  */
 export interface SymbolNodeLinks {
   resolvedSymbol: GoPtr<Symbol_62f2f8bf>;
+  resolutionFailure?: Diagnostic;
 }
 
 /**

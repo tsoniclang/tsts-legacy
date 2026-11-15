@@ -74,7 +74,7 @@ test("checked raw program membership retains excluded canonical native owners an
   const core = checked.getSourceFile("/src/core.d.ts")!;
   const queries = checked.getSourceFileQueries(index);
   const variable = findNodes(index, checked.ast.children, checked.ast.is.IsVariableDeclaration)[0];
-  const type = queries.checker.getTypeFromTypeNode(checked.ast.typeNode(variable));
+  const type = queries.checker.getTypeFromTypeNode(checked.ast.typeNode(variable))?.type;
   const symbol = queries.checker.getTypeSymbol(type);
   const declaration = queries.checker.getPrimarySymbolDeclaration(symbol);
   const nativeFile = checked.ast.getSourceFile(declaration);
@@ -109,7 +109,7 @@ test("checked raw program membership retains excluded canonical native owners an
   const foreignIndex = foreign.getSourceFile("/src/index.ts")!;
   const foreignChecker = foreign.getSourceFileQueries(foreignIndex).checker;
   const foreignVariable = findNodes(foreignIndex, foreign.ast.children, foreign.ast.is.IsVariableDeclaration)[0];
-  const foreignType = foreignChecker.getTypeFromTypeNode(foreign.ast.typeNode(foreignVariable));
+  const foreignType = foreignChecker.getTypeFromTypeNode(foreign.ast.typeNode(foreignVariable))?.type;
   const foreignFile = foreign.ast.getSourceFile(foreignChecker.getPrimarySymbolDeclaration(foreignChecker.getTypeSymbol(foreignType)));
   assert.equal(foreignFile !== undefined, true, "a second checked program has an actual same-spelled owner file");
   assert.equal(foreign.ast.getFileName(foreignFile), checked.ast.getFileName(nativeFile), "the canonical owner URI is deliberately identical across programs");

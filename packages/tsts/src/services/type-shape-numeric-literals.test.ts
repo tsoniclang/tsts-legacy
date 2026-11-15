@@ -24,7 +24,7 @@ function aliasType(source: SourceFileQueries, name: string): Type {
     .find(node => source.ast.text(source.ast.name(node)) === name);
   const node = source.ast.as.AsTypeAliasDeclaration(declaration)?.Type;
   assert.ok(node !== undefined, `Expected type alias ${name}.`);
-  const type = source.checker.getTypeFromTypeNode(node);
+  const type = source.checker.getTypeFromTypeNode(node)?.type;
   assert.ok(type !== undefined, `Expected resolved type for ${name}.`);
   return type;
 }
