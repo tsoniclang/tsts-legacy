@@ -14472,6 +14472,7 @@ export function Checker_getTypeOfMappedSymbol(receiver: GoPtr<Checker>, symbol_:
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveUnionTypeMembers","kind":"method","status":"implemented","sigHash":"ad012da8f222e973f34eebb8285bb92cc1d10c7d19a72f2bac396e9d75af1843","bodyHash":"2f2e796c975f2bad3af4212dae1c91b8f86655d3cf41b2b2d1eb24a1f56b4ab9"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-16 N2 retains genuine fresh union member signature constituents before native cache publication; exact input pointer membership prevents overwriting shared signatures."}
  *
  * Go source:
  * func (c *Checker) resolveUnionTypeMembers(t *Type) {
@@ -14496,18 +14497,28 @@ export function Checker_getTypeOfMappedSymbol(receiver: GoPtr<Checker>, symbol_:
 export function Checker_resolveUnionTypeMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>): void {
   // The members and properties collections are empty for union types. To get all properties of a union
   // type use getPropertiesOfType (only the language service uses this).
-  let callSignatures = Checker_getUnionSignatures(receiver, Map(Type_Types(t), (type_: GoPtr<Type>): GoSlice<GoPtr<Signature>> => {
+  const callInputs = Map(Type_Types(t), (type_: GoPtr<Type>): GoSlice<GoPtr<Signature>> => {
     if (type_ === receiver!.globalFunctionType) {
       return [receiver!.unknownSignature];
     }
     return Checker_getSignaturesOfType(receiver, type_, SignatureKindCall);
-  }));
+  });
+  let callSignatures = Checker_getUnionSignatures(receiver, callInputs);
+  for (const signature of callSignatures) {
+    if (signature?.composite?.isUnion && !callInputs.some(input => input.includes(signature)))
+      signature.derivation = { kind: "union-member", owner: t!, signatureKind: "call", constituents: signature.composite.signatures };
+  }
   if (callSignatures.length === 0) {
     callSignatures = Checker_getArrayMemberCallSignatures(receiver, t);
   }
-  const constructSignatures = Checker_getUnionSignatures(receiver, Map(Type_Types(t), (type_: GoPtr<Type>): GoSlice<GoPtr<Signature>> => {
+  const constructInputs = Map(Type_Types(t), (type_: GoPtr<Type>): GoSlice<GoPtr<Signature>> => {
     return Checker_getSignaturesOfType(receiver, type_, SignatureKindConstruct);
-  }));
+  });
+  const constructSignatures = Checker_getUnionSignatures(receiver, constructInputs);
+  for (const signature of constructSignatures) {
+    if (signature?.composite?.isUnion && !constructInputs.some(input => input.includes(signature)))
+      signature.derivation = { kind: "union-member", owner: t!, signatureKind: "construct", constituents: signature.composite.signatures };
+  }
   const indexInfos = Checker_getUnionIndexInfos(receiver, Type_Types(t));
   Checker_setStructuredTypeMembers(receiver, t, undefined as unknown as SymbolTable, callSignatures, constructSignatures, indexInfos);
 }
@@ -14550,6 +14561,7 @@ export function Checker_isReadonlyArraySymbol(receiver: GoPtr<Checker>, symbol_:
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveIntersectionTypeMembers","kind":"method","status":"implemented","sigHash":"b426068ee0c989e59c0e455483e8357a76080a456d6bcef221cb4170028c0b2b","bodyHash":"b8526ef58824f570a1399081cda9a22800d02bf6a54ab5be5ca10c3c37cb73f3"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-16 N2 retains only a genuinely fresh intersection mixin clone's actual owner and source Signature before native cache publication."}
  *
  * Go source:
  * func (c *Checker) resolveIntersectionTypeMembers(t *Type) {
@@ -14599,6 +14611,7 @@ export function Checker_resolveIntersectionTypeMembers(receiver: GoPtr<Checker>,
         signatures = Map(signatures, (signature: GoPtr<Signature>): GoPtr<Signature> => {
           const clone = Checker_cloneSignature(receiver, signature, signature!.constructorClass);
           clone!.resolvedReturnType = Checker_includeMixinType(receiver, Checker_getReturnTypeOfSignature(receiver, signature), types, mixinFlags, i);
+          clone!.derivation = { kind: "intersection-member", owner: t!, source: signature! };
           return clone;
         });
       }

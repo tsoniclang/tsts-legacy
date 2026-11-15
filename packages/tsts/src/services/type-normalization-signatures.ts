@@ -76,6 +76,56 @@ export function reacquireMemberSignature(source: Checker, producer: Checker, sig
   return result;
 }
 
+export function reacquireCompositeSignature(source: Checker, producer: Checker, signature: Signature,
+  normalizeType: (type: Type) => Type, normalizeSignature: (signature: Signature) => Signature): Signature | undefined {
+  if (signature.checkerId !== source.id) throw new TypeError("A native composite signature retains its actual producer");
+  const derivation = signature.derivation;
+  if (derivation?.kind !== "union-member" && derivation?.kind !== "intersection-member") return undefined;
+  if (source.program.SourceFiles() !== producer.program.SourceFiles() || derivation.owner.checker !== source)
+    throw new TypeError("A native composite signature retains its actual Program and type owner");
+  const kind = derivation.kind === "intersection-member" || derivation.signatureKind === "construct"
+    ? SignatureKindConstruct : SignatureKindCall;
+  if (!Checker_getSignaturesOfType(source, derivation.owner, kind).includes(signature)) return undefined;
+  const owner = normalizeType(derivation.owner);
+  if (owner.checker !== producer) throw new TypeError("A native composite signature requires its normalized owner");
+  let constituents: Set<Signature> | undefined;
+  let selectedSource: Signature | undefined;
+  if (derivation.kind === "union-member") {
+    if (!signature.composite?.isUnion || signature.composite.signatures !== derivation.constituents) return undefined;
+    constituents = new Set();
+    for (const member of derivation.constituents) {
+      if (member === undefined || member.checkerId !== source.id)
+        throw new TypeError("A native union member retains its actual constituent signatures");
+      const selected = normalizeSignature(member);
+      if (selected.checkerId !== producer.id) throw new TypeError("A native union member requires normalized constituents");
+      constituents.add(selected);
+    }
+  } else {
+    selectedSource = normalizeSignature(derivation.source);
+    if (selectedSource.checkerId !== producer.id)
+      throw new TypeError("A native mixin member requires its normalized source Signature");
+  }
+  let result: Signature | undefined;
+  for (const candidate of Checker_getSignaturesOfType(producer, owner, kind)) {
+    if (candidate === undefined) continue;
+    const record = candidate.derivation;
+    if (record?.kind !== derivation.kind || record.owner !== owner || candidate.checkerId !== producer.id) continue;
+    let matches = false;
+    if (record.kind === "intersection-member") matches = record.source === selectedSource;
+    else if (derivation.kind === "union-member" && constituents !== undefined && record.signatureKind === derivation.signatureKind) {
+      const actual = new Set(record.constituents);
+      matches = actual.size === constituents.size;
+      for (const member of actual) if (member === undefined || !constituents.has(member)) matches = false;
+    }
+    if (matches) {
+      if (result !== undefined) throw new Error("A native composite owner has one signature for its actual producing relation");
+      result = candidate;
+    }
+  }
+  if (result === undefined) throw new Error("The native composite owner retains its normalized producing relation");
+  return result;
+}
+
 export function cachedSignatureArguments(source: Checker, signature: Signature): readonly GoPtr<Type>[] | undefined {
   if (signature.checkerId !== source.id) throw new TypeError("A native signature construction requires its actual producer");
   const target = signature.target;

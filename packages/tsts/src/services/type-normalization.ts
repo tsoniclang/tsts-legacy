@@ -2,9 +2,10 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normalization-builtins.js";
 import { reacquireLiteralType } from "./type-normalization-literals.js";
+import { reacquireCompositeType } from "./type-normalization-composites.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
-import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
+import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
 export interface TypeNormalization {
@@ -31,6 +32,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     const known = signatures.get(signature);
     if (known !== undefined) return known;
     const builtin = reacquireHigherOrderSignature(source, producer, signature, value => normalizeSignature(source, value))
+      ?? reacquireCompositeSignature(source, producer, signature, normalize, value => normalizeSignature(source, value))
       ?? reacquireMemberSignature(source, producer, signature, normalize)
       ?? reacquireBuiltinSignature(source, producer, signature);
     const declared = builtin ?? reacquireDeclarationSignature(source, producer, signature);
@@ -84,6 +86,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireMappedParameter(producer, type, normalize)
       ?? reacquireSignatureType(producer, type, signature => normalizeSignature(source, signature))
       ?? reacquireTypeAlias(producer, type, normalize)
+      ?? reacquireCompositeType(producer, type, normalize)
       ?? reacquireAnonymousInstantiation(producer, type, normalize)
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)

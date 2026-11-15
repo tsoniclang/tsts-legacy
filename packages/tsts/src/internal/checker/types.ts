@@ -1659,7 +1659,9 @@ export type TypeDerivation =
 export type SignatureDerivation =
   | { readonly kind: "higher-order"; readonly at: Node; readonly returned: Signature }
   | { readonly kind: "higher-order-return"; readonly signature: Signature }
-  | { readonly kind: "member"; readonly owner: Type; readonly signatureKind: "call" | "construct"; readonly index: number };
+  | { readonly kind: "member"; readonly owner: Type; readonly signatureKind: "call" | "construct"; readonly index: number }
+  | { readonly kind: "union-member"; readonly owner: Type; readonly signatureKind: "call" | "construct"; readonly constituents: readonly GoPtr<Signature>[] }
+  | { readonly kind: "intersection-member"; readonly owner: Type; readonly source: Signature };
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::Type","kind":"type","status":"implemented","sigHash":"2aaaa3ca2ce668390a4deaf3dd2632b4ac0244a3c723df8f29ba82e064fc5098","bodyHash":"29510f2042b5d0a917dacec7367f7db171846b3d7d97bae51007c5cdcbdc7759"}
