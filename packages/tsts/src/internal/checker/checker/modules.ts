@@ -854,17 +854,18 @@ export function Checker_resolveExternalModule(receiver: GoPtr<Checker>, location
 
   if ((ResolvedModule_IsResolved(resolvedModule) && !ResolvedModule_IsProviderVirtual(resolvedModule) && !resolutionExtensionIsTSOrJson(resolvedModule!.Extension) && resolutionDiagnostic === undefined) ||
     resolutionDiagnostic === Could_not_find_a_declaration_file_for_module_0_1_implicitly_has_an_any_type) {
+    let failure: GoPtr<Diagnostic>;
     if (isForAugmentation) {
-      Checker_error(
-        receiver,
+      failure = Checker_addDiagnostic(receiver, NewDiagnosticForNode(
         errorNode,
         Invalid_module_name_in_augmentation_Module_0_resolves_to_an_untyped_module_at_1_which_cannot_be_augmented,
         moduleReference,
         resolvedModule!.ResolvedFileName,
-      );
+      ));
     } else {
-      Checker_errorOnImplicitAnyModule(receiver, receiver!.noImplicitAny && moduleNotFoundError !== undefined, errorNode, mode, resolvedModule, moduleReference);
+      failure = Checker_errorOnImplicitAnyModule(receiver, receiver!.noImplicitAny && moduleNotFoundError !== undefined, errorNode, mode, resolvedModule, moduleReference);
     }
+    if (failure !== undefined) LinkStore_Get(receiver!.nodeLinks, errorNode)!.externalModuleFailure = failure;
     return undefined;
   }
 

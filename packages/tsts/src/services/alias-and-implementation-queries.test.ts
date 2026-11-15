@@ -15,8 +15,8 @@ import { Cannot_find_module_0_or_its_corresponding_type_declarations } from "../
 
 const compilerOptions = { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024" };
 
-function open(files: Record<string, string>, options: Record<string, unknown> = {}) {
-  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles: Object.keys(files), compilerOptions: { ...compilerOptions, ...options } });
+function open(files: Record<string, string>, options: Record<string, unknown> = {}, rootFiles: readonly string[] = Object.keys(files)) {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/case", files, rootFiles, compilerOptions: { ...compilerOptions, ...options } });
   const checked = session.checkSource();
   const ast = checked.ast;
   const queries = (fileName: string) => {
@@ -143,11 +143,49 @@ for (const count of [1, 4]) test(`failed module alias answers retain the emitted
   assert.equal(rows[0]?.checker.getAliasStep(symbol) === undefined, true, "a foreign Program cannot supply a module cause");
 });
 
-test("a suppressed native module failure cannot retain a diagnostic that was not emitted", () => {
-  const program = open({ "/case/u.mts": "import { missing } from './absent.mjs';" });
+for (const count of [1, 4]) test(`failed implicit-any module answers retain only the original error with ${count} checkers`, () => {
+  const files = { "/case/u.mts": "import { value } from './untyped.js'; export { value };", "/case/untyped.js": "exports.value = 1;" };
+  const program = open(files, { checkers: count }, ["/case/u.mts"]);
   const view = program.queries("/case/u.mts");
-  const declaration = program.only(view.sourceFile, "ImportDeclaration", "import { missing } from './absent.mjs';");
-  const specifier = program.only(view.sourceFile, "StringLiteral", "'./absent.mjs'");
+  const symbol = view.checker.getSymbolAtLocation(program.nameOf(program.only(view.sourceFile, "ImportSpecifier", "value")));
+  const members = program.session.getDiagnostics("all").flatMap(root => {
+    if (root === undefined) throw new Error("The actual diagnostic roots are dense");
+    return getDiagnosticRunMembers(root);
+  });
+  assert.equal(members.length > 0, true, "the actual untyped module produces its original error");
+  const answer = view.checker.getAliasStep(symbol);
+  assert.equal(answer?.kind === "unresolved", true, "the actual error answer retains its original cause");
+  if (answer?.kind !== "unresolved") throw new Error("The implicit-any failure requires its actual original cause");
+  assert.equal(answer.cause.file === view.sourceFile && members.includes(answer.cause), true,
+    "the exact cause belongs to its actual file and published run");
+  const repeated = view.checker.getAliasStep(symbol);
+  assert.equal(repeated?.kind === "unresolved" && repeated.cause === answer.cause, true, "repeat does not produce a replacement cause");
+  const after = program.session.getDiagnostics("all").flatMap(root => {
+    if (root === undefined) throw new Error("The actual diagnostic roots are dense");
+    return getDiagnosticRunMembers(root);
+  });
+  assert.equal(after.length === members.length && after.every((diagnostic, index) => diagnostic === members[index]), true,
+    "implicit-any answer reads never re-emit or reconstruct diagnostics");
+  for (const options of [{ strict: false, noImplicitAny: false }, { noCheck: true }]) {
+    const nonerror = open(files, { ...options, checkers: count }, ["/case/u.mts"]);
+    const before = nonerror.session.getDiagnostics("all");
+    const selected = nonerror.queries("/case/u.mts");
+    const binding = selected.checker.getSymbolAtLocation(nonerror.nameOf(nonerror.only(selected.sourceFile, "ImportSpecifier", "value")));
+    assert.equal(selected.checker.getAliasStep(binding) === undefined, true, "a non-error or missing original is not fabricated into a cause");
+    assert.equal(selected.checker.getAliasStep(binding) === undefined, true, "repeated non-error view stays unavailable");
+    const current = nonerror.session.getDiagnostics("all");
+    assert.equal(current.length === before.length && current.every((root, index) => root === before[index]), true,
+      "the non-error view preserves its actual root inventory");
+  }
+});
+
+for (const untyped of [false, true]) test(`a suppressed native module failure cannot retain an un-emitted diagnostic, untyped=${untyped}`, () => {
+  const target = untyped ? "./untyped.js" : "./absent.mjs";
+  const source = `import { missing } from '${target}';`;
+  const program = open({ "/case/u.mts": source, "/case/untyped.js": "exports.missing = 1;" }, {}, ["/case/u.mts"]);
+  const view = program.queries("/case/u.mts");
+  const declaration = program.only(view.sourceFile, "ImportDeclaration", source);
+  const specifier = program.only(view.sourceFile, "StringLiteral", `'${target}'`);
   const nativeProgram = program.session.program;
   if (nativeProgram === undefined) throw new Error("The original module failure requires its actual native Program");
   const roots = program.session.getDiagnostics("all");
