@@ -8,7 +8,7 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_getSymbolOfDeclaration, Checker_getTypeOfSymbol, Checker_newSymbolEx } from "../internal/checker/checker/symbols.js";
 import { Checker_newAnonymousType } from "../internal/checker/checker/types.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { reacquireCachedFunctionType, reacquireCachedLateBoundSymbol } from "./type-normalization-declarations.js";
+import { reacquireCachedValueType, reacquireCachedLateBoundSymbol } from "./type-normalization-declarations.js";
 import { createTypeNormalization } from "./type-normalization.js";
 
 function fixture(checkers: number) {
@@ -80,7 +80,7 @@ for (const checkers of [1, 4]) test(`late-bound symbol counterparts retain both 
           const normalized = normalization.type(input);
           const expectedType = Checker_getTypeOfSymbol(producer, result);
           assert.equal(normalized === expectedType && normalized.checker === producer && normalized.symbol === result, true);
-          assert.equal(reacquireCachedFunctionType(producer, input) === expectedType, true);
+          assert.equal(reacquireCachedValueType(producer, input) === expectedType, true);
           assert.equal(normalization.type(input) === normalized, true);
         }
       }
@@ -148,17 +148,17 @@ for (const checkers of [1, 4]) test(`late-bound source ownership rejects copies 
         const uncached = Checker_newAnonymousType(source, original, new Map(), [], [], []);
         const copiedType = Checker_newAnonymousType(source, clone, new Map(), [], [], []);
         if (input === undefined || uncached === undefined || copiedType === undefined) throw new Error("The actual cached method and uncached native objects exist");
-        assert.equal(reacquireCachedFunctionType(unread, uncached), undefined);
+        assert.equal(reacquireCachedValueType(unread, uncached), undefined);
         const cloneLinks = LinkStore_Get(source.valueSymbolLinks, clone);
         const valueLinks = LinkStore_Get(source.valueSymbolLinks, original);
         if (cloneLinks === undefined || valueLinks === undefined) throw new Error("The actual native value link records exist");
         cloneLinks.resolvedType = copiedType;
-        assert.equal(reacquireCachedFunctionType(unread, copiedType), undefined,
+        assert.equal(reacquireCachedValueType(unread, copiedType), undefined,
           "a symbol-keyed value pointer alone cannot fabricate the two native declaration/binder cache relations");
         const retainedValue = valueLinks.resolvedType;
         try {
           valueLinks.resolvedType = uncached;
-          assert.equal(reacquireCachedFunctionType(unread, input), undefined);
+          assert.equal(reacquireCachedValueType(unread, input), undefined);
         } finally { valueLinks.resolvedType = retainedValue; }
       }
       if (source !== producer) {

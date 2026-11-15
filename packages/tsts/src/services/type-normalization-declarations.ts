@@ -3,7 +3,7 @@ import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstan
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration, Checker_getTypeParameterFromMappedType } from "../internal/checker/checker/signatures.js";
 import { Checker_getDeclaredTypeOfSymbol, Checker_getSymbolOfDeclaration, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
-import { SymbolFlagsFunction, SymbolFlagsMethod } from "../internal/ast/generated/flags.js";
+import { SymbolFlagsClass, SymbolFlagsEnum, SymbolFlagsFunction, SymbolFlagsMethod, SymbolFlagsValueModule } from "../internal/ast/generated/flags.js";
 import { CheckFlagsLate } from "../internal/ast/checkflags.js";
 import { Node_Symbol, SourceFile_FileName } from "../internal/ast/ast.js";
 import type { Symbol as NativeSymbol } from "../internal/ast/symbol.js";
@@ -64,21 +64,21 @@ export function reacquireCachedLateBoundSymbol(source: Checker, producer: Checke
   return result;
 }
 
-export function reacquireCachedFunctionType(producer: Checker, type: Type): Type | undefined {
+export function reacquireCachedValueType(producer: Checker, type: Type): Type | undefined {
   if (type.alias !== undefined || (type.flags & TypeFlagsObject) === 0) return undefined;
   const source = type.checker;
-  if (source === undefined) throw new TypeError("A native function value requires its actual producing checker");
+  if (source === undefined) throw new TypeError("A native symbol value requires its actual producing checker");
   const symbol = type.symbol;
-  if (symbol === undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod)) === 0
+  if (symbol === undefined || (symbol.Flags & (SymbolFlagsFunction | SymbolFlagsMethod | SymbolFlagsClass | SymbolFlagsEnum | SymbolFlagsValueModule)) === 0
     || LinkStore_TryGet(source.valueSymbolLinks, symbol)?.resolvedType !== type) return undefined;
   const selected = symbol.checkerId === undefined ? symbol : reacquireCachedLateBoundSymbol(source, producer, symbol);
   if (selected === undefined) return undefined;
   if (symbol.checkerId === undefined && source.program.SourceFiles() !== producer.program.SourceFiles())
-    throw new TypeError("A native function value requires the same actual Program");
+    throw new TypeError("A native symbol value requires the same actual Program");
   const result = Checker_getTypeOfSymbol(producer, selected);
   if (result === undefined || result.checker !== producer || result.symbol !== selected
     || LinkStore_TryGet(producer.valueSymbolLinks, selected)?.resolvedType !== result)
-    throw new TypeError("The actual function symbol retains its target producer's cached value");
+    throw new TypeError("The actual symbol retains its target producer's cached value");
   return result;
 }
 

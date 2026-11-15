@@ -9,7 +9,7 @@ import { Checker_GetTypeAtLocation, Checker_newAnonymousType } from "../internal
 import { Checker_getTypeOfSymbol, Checker_newSymbolEx } from "../internal/checker/checker/symbols.js";
 import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { reacquireCachedFunctionType } from "./type-normalization-declarations.js";
+import { reacquireCachedValueType } from "./type-normalization-declarations.js";
 import { createTypeNormalization } from "./type-normalization.js";
 
 function fixture(checkers: number) {
@@ -71,7 +71,7 @@ for (const checkers of [1, 4]) test(`cached function values retain their exact s
         const expected = Checker_getTypeOfSymbol(producer, symbol);
         assert.equal(result === expected && result.checker === producer && result.symbol === symbol, true);
         assert.equal(LinkStore_TryGet(producer.valueSymbolLinks, symbol)?.resolvedType === result, true);
-        assert.equal(reacquireCachedFunctionType(producer, original) === result, true);
+        assert.equal(reacquireCachedValueType(producer, original) === result, true);
         assert.equal(normalization.type(original) === result, true, "the invocation memo preserves an admitted native pointer");
         assert.equal(Checker_isTypeIdenticalTo(producer, result, expected), true);
         assert.equal(original.derivation === record, true, "the cache reader writes no creation or contextual owner record");
@@ -117,27 +117,27 @@ for (const checkers of [1, 4]) test(`cached function source admission precedes t
       const transientLinks = LinkStore_Get(source.valueSymbolLinks, transient);
       if (transientLinks === undefined) throw new Error("The actual transient native symbol has its allocated links");
       transientLinks.resolvedType = transientType;
-      assert.equal(reacquireCachedFunctionType(unread, clone), undefined, "same symbol does not admit an uncached native clone");
-      assert.equal(reacquireCachedFunctionType(unread, copied), undefined, "a copied symbol does not own the original cache entry");
-      assert.equal(reacquireCachedFunctionType(unread, transientType), undefined,
+      assert.equal(reacquireCachedValueType(unread, clone), undefined, "same symbol does not admit an uncached native clone");
+      assert.equal(reacquireCachedValueType(unread, copied), undefined, "a copied symbol does not own the original cache entry");
+      assert.equal(reacquireCachedValueType(unread, transientType), undefined,
         "a transient native symbol is not a shared function binder even with its own cache entry");
       const sourceLinks = LinkStore_Get(source.valueSymbolLinks, symbol);
       if (sourceLinks === undefined) throw new Error("The actual source symbol retains its cached links");
       const retained = sourceLinks.resolvedType;
       try {
         sourceLinks.resolvedType = clone;
-        assert.equal(reacquireCachedFunctionType(unread, original), undefined, "the exact original source cache pointer is required");
+        assert.equal(reacquireCachedValueType(unread, original), undefined, "the exact original source cache pointer is required");
       } finally {
         sourceLinks.resolvedType = retained;
       }
-      assert.throws(() => reacquireCachedFunctionType(foreignOwner, original), TypeError);
+      assert.throws(() => reacquireCachedValueType(foreignOwner, original), TypeError);
       if (source !== producer) {
         const expected = Checker_getTypeOfSymbol(producer, symbol);
         const targetLinks = LinkStore_Get(producer.valueSymbolLinks, symbol);
         if (targetLinks === undefined) throw new Error("The actual target symbol retains its cached links");
         try {
           targetLinks.resolvedType = original;
-          assert.throws(() => reacquireCachedFunctionType(producer, original), TypeError,
+          assert.throws(() => reacquireCachedValueType(producer, original), TypeError,
             "a target cache cannot hand a source-checker Type into a native target operation");
         } finally {
           targetLinks.resolvedType = expected;
@@ -148,10 +148,10 @@ for (const checkers of [1, 4]) test(`cached function source admission precedes t
     if (foreignSymbol === undefined) throw new Error("The independent Program has its actual function symbol");
     const foreignType = Checker_getTypeOfSymbol(foreignOwner, foreignSymbol);
     if (foreignType === undefined) throw new Error("The foreign function value is produced");
-    assert.throws(() => reacquireCachedFunctionType(unread, foreignType), TypeError);
+    assert.throws(() => reacquireCachedValueType(unread, foreignType), TypeError);
     const fresh = Checker_GetTypeAtLocation(source, current.literal);
     if (fresh === undefined) throw new Error("The genuine fresh TypeOnly recursive literal is handed out");
-    assert.equal(reacquireCachedFunctionType(unread, fresh), undefined,
+    assert.equal(reacquireCachedValueType(unread, fresh), undefined,
       "the cached method input does not turn its fresh containing literal into a cached function value");
     if (source !== producer) assert.throws(() => createTypeNormalization(producer).type(fresh), /unfinished/,
       "the actual TypeOnly root still needs its genuine creation and handout relation");
