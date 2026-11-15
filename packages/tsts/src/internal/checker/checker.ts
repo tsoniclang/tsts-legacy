@@ -30,6 +30,7 @@ import {
 import type { ObjectFlags, Type } from "./types.js";
 import {
   ObjectFlagsReference,
+  TypeFlagsObject,
   TypeFlagsNone,
   TypeFlagsNever,
   TypeFlagsUnion,
@@ -65,6 +66,7 @@ import {
   Type_AsTupleType,
   Type_AsObjectType,
   Type_AsTypeReference,
+  Type_Target,
   Type_AsIndexedAccessType,
   Type_TargetTupleType,
 } from "./types.js";
@@ -567,6 +569,16 @@ export function Checker_createTypeReferenceEx(receiver: GoPtr<Checker>, target: 
   Type_AsTypeReference(t)!.resolvedTypeArguments = typeArguments;
   intf!.instantiations.set(id, t);
   return t;
+}
+
+export function cachedReferenceInputs(checker: Checker, type: Type): readonly GoPtr<Type>[] | undefined {
+  if (type.checker !== checker || (type.flags & TypeFlagsObject) === 0 || (type.objectFlags & ObjectFlagsReference) === 0)
+    return undefined;
+  const target = Type_Target(type);
+  const inputs = Type_AsTypeReference(type)?.resolvedTypeArguments;
+  if (target?.checker !== checker || inputs === undefined) return undefined;
+  for (const input of inputs) if (input?.checker !== checker) return undefined;
+  return Type_AsObjectType(target)?.instantiations.get(getTypeListKey(inputs)) === type ? inputs : undefined;
 }
 
 /**

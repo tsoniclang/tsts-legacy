@@ -1,5 +1,6 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey, getTypeListKey } from "../internal/checker/checker/state.js";
+import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey } from "../internal/checker/checker/state.js";
+import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration, Checker_getTypeParameterFromMappedType } from "../internal/checker/checker/signatures.js";
 import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
@@ -8,7 +9,7 @@ import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
 import { IsTypeNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsMapped, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
-  Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
+  Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_Target } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
 export function reacquireDeclarationSignature(source: Checker, producer: Checker, signature: Signature): Signature | undefined {
@@ -52,8 +53,8 @@ export function reacquireTypeReference(producer: Checker, type: Type, normalize:
     if (result === undefined) throw new Error("The native tuple target constructor did not return its value");
     return result;
   }
-  const arguments_ = Type_AsTypeReference(type)?.resolvedTypeArguments;
-  if (arguments_ === undefined || Type_AsObjectType(target)?.instantiations.get(getTypeListKey(arguments_)) !== type) return undefined;
+  const arguments_ = cachedReferenceInputs(source, type);
+  if (arguments_ === undefined) return undefined;
   const selectedTarget = normalize(target);
   if (selectedTarget.checker !== producer) throw new TypeError("A native reference requires its normalized input producer");
   const selectedArguments: Type[] = [];

@@ -1,6 +1,7 @@
 import type { InferenceContext, InferenceInfo } from "./state.js";
 import { CheckModeNormal } from "./state.js";
 import type { Checker } from "./state.js";
+import { cachedReferenceInputs } from "../checker.js";
 import type { Node } from "../../ast/spine.js";
 import { IsCallOrNewExpression } from "../../ast/utilities.js";
 import { TypeFlagsUnion, Type_Types } from "../types.js";
@@ -374,11 +375,14 @@ function currentTrace(
   return journal?.complete ? journal.traces.findLast(trace => trace.context.inferences === inferences) : undefined;
 }
 
-function ownedContextualInput(type: Type, at: Node): boolean {
+function ownedContextualInput(checker: Checker, type: Type, at: Node): boolean {
   const pending = [type];
+  const visited = new Set<Type>();
   while (pending.length !== 0) {
     const current = pending.pop();
     if (current === undefined) throw new Error("Contextual construction inputs are dense");
+    if (visited.has(current)) continue;
+    visited.add(current);
     const recipe = current.derivation;
     if (recipe?.kind === "object-literal") {
       if (recipe.mode === CheckModeNormal) continue;
@@ -393,6 +397,11 @@ function ownedContextualInput(type: Type, at: Node): boolean {
         if (member === undefined) throw new Error("A contextual union retains every actual native member");
         pending.push(member);
       }
+    } else if (recipe === undefined) {
+      for (const input of cachedReferenceInputs(checker, current) ?? []) {
+        if (input === undefined) throw new Error("A cached reference retains every actual constructor input");
+        pending.push(input);
+      }
     }
   }
   return false;
@@ -403,10 +412,25 @@ export function retainContextualArgumentOwners(checker: Checker, at: Node, signa
   if (application.invocation !== at || application.instantiatedSignature !== signature || signature.checkerId !== checker.id)
     throw new Error("A contextual argument belongs to its actual final selected application");
   for (const [index, argument] of application.signatureTypeArguments.entries()) {
-    const value = argument.checkedArgument;
-    if (value === undefined || value.checker !== checker) continue;
-    const recipe = value.derivation;
-    if (recipe !== undefined && recipe.kind !== "regular-of" && recipe.kind !== "widened-from" && recipe.kind !== "widened-in") continue;
-    if (ownedContextualInput(value, at)) value.derivation = { kind: "inferred-at", at, index };
+    const root = argument.checkedArgument;
+    if (root === undefined || root.checker !== checker) continue;
+    const pending: { readonly value: Type; readonly path: readonly number[] }[] = [{ value: root, path: [] }];
+    const visited = new Set<Type>();
+    while (pending.length !== 0) {
+      const next = pending.pop();
+      if (next === undefined) throw new Error("The selected constructor input vector is dense");
+      const { value, path } = next;
+      if (visited.has(value)) continue;
+      visited.add(value);
+      const inputs = cachedReferenceInputs(checker, value);
+      const recipe = value.derivation;
+      if (inputs === undefined && (recipe === undefined || recipe.kind === "regular-of" || recipe.kind === "widened-from" || recipe.kind === "widened-in")
+        && ownedContextualInput(checker, value, at)) value.derivation = { kind: "inferred-at", at, index, path };
+      for (let position = (inputs?.length ?? 0) - 1; position >= 0; position--) {
+        const input = inputs?.[position];
+        if (input === undefined) throw new Error("A cached reference retains every actual constructor input");
+        pending.push({ value: input, path: [...path, position] });
+      }
+    }
   }
 }
