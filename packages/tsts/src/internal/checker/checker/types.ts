@@ -1,4 +1,5 @@
 import type { bool, byte, int } from "../../../go/scalars.js";
+import type { LiteralSpreadSite, LiteralPartialSite } from "../types.js";
 import type { GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
 import { NewGoStructMap } from "../../../go/compat.js";
 import type {
@@ -3554,7 +3555,7 @@ export function Checker_hasEmptyObjectIntersection(receiver: GoPtr<Checker>, t: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkObjectLiteral","kind":"method","status":"implemented","sigHash":"76f563d67df11b553d680ffb6444ff025f6b4ee91def1549b368ae23496e6879","bodyHash":"9571affc8c9b52f6a243b629f696c4a557d4fe3118b672d3688976e1de2c96cf"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual node and check mode on fresh complete literal results only; spread fragments and shared results receive no cached-owner recipe."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–20 retain actual node/mode on fresh complete literals and actual boundary/phase inputs on fresh normal spread fragments; native normal/contextual decisions, borrowed results and caches remain unchanged."}
  *
  * Go source:
  * func (c *Checker) checkObjectLiteral(node *ast.Node, checkMode CheckMode) *Type {
@@ -3808,7 +3809,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     }
   }
   let offset = 0;
-  const createObjectLiteralType = (): GoPtr<Type> => {
+  const createObjectLiteralType = (boundary: Node | null, fragment: boolean): GoPtr<Type> => {
     const indexInfos: GoSlice<GoPtr<IndexInfo>> = [];
     const isReadonly = Checker_isConstContext(receiver, node);
     if (hasComputedStringProperty) {
@@ -3831,6 +3832,8 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     if (inDestructuringPattern) {
       receiver!.patternForType.set(result, node);
     }
+    if (fragment && checkMode === CheckModeNormal)
+      result!.derivation = { kind: "literal-fragment", node: node!, mode: checkMode, boundary };
     return result;
   };
   for (const memberDecl of Node_Properties(node) ?? []) {
@@ -3897,7 +3900,8 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
       }
     } else if (memberDecl!.Kind === KindSpreadAssignment) {
       if (propertiesArray.length > 0) {
-        spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(), Node_Symbol(node), objectFlags, inConstContext);
+        spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(memberDecl!, true), Node_Symbol(node), objectFlags, inConstContext,
+          checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: memberDecl!, phase: "properties" } : null);
         propertiesArray = [];
         propertiesTable = new globalThis.Map<string, GoPtr<Symbol>>();
         hasComputedStringProperty = false;
@@ -3906,7 +3910,8 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
       }
       const t = Checker_getReducedType(receiver, Checker_checkExpressionEx(receiver, Node_Expression(memberDecl), (checkMode & CheckModeInferential) as CheckMode));
       if (Checker_isValidSpreadType(receiver, t)) {
-        const mergedType = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, t, inConstContext);
+        const mergedType = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, t, inConstContext,
+          checkMode === CheckModeNormal ? { site: { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" }, role: "operand", other: spread! } : null);
         if (allPropertiesTable !== undefined) {
           Checker_checkSpreadPropOverrides(receiver, mergedType, allPropertiesTable, memberDecl);
         }
@@ -3914,7 +3919,8 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
         if (Checker_isErrorType(receiver, spread)) {
           continue;
         }
-        spread = Checker_getSpreadType(receiver, spread, mergedType, Node_Symbol(node), objectFlags, inConstContext);
+        spread = Checker_getSpreadType(receiver, spread, mergedType, Node_Symbol(node), objectFlags, inConstContext,
+          checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" } : null);
       } else {
         Checker_error(receiver, memberDecl, diagnosticsMessages.Spread_types_may_only_be_created_from_object_types);
         spread = receiver!.errorType;
@@ -3947,7 +3953,8 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
   }
   if (spread !== receiver!.emptyObjectType) {
     if (propertiesArray.length > 0) {
-      spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(), Node_Symbol(node), objectFlags, inConstContext);
+      spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(null, true), Node_Symbol(node), objectFlags, inConstContext,
+        checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: null, phase: "properties" } : null);
       propertiesArray = [];
       propertiesTable = new globalThis.Map<string, GoPtr<Symbol>>();
       hasComputedStringProperty = false;
@@ -3955,18 +3962,19 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     }
     return Checker_mapType(receiver, spread, (t: GoPtr<Type>): GoPtr<Type> => {
       if (t === receiver!.emptyObjectType) {
-        return createObjectLiteralType();
+        return createObjectLiteralType(null, true);
       }
       return t;
     });
   }
-  const result = createObjectLiteralType();
+  const result = createObjectLiteralType(null, false);
   result!.derivation = { kind: "object-literal", node: node!, mode: checkMode };
   return result;
 }
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getSpreadType","kind":"method","status":"implemented","sigHash":"7eda3c5b06b5a6f7db564650f4200558bdbac3003cbd8c2fd11e0b01a0d4d0d4","bodyHash":"cb080263abf0fd19c6d011c63bed2fe3a9427cccc4f7737082299be18b06fdd7"}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"R5-20 passes actual normal literal occurrence inputs explicitly and retains them only on this newly created spread result; absent contexts, borrowed outputs and native cache/constructor choices are unchanged.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>,packages/tsts/src/internal/checker/types.ts::ObjectFlags,packages/tsts/src/go/scalars.ts::bool)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>,packages/tsts/src/internal/checker/types.ts::ObjectFlags,packages/tsts/src/go/scalars.ts::bool,null|packages/tsts/src/internal/checker/types.ts::LiteralSpreadSite)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) getSpreadType(left *Type, right *Type, symbol *ast.Symbol, objectFlags ObjectFlags, readonly bool) *Type {
@@ -4079,7 +4087,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
  * 	return spread
  * }
  */
-export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type>, right: GoPtr<Type>, symbol_: GoPtr<Symbol>, objectFlags: ObjectFlags, readonly: bool): GoPtr<Type> {
+export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type>, right: GoPtr<Type>, symbol_: GoPtr<Symbol>, objectFlags: ObjectFlags, readonly: bool, site: LiteralSpreadSite | null): GoPtr<Type> {
   if ((left!.flags & TypeFlagsAny) !== 0 || (right!.flags & TypeFlagsAny) !== 0) {
     return receiver!.anyType;
   }
@@ -4092,20 +4100,22 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
   if ((right!.flags & TypeFlagsNever) !== 0) {
     return left;
   }
-  left = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, left, readonly);
+  left = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, left, readonly,
+    site === null ? null : { site, role: "left", other: right! });
   if ((left!.flags & TypeFlagsUnion) !== 0) {
     if (Checker_checkCrossProductUnion(receiver, [left, right])) {
       return Checker_mapType(receiver, left, (t: GoPtr<Type>): GoPtr<Type> => {
-        return Checker_getSpreadType(receiver, t, right, symbol_, objectFlags, readonly);
+        return Checker_getSpreadType(receiver, t, right, symbol_, objectFlags, readonly, site);
       });
     }
     return receiver!.errorType;
   }
-  right = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, right, readonly);
+  right = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, right, readonly,
+    site === null ? null : { site, role: "right", other: left! });
   if ((right!.flags & TypeFlagsUnion) !== 0) {
     if (Checker_checkCrossProductUnion(receiver, [left, right])) {
       return Checker_mapType(receiver, right, (t: GoPtr<Type>): GoPtr<Type> => {
-        return Checker_getSpreadType(receiver, left, t, symbol_, objectFlags, readonly);
+        return Checker_getSpreadType(receiver, left, t, symbol_, objectFlags, readonly, site);
       });
     }
     return receiver!.errorType;
@@ -4122,7 +4132,7 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
       const lastLeft = types[types.length - 1]!;
       if (Checker_isNonGenericObjectType(receiver, lastLeft) && Checker_isNonGenericObjectType(receiver, right)) {
         const newTypes = slices.Clone(types)!;
-        newTypes[newTypes.length - 1] = Checker_getSpreadType(receiver, lastLeft, right, symbol_, objectFlags, readonly);
+        newTypes[newTypes.length - 1] = Checker_getSpreadType(receiver, lastLeft, right, symbol_, objectFlags, readonly, site);
         return Checker_getIntersectionType(receiver, newTypes);
       }
     }
@@ -4175,6 +4185,7 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
   });
   const spread = Checker_newAnonymousType(receiver, symbol_, members, [], [], spreadIndexInfos);
   spread!.objectFlags |= (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral | ObjectFlagsContainsSpread | objectFlags) as ObjectFlags;
+  if (site !== null) spread!.derivation = { kind: "literal-merge", site, left: left!, right: right!, flags: objectFlags, readonly };
   return spread;
 }
 
@@ -4208,6 +4219,7 @@ export function Checker_isNonGenericObjectType(receiver: GoPtr<Checker>, t: GoPt
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.tryMergeUnionOfObjectTypeAndEmptyObject","kind":"method","status":"implemented","sigHash":"58d9f17fa4424ee96779fcf9122d508e7ec87ac3f6da2c3f019946db62f3b2f1","bodyHash":"8ded0cae1c87f677ae58d848f72c7970085612702af93ce5b3d241316c760ac7"}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"R5-20 passes actual normal literal occurrence inputs explicitly and retains them only on this newly created spread result; absent contexts, borrowed outputs and native cache/constructor choices are unchanged.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/scalars.ts::bool)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/scalars.ts::bool,null|packages/tsts/src/internal/checker/types.ts::LiteralPartialSite)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) tryMergeUnionOfObjectTypeAndEmptyObject(t *Type, readonly bool) *Type {
@@ -4259,7 +4271,7 @@ export function Checker_isNonGenericObjectType(receiver: GoPtr<Checker>, t: GoPt
  * 	return spread
  * }
  */
-export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<Checker>, t: GoPtr<Type>, readonly: bool): GoPtr<Type> {
+export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<Checker>, t: GoPtr<Type>, readonly: bool, context: LiteralPartialSite | null): GoPtr<Type> {
   if ((t!.flags & TypeFlagsUnion) === 0) {
     return t;
   }
@@ -4306,6 +4318,8 @@ export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<
   }
   const spread = Checker_newAnonymousType(receiver, firstType!.symbol, members, [], [], Checker_getIndexInfosOfType(receiver, firstType));
   spread!.objectFlags |= (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral) as ObjectFlags;
+  if (context !== null) spread!.derivation = { kind: "literal-partial", site: context.site, source: t!,
+    other: context.other, role: context.role, readonly };
   return spread;
 }
 

@@ -5,6 +5,7 @@ import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireCompositeType } from "./type-normalization-composites.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireContextualArgument } from "./type-normalization-contextual-arguments.js";
+import { reacquireLiteralGraph } from "./type-normalization-spreads.js";
 import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireContextWidening, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
@@ -93,6 +94,12 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)
       ?? reacquireTypeReference(producer, type, normalize)
+      ?? reacquireLiteralGraph(producer, type, normalize, (original, selected) => {
+        const previous = types.get(original);
+        if (previous !== undefined && previous !== selected)
+          throw new Error("A native construction preserves its previously admitted normalization");
+        types.set(original, selected);
+      })
       ?? reacquireContextWidening(producer, type, normalize)
       ?? reacquireExpressionConstruction(producer, type, normalize)
       ?? reacquireCachedRestType(producer, type)

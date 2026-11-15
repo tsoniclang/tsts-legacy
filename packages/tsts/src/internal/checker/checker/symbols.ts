@@ -10425,6 +10425,7 @@ export function Checker_resolveESModuleSymbol(receiver: GoPtr<Checker>, moduleSy
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getTypeWithSyntheticDefaultImportType","kind":"method","status":"implemented","sigHash":"3ccd16750ce3c055a159b187e35186cb2ccb591922beb5fb302e01bdefbc436e","bodyHash":"f949cf1f813b45df71dc989a4c1ca15923948f4a865e48d8f557fdf195fc58b5"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Pass explicit absence to R5-20 spread occurrence inputs because a synthetic import wrapper is not a normal object-literal question; native module/cache decisions are unchanged."}
  *
  * Go source:
  * func (c *Checker) getTypeWithSyntheticDefaultImportType(t *Type, symbol *ast.Symbol, originalSymbol *ast.Symbol, moduleSpecifier *ast.Node) *Type {
@@ -10469,7 +10470,7 @@ export function Checker_getTypeWithSyntheticDefaultImportType(receiver: GoPtr<Ch
       const defaultContainingObject = Checker_createDefaultPropertyWrapperForModule(receiver, symbol_, originalSymbol, anonymousSymbol);
       (LinkStore_Get(receiver!.valueSymbolLinks, anonymousSymbol) as GoPtr<ValueSymbolLinks>)!.resolvedType = defaultContainingObject;
       if (Checker_isValidSpreadType(receiver, t)) {
-        syntheticType = Checker_getSpreadType(receiver, t, defaultContainingObject, anonymousSymbol, ObjectFlagsNone, false);
+        syntheticType = Checker_getSpreadType(receiver, t, defaultContainingObject, anonymousSymbol, ObjectFlagsNone, false, null);
       } else {
         syntheticType = defaultContainingObject;
       }

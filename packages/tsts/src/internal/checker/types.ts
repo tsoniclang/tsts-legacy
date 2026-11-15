@@ -1650,9 +1650,25 @@ export function TypeAlias_TypeArguments(receiver: GoPtr<TypeAlias>): GoSlice<GoP
   return receiver.typeArguments;
 }
 
+export interface LiteralSpreadSite {
+  readonly node: Node;
+  readonly mode: CheckMode;
+  readonly boundary: Node | null;
+  readonly phase: "properties" | "spread";
+}
+export interface LiteralPartialSite {
+  readonly site: LiteralSpreadSite;
+  readonly role: "operand" | "left" | "right";
+  readonly other: Type;
+}
 export type TypeDerivation =
   | { readonly kind: "inferred-at"; readonly at: Node; readonly index: number; readonly path: readonly number[] }
   | { readonly kind: "object-literal"; readonly node: Node; readonly mode: CheckMode }
+  | { readonly kind: "literal-fragment"; readonly node: Node; readonly mode: CheckMode; readonly boundary: Node | null }
+  | { readonly kind: "literal-merge"; readonly site: LiteralSpreadSite; readonly left: Type; readonly right: Type;
+    readonly flags: ObjectFlags; readonly readonly: boolean }
+  | { readonly kind: "literal-partial"; readonly site: LiteralSpreadSite; readonly source: Type; readonly other: Type;
+    readonly role: "operand" | "left" | "right"; readonly readonly: boolean }
   | { readonly kind: "regular-of" | "widened-from"; readonly source: Type }
   | { readonly kind: "widened-in"; readonly source: Type; readonly root: Type; readonly path: readonly string[] }
   | { readonly kind: "restrictive"; readonly source: Type }

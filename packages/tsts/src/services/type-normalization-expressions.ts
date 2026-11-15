@@ -1,5 +1,5 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { CachedTypeKindRegularObjectLiteral, CachedTypeKindWidened, CheckModeNormal, contextWideningKey } from "../internal/checker/checker/state.js";
+import { CachedTypeKindRegularObjectLiteral, CachedTypeKindWidened, contextWideningKey } from "../internal/checker/checker/state.js";
 import { Checker_checkExpressionCached } from "../internal/checker/checker/syntax-checking.js";
 import { Checker_getRegularTypeOfObjectLiteral, Checker_getWidenedType } from "../internal/checker/checker/types.js";
 import { Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
@@ -12,25 +12,17 @@ import type { Type } from "../internal/checker/types.js";
 
 export function reacquireExpressionConstruction(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
   const derivation = type.derivation;
-  if (derivation?.kind !== "object-literal" && derivation?.kind !== "regular-of" && derivation?.kind !== "widened-from")
+  if (derivation?.kind !== "regular-of" && derivation?.kind !== "widened-from")
     return undefined;
   const source = type.checker;
   if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles())
     throw new TypeError("A native expression construction retains its actual producer in the same Program");
-  let result: Type | undefined;
-  if (derivation.kind === "object-literal") {
-    if (derivation.mode !== CheckModeNormal) return undefined;
-    if (!IsObjectLiteralExpression(derivation.node) || type.symbol !== Node_Symbol(derivation.node))
-      throw new TypeError("A complete native object literal retains its actual source node");
-    result = Checker_checkExpressionCached(producer, derivation.node);
-  } else {
-    if (derivation.source.checker !== source)
-      throw new TypeError("A native object construction retains its original source checker");
-    const selected = normalize(derivation.source);
-    if (selected.checker !== producer) throw new TypeError("The construction source is normalized by its actual target producer");
-    result = derivation.kind === "regular-of" ? Checker_getRegularTypeOfObjectLiteral(producer, selected)
-      : Checker_getWidenedType(producer, selected);
-  }
+  if (derivation.source.checker !== source)
+    throw new TypeError("A native object construction retains its original source checker");
+  const selected = normalize(derivation.source);
+  if (selected.checker !== producer) throw new TypeError("The construction source is normalized by its actual target producer");
+  const result = derivation.kind === "regular-of" ? Checker_getRegularTypeOfObjectLiteral(producer, selected)
+    : Checker_getWidenedType(producer, selected);
   if (result === undefined || result.checker !== producer)
     throw new Error("The native expression construction returns its actual target-produced result");
   return result;

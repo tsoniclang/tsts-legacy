@@ -47,7 +47,7 @@ export function extractFileDescriptors(api, moduleId, text, annotation = DEFAULT
   const sf = parseSource(api, "/" + moduleId, text);
   const base = {
     api,
-    text,
+    bytes: Buffer.from(text, "utf8"),
     imports: buildImportMap(api, sf),
     localTypes: buildLocalTypeNames(api, sf),
     moduleId,
@@ -58,6 +58,8 @@ export function extractFileDescriptors(api, moduleId, text, annotation = DEFAULT
     .sort((a, b) => a.anchor - b.anchor);
   const out = [];
   const re = annotationRegExp(annotation.tag);
+  let characterOffset = 0;
+  let byteOffset = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
     let meta;
@@ -66,7 +68,9 @@ export function extractFileDescriptors(api, moduleId, text, annotation = DEFAULT
     } catch {
       continue; // malformed metadata is reported by the porter's own scan
     }
-    const off = m.index;
+    byteOffset += Buffer.byteLength(text.slice(characterOffset, m.index), "utf8");
+    characterOffset = m.index;
+    const off = byteOffset;
     // Bind to the first declaration after the annotation whose name matches the
     // unit (skipping interleaved non-tracked helpers); fall back to the first
     // declaration after the annotation for value groups and reserved-word renames.

@@ -71,8 +71,9 @@ for (const checkers of [1, 4]) test(`cached spread expression roots retain their
           if (target === undefined) throw new Error("The target checker retains that exact native cached form");
           assert.equal(reacquireCachedObjectExpression(producer, original) === target, true);
           assert.equal(normalization.type(original) === target && normalization.type(original) === target, true);
-          if (original === originalsAt[0]) assert.equal(original.derivation, undefined,
-            "the existing expression cache already owns the complete spread result");
+          if (original === originalsAt[0]) assert.equal(original.derivation?.kind === "literal-merge"
+            && original.derivation.site.node === node, true,
+          "the fresh creation record preserves the existing complete expression cache identity");
           else assert.equal((original.derivation?.kind === "regular-of" || original.derivation?.kind === "widened-from")
             && original.derivation.source === originalsAt[0], true,
           "a fresh derived form retains its exact source, not a guessed complete-literal recipe");
@@ -80,7 +81,7 @@ for (const checkers of [1, 4]) test(`cached spread expression roots retain their
         }
         const original: Type | undefined = originalsAt[0];
         if (original === undefined) throw new Error("The literal has its real initial cached answer");
-        const uncached = Checker_getSpreadType(source, source.emptyObjectType, original, Node_Symbol(node), ObjectFlagsNone, false);
+        const uncached = Checker_getSpreadType(source, source.emptyObjectType, original, Node_Symbol(node), ObjectFlagsNone, false, null);
         if (uncached === undefined) throw new Error("The actual native spread construction returns its fresh result");
         assert.equal(uncached !== original && uncached.symbol === original.symbol, true);
         assert.equal(reacquireCachedObjectExpression(producer, uncached), undefined,

@@ -1,6 +1,6 @@
 export { assertDistFresh, loadParser, parseSource } from "./ast-signatures-runtime.mjs";
 
-const sliceText = (api, text, node) => (node ? text.slice(api.Node_Pos(node), api.Node_End(node)).trim() : "");
+const sliceText = (api, bytes, node) => (node ? bytes.subarray(api.Node_Pos(node), api.Node_End(node)).toString("utf8").trim() : "");
 const identText = (n) => (n ? n.Text : undefined);
 const isExported = (api, node) =>
   (node.modifiers?.Nodes ?? node.modifiers ?? []).some?.((m) => m.Kind === api.Kinds.KindExportKeyword) ?? false;
@@ -61,7 +61,7 @@ export function buildLocalTypeNames(api, sourceFile) {
 
 // ctx: { api, text, imports:{named,namespaces}, localTypes:Set, typeParamIndex:Map<name,int> }
 export function canonicalizeType(node, ctx) {
-  const { api, text } = ctx;
+  const { api, bytes } = ctx;
   if (!node) return { t: "kw", kw: "any" }; // missing annotation handled by caller; default
   const K = api.Kinds;
   switch (node.Kind) {
@@ -83,12 +83,12 @@ export function canonicalizeType(node, ctx) {
       return canonicalizeObjectType(node.Members?.Nodes ?? [], ctx);
     case K.KindLiteralType:
       if (typeof node.Literal?.Text === "string") return { t: "lit", text: JSON.stringify(node.Literal.Text) };
-      return { t: "lit", text: sliceText(api, text, node) };
+      return { t: "lit", text: sliceText(api, bytes, node) };
     default: {
       const kw = keywordOf(api, node.Kind);
       if (kw) return { t: "kw", kw };
       // Unhandled (mapped/conditional/indexed/typeof/etc.): compare by normalized text.
-      return { t: "raw", text: sliceText(api, text, node).replace(/\s+/g, " ") };
+      return { t: "raw", text: sliceText(api, bytes, node).replace(/\s+/g, " ") };
     }
   }
 }
@@ -443,7 +443,7 @@ function memberDescriptor(api, m, ctx) {
   }
   if (m.Kind === api.Kinds.KindPropertySignature) {
     const sig = api.Casts.AsPropertySignatureDeclaration(m);
-    if (sliceText(api, ctx.text, sig.name) === "[JsonFieldNames]") {
+    if (sliceText(api, ctx.bytes, sig.name) === "[JsonFieldNames]") {
       return null;
     }
     return {
