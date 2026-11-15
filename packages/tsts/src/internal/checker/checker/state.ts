@@ -4,6 +4,7 @@ import type { BackingConstraintEvidenceState } from "./backing-constraint-eviden
 import type { GoComparable, GoConstraint, GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
 import { NewGoStructMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
+import { GetNodeId } from "../../ast/utilities.js";
 import type { Hasher, Uint128 } from "../../../go/github.com/zeebo/xxh3.js";
 import * as xxh3 from "../../../go/github.com/zeebo/xxh3.js";
 import { Uint32, Uint64 } from "../../../go/sync/atomic.js";
@@ -1220,6 +1221,7 @@ export interface IterationTypesResolver {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::type::WideningContext","kind":"type","status":"implemented","sigHash":"23d840735d067fc350c9eebb2b38b25af9513c13d1a44b73b671ce03c4ede488","bodyHash":"f99ee40db41e09ed2c8823a81b9d65121842433751990174ad95d60a83a61fb6"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-17–18 retain the actual root throughout its native widening contexts so fresh contextual results have an exact root and property-path producer relation.","goSignature":"interface{childContexts:packages/tsts/src/go/compat.ts::GoMap<string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::WideningContext>>;getChildContext?:(string)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::WideningContext>;parent:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::WideningContext>;propertyName:string;resolvedProperties:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>>;siblings:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;widenedTypes:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}","tsSignature":"interface{childContexts:packages/tsts/src/go/compat.ts::GoMap<string,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::WideningContext>>;parent:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::WideningContext>;propertyName:string;resolvedProperties:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>>;root:packages/tsts/src/internal/checker/types.ts::Type;siblings:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;widenedTypes:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}"}
  *
  * Go source:
  * WideningContext struct {
@@ -1232,12 +1234,22 @@ export interface IterationTypesResolver {
  * }
  */
 export interface WideningContext {
+  readonly root: Type;
   parent: GoPtr<WideningContext>;
   propertyName: string;
   siblings: GoSlice<GoPtr<Type>>;
   resolvedProperties: GoSlice<GoPtr<Symbol>>;
   childContexts: GoMap<string, GoPtr<WideningContext>>;
   widenedTypes: GoMap<GoPtr<Type>, GoPtr<Type>>;
+}
+
+export function contextWideningKey(root: Type, path: readonly string[], source: Type): string | undefined {
+  let original = source;
+  while (original.derivation?.kind === "regular-of" || original.derivation?.kind === "widened-from")
+    original = original.derivation.source;
+  const literal = original.derivation;
+  if (literal?.kind !== "object-literal") return undefined;
+  return JSON.stringify([String(root.id), path, String(GetNodeId(literal.node)), literal.mode]);
 }
 
 /**
@@ -1326,7 +1338,7 @@ export let nextCheckerID: Uint32 = new Uint32();
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::type::Checker","kind":"type","status":"implemented","sigHash":"e4967269fbe71279dee2e723a062b8b622327a2bcc4a9a6ef1d5a2445b4d0a13","bodyHash":"8aab79756b2cdc4b710a0bc8e9882716aa7b86edf09b3586aab083c9e6c9a6d5"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain the target-neutral journal and backing constraints on the owning checker; immutable numeric producer identity replaces query registration, and native arena retention is unnecessary for stable JS objects.","goSignatureHash":"sha256:f666d9aff0841e40ecb7aa8984e27a1e1836e4505fc625965ee7566e3fbc0ca2","tsSignatureHash":"sha256:7dede7509548b15ad2fa9092e8cc6953801d89e40709e631c7e22826e4b7e50c"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain the target-neutral journal, backing constraints and R5-17–18 actual context-widening producer relation on the owning checker; immutable numeric producer identity replaces query registration, and native arena retention is unnecessary for stable JS objects.","goSignatureHash":"sha256:f666d9aff0841e40ecb7aa8984e27a1e1836e4505fc625965ee7566e3fbc0ca2","tsSignatureHash":"sha256:848d49771b6c8c9a116b44391787f868a234e5255d425f7ca8cd574aebfc1f92"}
  *
  * Go source:
  * Checker struct {
@@ -1702,6 +1714,7 @@ export interface Checker {
   thisExpandoLocations: GoMap<GoPtr<Symbol>, GoPtr<Node>>;
   subtypeReductionCache: GoMap<CacheHashKey, GoSlice<GoPtr<Type>>>;
   cachedTypes: GoMap<CachedTypeKey, GoPtr<Type>>;
+  contextWidened?: Map<string, Type>;
   cachedSignatures: GoMap<CachedSignatureKey, GoPtr<Signature>>;
   undefinedProperties: GoMap<string, GoPtr<Symbol>>;
   narrowedTypes: GoMap<NarrowedTypeKey, GoPtr<Type>>;

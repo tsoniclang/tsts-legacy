@@ -1653,6 +1653,7 @@ export function TypeAlias_TypeArguments(receiver: GoPtr<TypeAlias>): GoSlice<GoP
 export type TypeDerivation =
   | { readonly kind: "object-literal"; readonly node: Node; readonly mode: CheckMode }
   | { readonly kind: "regular-of" | "widened-from"; readonly source: Type }
+  | { readonly kind: "widened-in"; readonly source: Type; readonly root: Type; readonly path: readonly string[] }
   | { readonly kind: "restrictive"; readonly source: Type }
   | { readonly kind: "unique-inference"; readonly source: Type }
   | { readonly kind: "mapped-parameter"; readonly mapped: Type }

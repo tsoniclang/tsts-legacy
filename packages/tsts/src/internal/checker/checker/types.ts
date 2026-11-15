@@ -80,6 +80,7 @@ import { SignatureFlagsNone } from "../types.js";
 import type { orderedSet } from "../utilities.js";
 import { CompareTypes, IsTypeAny, NewDiagnosticForNode, NewDiagnosticChainForNode, hasDotDotDotToken, isDeclarationReadonly, isOptionalDeclaration, orderedSet_contains, orderedSet_add, entityNameToString, isConstTypeReference, isObjectLiteralType, isTypeUsableAsPropertyName, getPropertyNameFromType, getDeclarationModifierFlagsFromSymbol } from "../utilities.js";
 import type { Checker, CheckMode, ContextualInfo, EnumLiteralKey, InferenceContext, IntersectionFlags, IterationTypeKind, IterationTypes, IterationTypesKey, IterationTypesResolver, IterationUse, keyBuilder, ObjectLiteralDiscriminator, PredicateSemantics, TupleNormalizer, TypeFacts, TypeResolution, TypeSystemEntity, TypeSystemPropertyName, UnionOfUnionKey, UnionReduction, WideningContext, WideningKind, CachedTypeKey, CacheHashKey, PropertiesTypesKey } from "./state.js";
+import { contextWideningKey } from "./state.js";
 import { CheckModeTypeOnly, CheckModeNormal, CheckModeContextual, CheckModeInferential, CheckModeSkipContextSensitive, CheckModeSkipGenericFunctions, CheckModeRestBindingElement, CheckModeForceTuple, IterationTypeKindNext, IterationTypeKindReturn, IterationTypeKindYield, isTupleType, isUnitType, IterationUseAllowsAsyncIterablesFlag, IterationUseAllowsSyncIterablesFlag, IterationUseForOfFlag, IterationUseSpreadFlag, IterationUseDestructuringFlag, IterationUseYieldStarFlag, IterationUsePossiblyOutOfBounds, IterationUseAllowsStringInputFlag, IterationUseCacheFlags, IterationUseElement, TypeFactsNEUndefinedOrNull, UnionReductionSubtype, UnionReductionNone, UnionReductionLiteral, IterationUseSpread, IterationUseDestructuring, IterationUseYieldStar, IterationUseAsyncYieldStar, TypeFactsNEUndefined, TypeFactsIsUndefined, TypeFactsIsUndefinedOrNull, TypeSystemPropertyNameType, TypeSystemPropertyNameWriteType, TypeSystemPropertyNameInitializerIsUndefined, TypeSystemPropertyNameResolvedBaseTypes, TypeSystemPropertyNameResolvedBaseConstraint, someType, everyType, isSpreadIntoCallOrNew, getEffectiveSetAccessorTypeAnnotationNode, getEndElementCount, getTargetType, CachedTypeKindApparentType, CachedTypeKindLiteralUnionBaseType, CachedTypeKindWidened, CachedTypeKindPromisedTypeOfPromise, getEntityNameFromTypeNode, IntersectionFlagsNoSupertypeReduction, IntersectionFlagsNoConstraintReduction, IntersectionFlagsNone, hashWrite32, isTypeReferenceWithGenericArguments, getStringLiteralValue, getTypeListKey, getModifiedReadonlyState, getMappedTypeModifiers, MappedTypeModifiersIncludeOptional, MappedTypeModifiersExcludeOptional, PredicateSemanticsSometimes, PredicateSemanticsAlways, PredicateSemanticsNever, CachedTypeKindArrayLiteralType, CachedTypeKindDefaultOnlyType, getTotalFixedElementCount, getTupleKey, isConflictingPrivateProperty, isFreshLiteralType, TypeFactsNone, TypeFactsAll, TypeFactsOrFactsMask, TypeFactsAndFactsMask, containsType, getMappedTypeOptionality, TypeFactsEQUndefined, TypeFactsEQNull, TypeFactsIsNull, TypeFactsNENull, TypeFactsEQUndefinedOrNull, TypeFactsTruthy, WideningKindNormal, WideningKindGeneratorYield, getUnionKey, getAliasKey, insertType, isPrimitiveUnion, isUnionWithUndefined, isUnionWithNull, isNotUndefinedType, isNotNullType, isIntersectionType, getIntersectionKey, getConstituentCountOfTypes, CachedTypeKindRegularObjectLiteral, mayReturnNever, getTemplateTypeKey, getBaseTypeNodeOfClass, getConditionalTypeKey, InferenceFlagsNone, InferencePriorityAlwaysStrict, InferencePriorityNoConstraints } from "./state.js";
 import { TypeFactsStringStrictFacts, TypeFactsStringFacts, TypeFactsEmptyStringStrictFacts, TypeFactsEmptyStringFacts, TypeFactsNonEmptyStringStrictFacts, TypeFactsNonEmptyStringFacts, TypeFactsNumberStrictFacts, TypeFactsNumberFacts, TypeFactsZeroNumberStrictFacts, TypeFactsZeroNumberFacts, TypeFactsNonZeroNumberStrictFacts, TypeFactsNonZeroNumberFacts, TypeFactsBigIntStrictFacts, TypeFactsBigIntFacts, TypeFactsZeroBigIntStrictFacts, TypeFactsZeroBigIntFacts, TypeFactsNonZeroBigIntStrictFacts, TypeFactsNonZeroBigIntFacts, TypeFactsBooleanStrictFacts, TypeFactsBooleanFacts, TypeFactsFalseStrictFacts, TypeFactsFalseFacts, TypeFactsTrueStrictFacts, TypeFactsTrueFacts, TypeFactsEmptyObjectStrictFacts, TypeFactsEmptyObjectFacts, TypeFactsFunctionStrictFacts, TypeFactsFunctionFacts, TypeFactsObjectStrictFacts, TypeFactsObjectFacts, TypeFactsVoidFacts, TypeFactsUndefinedFacts, TypeFactsNullFacts, TypeFactsSymbolStrictFacts, TypeFactsSymbolFacts, TypeFactsUnknownFacts, getNumberLiteralValue, isZeroBigInt } from "./state.js";
 import { Checker_getTypeArguments, Checker_getTypeWithThisArgument, Checker_getTypeFromTypeLiteralOrFunctionOrConstructorTypeNode, Checker_checkTypeForDuplicateIndexSignatures, Checker_newCallSignature, Checker_getOrCreateTypeFromSignature, Checker_newParameter, Checker_newTypeParameter, Checker_getTypeReferenceArity, Checker_getConstraintOfTypeParameter, Checker_getResolvedSignature, Checker_getDecoratorCallSignature, Checker_getContextualReturnType, Checker_getIterationTypeOfGeneratorFunctionReturnType, Checker_getIterationTypesOfGeneratorFunctionReturnType, Checker_getContextualTypeForArgument, Checker_getTypeParameterFromMappedType, Checker_forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType, Checker_instantiateTypeWithSingleGenericCallSignature, Checker_checkExpressionWithTypeArguments, Checker_checkNoTypeArguments, Checker_getReturnTypeOfSingleNonGenericSignature, Checker_getReturnTypeOfSingleNonGenericSignatureOfCallChain, Checker_isSymbolOrSymbolForCall, Checker_unwrapReturnType, Checker_isUnwrappedReturnTypeUndefinedVoidOrAny, Checker_getSignatureFromDeclaration, Checker_findApplicableIndexInfo, Checker_getOuterTypeParametersOfClassOrInterface, Checker_appendLocalTypeParametersOfClassOrInterfaceOrTypeAlias, Checker_areAllOuterTypeParametersApplied, Checker_getInstantiatedConstructorsForTypeArguments, Checker_cloneTypeParameter, Checker_getTypeFromThisTypeNode, Checker_getTypeFromRestTypeNode, Checker_getMinTypeArgumentCount, Checker_fillMissingTypeArguments, Checker_getTypeArgumentsFromNode, Checker_getOuterTypeParameters, Checker_isTypeParameterPossiblyReferenced, Checker_getInferTypeParameters } from "./signatures.js";
@@ -5647,6 +5648,7 @@ export function Checker_getWidenedType(receiver: GoPtr<Checker>, t: GoPtr<Type>)
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getWidenedTypeWithContext","kind":"method","status":"implemented","sigHash":"d9671a5db99e2d4c83ad222c39d4de9cada0de0ad89136c8a25112a87933414b","bodyHash":"2cc30b5bb5aad7daae7221db467fc0dee0c754db755a47d629c9c766686ed3b6"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-17–18 retain the actual input root on the native union widening context without changing native cache reads, writes or result selection."}
  *
  * Go source:
  * func (c *Checker) getWidenedTypeWithContext(t *Type, context *WideningContext) *Type {
@@ -5707,6 +5709,7 @@ export function Checker_getWidenedTypeWithContext(receiver: GoPtr<Checker>, t: G
       let unionContext = context;
       if (unionContext === undefined) {
         unionContext = {
+          root: t!,
           parent: undefined,
           propertyName: "",
           siblings: Type_Types(t),
@@ -5743,7 +5746,7 @@ export function Checker_getWidenedTypeWithContext(receiver: GoPtr<Checker>, t: G
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getWidenedTypeOfObjectLiteral","kind":"method","status":"implemented","sigHash":"163fdd0db7ac9e847f751cdde45ad5320063756fa71f541b20d428778db60e5e","bodyHash":"a679dbd3c5beb1e9122be6e722462b9c1bd4639acb00ddf20f4283d8eb2ef512"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain the actual input on a fresh context-free widened result; contextual widening remains a distinct producer relation and native caches are unchanged."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–18 retain actual source inputs on fresh widened results and the actual root, property path and source-literal context for contextual results; native widening caches and result selection are unchanged."}
  *
  * Go source:
  * func (c *Checker) getWidenedTypeOfObjectLiteral(t *Type, context *WideningContext) *Type {
@@ -5806,6 +5809,18 @@ export function Checker_getWidenedTypeOfObjectLiteral(receiver: GoPtr<Checker>, 
   );
   result!.objectFlags = (result!.objectFlags | (t!.objectFlags & (ObjectFlagsJSLiteral | ObjectFlagsNonInferrableType))) as ObjectFlags;
   if (context === undefined) result!.derivation = { kind: "widened-from", source: t! };
+  else {
+    const path: string[] = [];
+    for (let current: GoPtr<WideningContext> = context; current!.parent !== undefined; current = current!.parent)
+      path.push(current!.propertyName);
+    path.reverse();
+    result!.derivation = { kind: "widened-in", source: t!, root: context.root, path };
+    const key = contextWideningKey(context.root, path, t!);
+    if (key !== undefined) {
+      receiver!.contextWidened ??= new Map<string, Type>();
+      receiver!.contextWidened.set(key, result!);
+    }
+  }
   if (context !== undefined && context!.parent !== undefined) {
     if (context!.widenedTypes === undefined) {
       context!.widenedTypes = new Map<GoPtr<Type>, GoPtr<Type>>();
@@ -5817,6 +5832,7 @@ export function Checker_getWidenedTypeOfObjectLiteral(receiver: GoPtr<Checker>, 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::WideningContext.getChildContext","kind":"method","status":"implemented","sigHash":"fd2e7196baeafbcc522923760e1a2a9a439700f5b2f3926a96e84abf8082082d","bodyHash":"7190f7a26899384be759982d58fbbc481e5eff345380e7a761cc7d4acfda659d"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-17–18 borrow the same actual widening root when the native operation creates a child context; existing child-cache identity and selection are unchanged."}
  *
  * Go source:
  * func (w *WideningContext) getChildContext(propertyName string) *WideningContext {
@@ -5837,6 +5853,7 @@ export function WideningContext_getChildContext(receiver: GoPtr<WideningContext>
     return cached;
   }
   const result: GoPtr<WideningContext> = {
+    root: receiver!.root,
     parent: receiver,
     propertyName,
     siblings: undefined as unknown as GoSlice<GoPtr<Type>>,

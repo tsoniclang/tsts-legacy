@@ -1,5 +1,5 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { CachedTypeKindRegularObjectLiteral, CachedTypeKindWidened, CheckModeNormal } from "../internal/checker/checker/state.js";
+import { CachedTypeKindRegularObjectLiteral, CachedTypeKindWidened, CheckModeNormal, contextWideningKey } from "../internal/checker/checker/state.js";
 import { Checker_checkExpressionCached } from "../internal/checker/checker/syntax-checking.js";
 import { Checker_getRegularTypeOfObjectLiteral, Checker_getWidenedType } from "../internal/checker/checker/types.js";
 import { Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
@@ -33,6 +33,26 @@ export function reacquireExpressionConstruction(producer: Checker, type: Type, n
   }
   if (result === undefined || result.checker !== producer)
     throw new Error("The native expression construction returns its actual target-produced result");
+  return result;
+}
+
+export function reacquireContextWidening(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+  const derivation = type.derivation;
+  if (derivation?.kind !== "widened-in") return undefined;
+  const source = type.checker;
+  if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles()
+    || derivation.root.checker !== source || derivation.source.checker !== source)
+    throw new TypeError("A contextual widening retains its actual source root and producing checker");
+  const root = normalize(derivation.root);
+  const input = normalize(derivation.source);
+  if (root.checker !== producer || input.checker !== producer)
+    throw new TypeError("The actual widening root and input are normalized by the target producer");
+  const key = contextWideningKey(root, derivation.path, input);
+  if (key === undefined) return undefined;
+  Checker_getWidenedType(producer, root);
+  const result = producer.contextWidened?.get(key);
+  if (result === undefined || result.checker !== producer)
+    throw new Error("The actual target widening must produce its own context-selected result");
   return result;
 }
 

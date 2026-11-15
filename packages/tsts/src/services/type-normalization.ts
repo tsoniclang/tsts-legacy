@@ -4,7 +4,7 @@ import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normaliz
 import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireCompositeType } from "./type-normalization-composites.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
-import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
+import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireContextWidening, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireAnonymousInstantiation, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
@@ -91,6 +91,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)
       ?? reacquireTypeReference(producer, type, normalize)
+      ?? reacquireContextWidening(producer, type, normalize)
       ?? reacquireExpressionConstruction(producer, type, normalize)
       ?? reacquireCachedRestType(producer, type)
       ?? reacquireCachedObjectExpression(producer, type)
