@@ -1,14 +1,14 @@
 import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindRestrictiveTypeParameter, getTupleKey, getTypeAliasInstantiationKey, getTypeInstantiationKey, getTypeListKey } from "../internal/checker/checker/state.js";
-import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
+import { Checker_getRestrictiveTypeParameter, Checker_getSignatureFromDeclaration, Checker_getTypeParameterFromMappedType } from "../internal/checker/checker/signatures.js";
 import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import { Checker_createTypeReference, Checker_getTupleTargetType, Checker_getTypeFromTypeNode } from "../internal/checker/checker/types.js";
 import { Checker_getObjectTypeInstantiation, Checker_getTypeAliasInstantiation } from "../internal/checker/checker/inference.js";
 import { newTypeMapper, TypeMapper_Map } from "../internal/checker/mapper.js";
 import { IsTypeNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
-  Type_AsConditionalType, Type_AsInterfaceType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
+import { ObjectFlagsClassOrInterface, ObjectFlagsInstantiated, ObjectFlagsMapped, ObjectFlagsReference, ObjectFlagsSingleSignatureType, ObjectFlagsTuple, TypeFlagsConditional, TypeFlagsObject, TypeFlagsTypeParameter,
+  Type_AsConditionalType, Type_AsInterfaceType, Type_AsMappedType, Type_AsObjectType, Type_AsTupleType, Type_AsTypeParameter, Type_AsTypeReference, Type_Target } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
 
 export function reacquireDeclarationSignature(source: Checker, producer: Checker, signature: Signature): Signature | undefined {
@@ -106,6 +106,23 @@ export function reacquireRestrictiveParameter(producer: Checker, type: Type, nor
     throw new TypeError("A native parameter restriction requires its normalized input producer");
   const result = Checker_getRestrictiveTypeParameter(producer, selected);
   if (result === undefined) throw new Error("The native parameter restriction did not return its value");
+  return result;
+}
+
+export function reacquireMappedParameter(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+  if ((type.flags & TypeFlagsTypeParameter) === 0 || type.derivation?.kind !== "mapped-parameter") return undefined;
+  const source = type.checker;
+  if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A mapped native parameter requires its actual producer in the same Program");
+  const mapped = type.derivation.mapped;
+  if (mapped.checker !== source || (mapped.flags & TypeFlagsObject) === 0 || (mapped.objectFlags & ObjectFlagsMapped) === 0
+    || Type_AsMappedType(mapped)?.typeParameter !== type) return undefined;
+  const selected = normalize(mapped);
+  if (selected.checker !== producer || (selected.flags & TypeFlagsObject) === 0 || (selected.objectFlags & ObjectFlagsMapped) === 0)
+    throw new TypeError("A mapped native parameter requires its normalized actual mapped owner");
+  const result = Checker_getTypeParameterFromMappedType(producer, selected);
+  if (result === undefined || result.checker !== producer)
+    throw new Error("The native mapped instantiation retains its actual parameter");
   return result;
 }
 

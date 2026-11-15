@@ -7645,6 +7645,7 @@ export function Checker_instantiateTypeWorkerWithCapture(receiver: GoPtr<Checker
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.instantiateAnonymousType","kind":"method","status":"implemented","sigHash":"0f96dd463b356e114b7466778e800c407288d6452db6b0d39ec104cc10484144","bodyHash":"c57986ca23bf16818a067679587c8d9af7968ff4c82655b1bb5f59dff1f59c7c"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15/M11 retains only the genuinely fresh mapped parameter against this actual new mapped instantiation before publication; no declared binder, copied field, semantic cache or public query is changed."}
  *
  * Go source:
  * func (c *Checker) instantiateAnonymousType(t *Type, m *TypeMapper, alias *TypeAlias) *Type {
@@ -7684,6 +7685,7 @@ export function Checker_instantiateAnonymousType(receiver: GoPtr<Checker>, t: Go
     Type_AsMappedType(result)!.typeParameter = freshTypeParameter;
     m = Checker_combineTypeMappers(receiver, newSimpleTypeMapper(origTypeParameter, freshTypeParameter), m);
     Type_AsTypeParameter(freshTypeParameter)!.mapper = m;
+    freshTypeParameter!.derivation = { kind: "mapped-parameter", mapped: result! };
   } else if ((t!.objectFlags & ObjectFlagsInstantiationExpressionType) !== 0) {
     Type_AsInstantiationExpressionType(result)!.node = Type_AsInstantiationExpressionType(t)!.node;
   }
