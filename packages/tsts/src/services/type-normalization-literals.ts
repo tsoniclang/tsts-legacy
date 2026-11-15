@@ -4,12 +4,28 @@ import { Checker_getBigIntLiteralType, Checker_getEnumLiteralType, Checker_getFr
 import { TypeFlagsBigIntLiteral, TypeFlagsEnumLiteral, TypeFlagsNumberLiteral, TypeFlagsStringLiteral, Type_AsLiteralType } from "../internal/checker/types.js";
 import { Number_IsNaN } from "../internal/jsnum/jsnum.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { Checker_getDeclaredTypeOfSymbol } from "../internal/checker/checker/symbols.js";
-import { TypeFlagsEnum } from "../internal/checker/types.js";
+import { Checker_getDeclaredTypeOfSymbol, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
+import { TypeFlagsEnum, TypeFlagsUniqueESSymbol } from "../internal/checker/types.js";
 import type { Type } from "../internal/checker/types.js";
+import { reacquireCachedLateBoundSymbol } from "./type-normalization-declarations.js";
 
 export function reacquireLiteralType(producer: Checker, type: Type): Type | undefined {
   if (type.alias !== undefined) return undefined;
+  if ((type.flags & TypeFlagsUniqueESSymbol) !== 0) {
+    const source = type.checker;
+    const symbol = type.symbol;
+    if (source === undefined || symbol === undefined || source.uniqueESSymbolTypes.get(symbol) !== type) return undefined;
+    const selected = symbol.checkerId === undefined ? symbol : reacquireCachedLateBoundSymbol(source, producer, symbol);
+    if (selected === undefined) return undefined;
+    if (symbol.checkerId === undefined && source.program.SourceFiles() !== producer.program.SourceFiles())
+      throw new TypeError("A native unique symbol requires the same actual Program");
+    const result = Checker_getTypeOfSymbol(producer, selected);
+    if (result === undefined || result.checker !== producer || result.symbol !== selected
+      || (result.flags & TypeFlagsUniqueESSymbol) === 0 || producer.uniqueESSymbolTypes.get(selected) !== result
+      || LinkStore_TryGet(producer.valueSymbolLinks, selected)?.resolvedType !== result)
+      throw new TypeError("The actual unique symbol retains both target-owned native value cache relations");
+    return result;
+  }
   let regular: Type | undefined;
   if ((type.flags & TypeFlagsEnum) !== 0) {
     const source = type.checker;
