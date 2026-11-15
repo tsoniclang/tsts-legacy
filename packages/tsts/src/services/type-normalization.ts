@@ -4,7 +4,7 @@ import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normaliz
 import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireCachedObjectExpression } from "./type-normalization-expressions.js";
-import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
+import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireHigherOrderSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireConditionalDeclaration, reacquireDeclarationSignature, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
 
 export interface TypeNormalization {
@@ -30,7 +30,8 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (source === producer) return signature;
     const known = signatures.get(signature);
     if (known !== undefined) return known;
-    const builtin = reacquireBuiltinSignature(source, producer, signature);
+    const builtin = reacquireHigherOrderSignature(source, producer, signature, value => normalizeSignature(source, value))
+      ?? reacquireBuiltinSignature(source, producer, signature);
     const declared = builtin ?? reacquireDeclarationSignature(source, producer, signature);
     let result = declared;
     if (result === undefined) {
@@ -66,6 +67,16 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (source === producer) return type;
     const known = types.get(type);
     if (known !== undefined) return known;
+    if (type.derivation?.kind === "inferred-parameter") {
+      const derivation = type.derivation;
+      if (derivation.signature.typeParameters[derivation.index] !== type)
+        throw new TypeError("An inferred native parameter retains its actual selected signature position");
+      const selected = normalizeSignature(source, derivation.signature).typeParameters[derivation.index];
+      if (selected === undefined || selected.checker !== producer)
+        throw new Error("The normalized native signature retains its actual inferred parameter");
+      types.set(type, selected);
+      return selected;
+    }
     const result = reacquireBuiltinType(producer, type)
       ?? reacquireDeclaredType(producer, type)
       ?? reacquireRestrictiveParameter(producer, type, normalize)

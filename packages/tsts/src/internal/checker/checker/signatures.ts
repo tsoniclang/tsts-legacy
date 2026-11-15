@@ -2160,6 +2160,7 @@ export function Checker_getUniqueTypeParameters(receiver: GoPtr<Checker>, contex
       const symbol_ = Checker_newSymbol(receiver, SymbolFlagsTypeParameter, newName);
       const newTypeParameter = Checker_newTypeParameter(receiver, symbol_);
       Type_AsTypeParameter(newTypeParameter)!.target = tp;
+      newTypeParameter!.derivation = { kind: "unique-inference", source: tp! };
       oldTypeParameters = [...(oldTypeParameters ?? []), tp] as GoSlice<GoPtr<Type>>;
       newTypeParameters = [...(newTypeParameters ?? []), newTypeParameter] as GoSlice<GoPtr<Type>>;
       result = [...result, newTypeParameter] as GoSlice<GoPtr<Type>>;
@@ -2528,6 +2529,15 @@ export function Checker_getResolvedSignature(receiver: GoPtr<Checker>, node: GoP
       throw new Error("Resolved call evidence does not belong to the source-order selected signature.");
     }
     if (receiver!.flowLoopStack.length === 0) {
+      if (result?.derivation?.kind === "higher-order" && result.derivation.at === node) {
+        const returned = result.derivation.returned;
+        for (const [index, parameter] of returned.typeParameters.entries()) {
+          if (parameter?.derivation?.kind !== "unique-inference") continue;
+          if (Type_AsTypeParameter(parameter)?.target !== parameter.derivation.source)
+            throw new Error("A fresh inferred parameter retains its actual native construction");
+          parameter.derivation = { kind: "inferred-parameter", signature: returned, index };
+        }
+      }
       links!.resolvedSignature = result;
       if (IsCallOrNewExpression(node)) {
         links!.resolvedCallSelectionEvidence = selectedEvidence;
@@ -3866,7 +3876,7 @@ function Checker_chooseOverloadWithSelectedArguments(
         if (inferenceContext !== undefined) {
           inferredTypeParameters = inferenceContext.inferredTypeParameters;
         }
-        checkCandidate = Checker_getSignatureInstantiation(receiver, candidate, typeArgumentTypes, IsInJSFile(candidate!.declaration), inferredTypeParameters);
+        checkCandidate = Checker_getSignatureInstantiation(receiver, candidate, typeArgumentTypes, IsInJSFile(candidate!.declaration), inferredTypeParameters, s!.node);
         if (Checker_getNonArrayRestType(receiver, candidate) !== undefined && !Checker_hasCorrectArity(receiver, s!.node, s!.args, checkCandidate, s!.signatureHelpTrailingComma)) {
           s!.candidateForArgumentArityError = checkCandidate;
           continue;
@@ -3904,7 +3914,7 @@ function Checker_chooseOverloadWithSelectedArguments(
         s!.argCheckMode = CheckModeNormal;
         if (inferenceContext !== undefined) {
           const typeArgumentTypes = inferTypeArgumentsObserved(receiver, s!.node, candidate, s!.args, s!.argCheckMode, inferenceContext, output?.origins);
-          checkCandidate = Checker_getSignatureInstantiation(receiver, candidate, typeArgumentTypes, IsInJSFile(candidate!.declaration), inferenceContext.inferredTypeParameters);
+          checkCandidate = Checker_getSignatureInstantiation(receiver, candidate, typeArgumentTypes, IsInJSFile(candidate!.declaration), inferenceContext.inferredTypeParameters, s!.node);
           application = output?.sourceCalleeType === undefined ? undefined
             : buildResolvedCallApplication(receiver!, s!.node!, candidate!, checkCandidate!, inferenceContext, output.sourceCalleeType);
           if (Checker_getNonArrayRestType(receiver, candidate) !== undefined && !Checker_hasCorrectArity(receiver, s!.node, s!.args, checkCandidate, s!.signatureHelpTrailingComma)) {
@@ -7280,7 +7290,7 @@ export function Checker_getInstantiatedConstructorsForTypeArguments(receiver: Go
   const typeArguments = core.Map(typeArgumentNodes, (node: GoPtr<Node>) => Checker_getTypeFromTypeNode(receiver, node));
   return core.SameMap(signatures, (sig: GoPtr<Signature>) => {
     if (sig!.typeParameters.length !== 0) {
-      return Checker_getSignatureInstantiation(receiver, sig, typeArguments, IsInJSFile(location), undefined as unknown as GoSlice<GoPtr<Type>>);
+      return Checker_getSignatureInstantiation(receiver, sig, typeArguments, IsInJSFile(location), undefined as unknown as GoSlice<GoPtr<Type>>, undefined);
     }
     return sig;
   });
@@ -7306,6 +7316,7 @@ export function Checker_getConstructorsForTypeArguments(receiver: GoPtr<Checker>
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getSignatureInstantiation","kind":"method","status":"implemented","sigHash":"c644227b7797d9527e44f59ac8691746d09a02195ccd36e9d90982c6b7bf87ef","bodyHash":"429e104e3d8a1284190c63812b1d24ff31ea384fe4c98bc5f5daab1b32da0fe7"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Carry the actual invocation occurrence from the existing overload producer into fresh inferred higher-order signatures. Record the actual outer and call-or-construct return pair before publication; ordinary non-inferred callers supply no occurrence.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>,packages/tsts/src/go/scalars.ts::bool,packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>|undefined,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>"}
  *
  * Go source:
  * func (c *Checker) getSignatureInstantiation(sig *Signature, typeArguments []*Type, isJavaScript bool, inferredTypeParameters []*Type) *Signature {
@@ -7325,17 +7336,20 @@ export function Checker_getConstructorsForTypeArguments(receiver: GoPtr<Checker>
  * 	return instantiatedSignature
  * }
  */
-export function Checker_getSignatureInstantiation(receiver: GoPtr<Checker>, sig: GoPtr<Signature>, typeArguments: GoSlice<GoPtr<Type>>, isJavaScript: bool, inferredTypeParameters: GoSlice<GoPtr<Type>> | undefined): GoPtr<Signature> {
+export function Checker_getSignatureInstantiation(receiver: GoPtr<Checker>, sig: GoPtr<Signature>, typeArguments: GoSlice<GoPtr<Type>>, isJavaScript: bool, inferredTypeParameters: GoSlice<GoPtr<Type>> | undefined, at: GoPtr<Node>): GoPtr<Signature> {
   const instantiatedSignature = Checker_getSignatureInstantiationWithoutFillingInTypeArguments(receiver, sig, Checker_fillMissingTypeArguments(receiver, typeArguments, sig!.typeParameters, Checker_getMinTypeArgumentCount(receiver, sig!.typeParameters), isJavaScript));
   if (inferredTypeParameters !== undefined && inferredTypeParameters.length !== 0) {
     const returnSignature = Checker_getSingleCallOrConstructSignature(receiver, Checker_getReturnTypeOfSignature(receiver, instantiatedSignature));
     if (returnSignature !== undefined) {
+      if (at === undefined) throw new Error("An inferred higher-order signature retains its actual invocation occurrence");
       const newReturnSignature = Checker_cloneSignature(receiver, returnSignature, returnSignature!.constructorClass);
       newReturnSignature!.typeParameters = inferredTypeParameters;
       const newReturnType = Checker_getOrCreateTypeFromSignature(receiver, newReturnSignature);
       Type_AsObjectType(newReturnType)!.mapper = instantiatedSignature!.mapper;
       const newInstantiatedSignature = Checker_cloneSignature(receiver, instantiatedSignature, instantiatedSignature!.constructorClass);
       newInstantiatedSignature!.resolvedReturnType = newReturnType;
+      newInstantiatedSignature!.derivation = { kind: "higher-order", at, returned: newReturnSignature! };
+      newReturnSignature!.derivation = { kind: "higher-order-return", signature: newInstantiatedSignature! };
       return newInstantiatedSignature;
     }
   }
@@ -7634,7 +7648,7 @@ export function Checker_createCanonicalSignature(receiver: GoPtr<Checker>, signa
     }
     return tp;
   });
-  return Checker_getSignatureInstantiation(receiver, signature, typeArguments, IsInJSFile(signature!.declaration), undefined as unknown as GoSlice<GoPtr<Type>>);
+  return Checker_getSignatureInstantiation(receiver, signature, typeArguments, IsInJSFile(signature!.declaration), undefined as unknown as GoSlice<GoPtr<Type>>, undefined);
 }
 
 /**
@@ -7745,7 +7759,7 @@ export function Checker_instantiateSignatureInContextOf(receiver: GoPtr<Checker>
       Checker_inferTypes(receiver, context!.inferences, source, target, InferencePriorityReturnType, false);
     });
   }
-  return Checker_getSignatureInstantiation(receiver, signature, Checker_getInferredTypes(receiver, context), IsInJSFile(contextualSignature!.declaration), undefined);
+  return Checker_getSignatureInstantiation(receiver, signature, Checker_getInferredTypes(receiver, context), IsInJSFile(contextualSignature!.declaration), undefined, undefined);
 }
 
 /**
