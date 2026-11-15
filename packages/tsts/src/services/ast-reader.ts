@@ -107,6 +107,7 @@ export interface AstReader {
   readonly questionToken: (node: GoPtr<Node>) => GoPtr<Node>;
   /** Returns the exact operator kind name for binary, update, and type-operator syntax. */
   readonly operatorKindName: (node: GoPtr<Node>) => string | undefined;
+  readonly moduleKeywordKindName: (node: GoPtr<Node>) => string | undefined;
   readonly modifiers: (node: GoPtr<Node>) => readonly GoPtr<Node>[];
   readonly modifierFlags: (node: GoPtr<Node>) => number;
   readonly hasModifier: (node: GoPtr<Node>, flags: number) => boolean;
@@ -173,6 +174,10 @@ export function createAstReader(): AstReader {
     properties: (node) => Node_Properties(node) ?? [],
     questionToken: (node) => node === undefined ? undefined : Node_QuestionToken(node),
     operatorKindName,
+    moduleKeywordKindName: node => {
+      const keyword = node !== undefined && predicates.IsModuleDeclaration(node) ? casts.AsModuleDeclaration(node)?.Keyword : undefined;
+      return keyword === undefined ? undefined : KindString(keyword);
+    },
     modifiers: (node) => Node_ModifierNodes(node) ?? [],
     modifierFlags: (node) => node === undefined ? 0 : Node_ModifierFlags(node),
     hasModifier: (node, flags) => node !== undefined && HasModifier(node, flags) === true,

@@ -2,6 +2,40 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAstReader } from "./ast-reader.js";
 import { createProgram } from "./type-checker-test-support.js";
+import type { Node } from "../internal/ast/ast.js";
+
+test("module keyword names retain the actual pinned namespace, module, global and dotted syntax", () => {
+  const { index } = createProgram(`namespace Outer.Inner { export const x=1; }
+    module Legacy {}
+    declare module "external" {}
+    export {};
+    declare global { interface GlobalValue {} }`, { noLib: true });
+  const ast = createAstReader();
+  const names: string[] = [];
+  const pending: (Node | undefined)[] = [index];
+  while (pending.length !== 0) {
+    const node = pending.pop();
+    if (node === undefined) throw new Error("The actual syntax traversal is dense");
+    if (ast.kindName(node) === "KindModuleDeclaration") {
+      const keyword = ast.moduleKeywordKindName(node);
+      if (keyword === undefined) throw new Error("An actual module declaration retains its pinned keyword");
+      names.push(keyword);
+    } else assert.equal(ast.moduleKeywordKindName(node), undefined);
+    const children = ast.children(node);
+    for (let position = children.length - 1; position >= 0; position -= 1) {
+      const child = children[position];
+      if (child === undefined) throw new Error("The native child traversal retains its actual syntax");
+      pending.push(child);
+    }
+  }
+  assert.deepEqual(names, ["KindNamespaceKeyword", "KindNamespaceKeyword", "KindModuleKeyword", "KindModuleKeyword", "KindGlobalKeyword"]);
+  const foreign = createProgram("module Foreign {}", { noLib: true });
+  const declaration = ast.statements(foreign.index)[0];
+  assert.equal(ast.moduleKeywordKindName(declaration), "KindModuleKeyword",
+    "the structural reader retains another Program's actual field without borrowing local syntax");
+  assert.equal(ast.moduleKeywordKindName(undefined), undefined);
+  assert.equal(ast.operatorKindName(index), undefined);
+});
 
 test("short-circuit child visits preserve actual native order and stop at the selected child", () => {
   const { index } = createProgram("export function f<T>(a:T,b:number):T{return a;} export const x=1;", { noLib: true });
