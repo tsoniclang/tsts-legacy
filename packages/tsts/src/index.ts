@@ -136,6 +136,7 @@ export type { TranspileCompilerOptions, TranspileCompilerOptionValue, TranspileO
 export { getDiagnosticRunMembers } from "./services/diagnostic-run-members.js";
 export type {
   ResolvedAliasStep,
+  ResolvedAliasTarget,
   ResolvedSourceCallInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,

@@ -9,6 +9,7 @@ import { Node_Arguments, Node_Expression, Node_PropertyNameOrName, Node_Symbol, 
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
+import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
 import { readInvocationReturnType } from "./signature-returns.js";
@@ -243,9 +244,13 @@ export interface ResolvedSourceObjectLiteralElementInfo {
  * is a binding element. It is answered as a "symbol" step with the checker's own target, which lies
  * behind the module's `export =`.
  */
-export type ResolvedAliasStep =
+export type ResolvedAliasTarget =
   | { readonly kind: "symbol"; readonly symbol: Symbol }
-  | { readonly kind: "exported-value-member"; readonly exportAssignment: Symbol; readonly member: Symbol | undefined };
+  | { readonly kind: "unresolved"; readonly cause: Diagnostic };
+
+export type ResolvedAliasStep =
+  | ResolvedAliasTarget
+  | { readonly kind: "exported-value-member"; readonly exportAssignment: Symbol; readonly member: ResolvedAliasTarget | undefined };
 
 export interface ResolvedSourceStorageInfo {
   readonly expression: Node;
@@ -272,8 +277,8 @@ export interface TypeCheckerQueries {
   readonly getAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
   /**
    * One step of an alias chain (see ResolvedAliasStep). Nothing, and no throw, for a symbol that is not
-   * an alias and for an alias whose own step did not resolve (a missing module, or a missing export of a
-   * module without `export =`). A member of a circular alias chain has a step: following the steps from it
+   * an alias and for an unavailable step with no retained producing evidence. A failed module-member
+   * answer with its actual original diagnostic is unresolved. A member of a circular alias chain has a step: following the steps from it
    * returns to a symbol already visited, which is how a caller finds the cycle's members.
    *
    * Compare what the two alias queries return by declaration, never by symbol identity. getAliasedSymbol
@@ -282,8 +287,8 @@ export interface TypeCheckerQueries {
    * target's declarations and is a different object for each import declaration. Steps are symbols of
    * modules and declarations, but one export reached by two bindings is not promised to be one object.
    *
-   * Cost: a step that did not resolve is not remembered. Each further call for that alias runs the step
-   * again and creates its diagnostic again. Ask once per binding and keep the answer; never once per use.
+   * A retained failed answer borrows its original diagnostic without re-emission. A genuine native
+   * re-evaluation replaces that answer; an unavailable step without such evidence is not a cached failure.
    */
   readonly getAliasStep: (symbol: GoPtr<Symbol>) => GoPtr<ResolvedAliasStep>;
   readonly getTypeOfSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Type>;
@@ -439,11 +444,13 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         const target = Checker_GetAliasedSymbol(checker, symbol);
         return target === checker?.unknownSymbol ? undefined : target;
       }),
-    getAliasStep: (symbol) =>
-      withCheckerForSymbol(program, symbol, defaultOptions, (checker): GoPtr<ResolvedAliasStep> => {
-        if (symbol === undefined || (symbol.Flags & SymbolFlagsAlias) === 0) return undefined;
-        const declaration = Checker_getDeclarationOfAliasSymbol(checker, symbol);
-        if (declaration === undefined) return undefined;
+    getAliasStep: (symbol) => {
+      if (symbol === undefined || (symbol.Flags & SymbolFlagsAlias) === 0) return undefined;
+      const declaration = Checker_getDeclarationOfAliasSymbol(undefined, symbol);
+      if (declaration === undefined) return undefined;
+      return withCheckedFile(program, GetSourceFileOfNode(declaration), defaultOptions, (checker): GoPtr<ResolvedAliasStep> => {
+        if (checker === undefined) return undefined;
+        const retained = LinkStore_TryGet(checker.aliasSymbolLinks, symbol);
         // The two binding forms whose target the checker computes through a module's `export =` assignment.
         const namespaceForm = IsNamespaceImport(declaration) || IsNamespaceExport(declaration);
         const memberForm = (IsImportSpecifier(declaration) || IsExportSpecifier(declaration))
@@ -452,13 +459,18 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         // A namespace form names the module itself: its `export =` assignment when it has one, the module otherwise.
         // The checker's own target for it is the final value behind the assignment or a symbol it makes for the import.
         if (referenced !== undefined && namespaceForm) return { kind: "symbol", symbol: referenced.exportAssignment ?? referenced.module };
-        const immediate = Checker_getImmediateAliasedSymbol(checker, symbol);
+        const immediate = retained?.immediateFailure === undefined
+          ? Checker_getImmediateAliasedSymbol(checker, symbol) : retained.immediateTarget;
         const target = immediate === checker?.unknownSymbol ? undefined : immediate;
+        const cause = LinkStore_TryGet(checker.aliasSymbolLinks, symbol)?.immediateFailure;
+        const answer: ResolvedAliasTarget | undefined = target !== undefined ? { kind: "symbol", symbol: target }
+          : cause === undefined ? undefined : { kind: "unresolved", cause };
         if (referenced?.exportAssignment !== undefined) {
-          return { kind: "exported-value-member", exportAssignment: referenced.exportAssignment, member: target };
+          return { kind: "exported-value-member", exportAssignment: referenced.exportAssignment, member: answer };
         }
-        return target === undefined ? undefined : { kind: "symbol", symbol: target };
-      }),
+        return answer;
+      });
+    },
     getTypeOfSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => Checker_getTypeOfSymbol(checker, symbol)),
     getWriteTypeOfSymbol: (symbol) =>
