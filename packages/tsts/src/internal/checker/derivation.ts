@@ -23,14 +23,6 @@ export type TypeDerivation =
   | { readonly kind: "regular-of"; readonly fresh: Type }
   // An object literal type widened without a context (getWidenedTypeWithContext, cached by the source's id).
   | { readonly kind: "widened-from"; readonly source: Type }
-  // An object literal type widened inside a context: the root type whose widening created the context, the property
-  // path from it, and the literal the source came from.
-  | {
-      readonly kind: "widened-in";
-      readonly root: Type;
-      readonly path: readonly string[];
-      readonly literal: { readonly node: Node; readonly mode: "normal" | "contextual" } | undefined;
-    }
   // An object spread result that is an object literal's checked type: the literal's node owns the cached value.
   | { readonly kind: "spread-of"; readonly node: Node }
   // An object rest result that is a binding's declared type: the binding symbol owns the cached value.

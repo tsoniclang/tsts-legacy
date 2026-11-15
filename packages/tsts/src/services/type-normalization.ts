@@ -4,7 +4,6 @@ import type { Symbol } from "../internal/ast/symbol.js";
 import { SymbolFlagsEnum } from "../internal/ast/symbolflags.js";
 import { LinkStore_Get } from "../internal/core/linkstore.js";
 import type { Checker } from "../internal/checker/checker/state.js";
-import { CachedTypeKindWidened } from "../internal/checker/checker/state.js";
 import { Checker_getDeclaredTypeOfSymbol, Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
 import {
   Checker_getDeclaredTypeOfTypeParameter,
@@ -13,6 +12,7 @@ import {
   Checker_getRestrictiveTypeParameter,
   Checker_getReturnTypeOfSignature,
   Checker_getSignatureInstantiation,
+  Checker_getSingleCallOrConstructSignature,
   Checker_getSignaturesOfType,
   Checker_getTypeParameterFromMappedType,
 } from "../internal/checker/checker/signatures.js";
@@ -50,6 +50,7 @@ import {
   TypeFlagsUnion,
   TypeFlagsUniqueESSymbol,
   Type_AsConditionalType,
+  Type_AsInterfaceType,
   Type_AsInstantiationExpressionType,
   Type_AsTypeParameter,
   Type_AsUnionType,
@@ -136,7 +137,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
             ?? fail("a call node has no resolved signature", undefined);
         case "return-of": {
           const returnType = Checker_getReturnTypeOfSignature(producer, normalizeSignature(source, record.signature));
-          return Checker_getSignaturesOfType(producer, returnType, SignatureKindCall)[0] ?? fail("a return type has no call signature", returnType);
+          return Checker_getSingleCallOrConstructSignature(producer, returnType) ?? fail("a return type has no single call-or-construct signature", returnType);
         }
       }
     }
@@ -174,8 +175,6 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
         return Checker_getRegularTypeOfObjectLiteral(producer, normalize(record.fresh)) ?? fail("no regular literal type", type);
       case "widened-from":
         return Checker_getWidenedType(producer, normalize(record.source)) ?? fail("no widened type", type);
-      case "widened-in":
-        return contextWidened(type, record);
       case "spread-of":
         return Checker_checkExpressionCached(producer, record.node) ?? fail("a spread literal has no type", type);
       case "rest-of":
@@ -199,37 +198,12 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     return (resolved.mapper === undefined ? undefined : TypeMapper_Map(resolved.mapper, parameter)) ?? fail("an inferred argument has no image", type);
   };
 
-  const contextWidened = (type: Type, record: Extract<TypeDerivation, { kind: "widened-in" }>): Type => {
-    const literal = record.literal ?? fail("a context-widened type has no literal", type);
-    const sourceChecker = type.checker ?? fail("a context-widened type has no producer", type);
-    let widenedRoot: Type;
-    if (literal.mode === "normal") {
-      widenedRoot = Checker_getWidenedType(producer, normalize(record.root)) ?? fail("no widened root", type);
-    } else {
-      const handedOut = sourceChecker.cachedTypes.get({ kind: CachedTypeKindWidened, typeId: record.root.id });
-      widenedRoot = normalize(handedOut ?? fail("the widened root of a contextual literal is not cached", type));
-    }
-    const key = contextWidenedKey(widenedRoot, record.root, record.path, literal);
-    const found = producer.contextWidenedTypes?.get(contextWidenedLookup(key)) ?? findContextWidened(widenedRoot, record.path, literal);
-    return found ?? fail("no context-widened type with the same path and literal", type);
-  };
-
-  const findContextWidened = (widenedRoot: Type, path: readonly string[], literal: { node: Node; mode: string }): Type | undefined => {
-    const members = (widenedRoot.flags & TypeFlagsUnion) !== 0 ? Type_Types(widenedRoot) ?? [] : [widenedRoot];
-    for (const member of members) {
-      const record = member?.derivation;
-      if (record?.kind === "widened-in" && record.literal?.node === literal.node && record.literal.mode === literal.mode &&
-        record.path.length === path.length && record.path.every((name, index) => name === path[index])) return member;
-    }
-    return undefined;
-  };
-
   const normalizeTypeParameter = (type: Type): Type => {
     const data = Type_AsTypeParameter(type) ?? fail("a type parameter without data", type);
     if (data.isThisType) {
       const constraint = data.constraint ?? fail("a this type without its class", type);
       const declared = normalize(constraint);
-      return (declared.data as { thisType?: Type }).thisType ?? fail("a class without a this type", declared);
+      return Type_AsInterfaceType(declared)?.thisType ?? fail("a class without a this type", declared);
     }
     const declared = Checker_getDeclaredTypeOfTypeParameter(type.checker, type.symbol);
     if (declared !== type) fail("a type parameter that is not its declaration's own and has no record", type);
@@ -331,12 +305,4 @@ function sameSet(left: readonly GoPtr<Signature>[], right: readonly Signature[])
   if (left.length !== right.length) return false;
   const members = new Set<GoPtr<Signature>>(left);
   return right.every(signature => members.has(signature));
-}
-
-function contextWidenedKey(widenedRoot: Type, root: Type, path: readonly string[], literal: { node: Node; mode: string }): string {
-  return `${widenedRoot.id}/${path.join(".")}/${literal.mode}`;
-}
-
-function contextWidenedLookup(key: string): string {
-  return key;
 }
