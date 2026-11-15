@@ -141,6 +141,29 @@ for (const checkers of [1, 4]) test(`native contextual widening retains actual r
         const clone = Checker_newAnonymousType(source, original.symbol, new Map(), [], [], []);
         if (clone === undefined) throw new Error("The independent native object construction completes");
         assert.equal(reacquireContextWidening(producer, clone, normalization.type), undefined);
+        if (recipe?.kind !== "widened-in") throw new Error("The original contextual result retains its producing coordinates");
+        const sourceContext = source.contextWidened;
+        const sourceEntries = [...sourceContext ?? []];
+        const targetContext = producer.contextWidened;
+        const targetEntries = [...targetContext ?? []];
+        const unread = () => assert.fail("An unproduced contextual recipe cannot normalize an input or widen the target");
+        clone.derivation = recipe;
+        assert.equal(reacquireContextWidening(producer, clone, unread), undefined,
+          "a copied recipe is not the actual source checker's produced result");
+        clone.derivation = { ...recipe, path: ["missing-source-path"] };
+        assert.equal(reacquireContextWidening(producer, clone, unread), undefined,
+          "an unproduced source path is rejected before target input normalization");
+        const other = originals.find(value => record(value).source !== recipe.source);
+        if (other === undefined) throw new Error("The actual native input has a distinct literal source for the source-pair opposite");
+        clone.derivation = { ...recipe, source: record(other).source };
+        assert.equal(reacquireContextWidening(producer, clone, unread), undefined,
+          "another actual source literal cannot supply this input's produced-result identity");
+        assert.equal(source.contextWidened === sourceContext && sourceContext?.size === sourceEntries.length
+          && sourceEntries.every(([key, value]) => sourceContext.get(key) === value), true,
+        "rejected source recipes leave the original producing map unchanged");
+        assert.equal(producer.contextWidened === targetContext && targetContext?.size === targetEntries.length
+          && targetEntries.every(([key, value]) => targetContext.get(key) === value), true,
+        "rejected source recipes cannot publish target context results");
         assert.throws(() => reacquireContextWidening(foreign, original, normalization.type), error => error instanceof TypeError);
         assert.throws(() => reacquireContextWidening(producer, original, () => foreign.stringType!), error => error instanceof TypeError);
       }

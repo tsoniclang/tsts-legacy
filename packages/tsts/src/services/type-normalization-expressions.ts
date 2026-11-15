@@ -43,6 +43,8 @@ export function reacquireContextWidening(producer: Checker, type: Type, normaliz
   if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles()
     || derivation.root.checker !== source || derivation.source.checker !== source)
     throw new TypeError("A contextual widening retains its actual source root and producing checker");
+  const originalKey = contextWideningKey(derivation.root, derivation.path, derivation.source);
+  if (originalKey === undefined || source.contextWidened?.get(originalKey) !== type) return undefined;
   const root = normalize(derivation.root);
   const input = normalize(derivation.source);
   if (root.checker !== producer || input.checker !== producer)
