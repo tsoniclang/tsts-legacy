@@ -1,31 +1,52 @@
 import type { Checker } from "../internal/checker/checker/state.js";
-import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
+import { LiteralConstructionOwner, LiteralCreation } from "../internal/checker/checker/literal-creation.js";
+import { Checker_getSpreadType, Checker_tryMergeUnionOfObjectTypeAndEmptyObject } from "../internal/checker/checker/types.js";
 import type { LiteralCreationInput } from "../internal/checker/checker/literal-creation.js";
 import { Checker_newIndexInfo, Checker_newSymbolEx } from "../internal/checker/checker/symbols.js";
 import { getPropertyNameFromType } from "../internal/checker/utilities.js";
 import type { Type } from "../internal/checker/types.js";
+import { TypeFlagsUnion, TypeFlagsIntersection } from "../internal/checker/types.js";
 import type { Symbol, SymbolTable } from "../internal/ast/symbol.js";
 import { SourceFile_FileName } from "../internal/ast/ast.js";
 import { GetSourceFileOfNode } from "../internal/ast/utilities.js";
 import { LinkStore_Get } from "../internal/core/linkstore.js";
 import { cachedLateBoundSymbolDeclaration, cachedValueTypeSymbol, hasCachedValueTypeKind, reacquireCachedLateBoundSymbol } from "./type-normalization-declarations.js";
+import { cachedCompositeConstruction } from "./type-normalization-composites.js";
 
-function admittedInputs(type: Type, source: Checker, admitted: Map<Type, LiteralCreationInput>): LiteralCreationInput {
+function admittedInputs(type: Type, source: Checker, admitted: Map<Type, LiteralCreationInput | null>): LiteralCreationInput {
   const known = admitted.get(type);
-  if (known !== undefined) return known;
+  if (known !== undefined && known !== null) return known;
   const pending = [type];
-  const staged = new Map<Type, LiteralCreationInput>();
+  const staged = new Map<Type, LiteralCreationInput | null>();
   let root: LiteralCreationInput | undefined;
   while (pending.length !== 0) {
     const value = pending.pop();
     if (value === undefined) throw new Error("Actual fresh literal inputs are dense");
     if (staged.has(value) || admitted.has(value)) continue;
+    if (value.checker !== source) throw new TypeError("Actual native constructor inputs retain their source checker");
     const creation = LiteralCreation.read(value);
-    if (creation === undefined || value.checker !== source)
-      throw new TypeError("A fresh literal requires its authenticated actual native output");
+    if (creation === undefined) {
+      const kind = value.derivation?.kind;
+      if (kind === "object-literal" || kind === "literal-fragment" || kind === "literal-merge" || kind === "literal-partial")
+        throw new TypeError("A fresh literal requires its authenticated actual native output");
+      if (hasCachedValueTypeKind(value) && cachedValueTypeSymbol(source, value) === undefined)
+        throw new TypeError("The actual literal value input retains its complete native source cache relation");
+      if ((value.flags & (TypeFlagsUnion | TypeFlagsIntersection)) !== 0 && value.alias === undefined) {
+        const composite = cachedCompositeConstruction(source, value);
+        if (composite === undefined) throw new TypeError("The constructor input retains its actual native composite cache");
+        for (const member of composite.members) {
+          if (member === undefined) throw new TypeError("Native composite constructor inputs are dense");
+          pending.push(member);
+        }
+      }
+      staged.set(value, null);
+      continue;
+    }
     const file = GetSourceFileOfNode(creation.node);
     if (file === undefined || source.program.GetSourceFile(SourceFile_FileName(file)) !== file)
       throw new TypeError("A fresh literal retains its actual producing Program node");
+    if (creation.owner !== undefined && LiteralConstructionOwner.read(creation.owner, source) === undefined)
+      throw new TypeError("A native cached-question creation cannot lose or replace its actual publication");
     const input = creation.inputs();
     staged.set(value, input);
     if (root === undefined) root = input;
@@ -34,9 +55,7 @@ function admittedInputs(type: Type, source: Checker, admitted: Map<Type, Literal
     const checkType = (dependency: Type | undefined): void => {
       if (dependency === undefined || dependency.checker !== source)
         throw new TypeError("Every actual fresh literal Type input belongs to its producing checker");
-      if (dependency.derivation?.kind === "object-literal") pending.push(dependency);
-      if (hasCachedValueTypeKind(dependency) && cachedValueTypeSymbol(source, dependency) === undefined)
-        throw new TypeError("The actual literal value input retains its complete native source cache relation");
+      pending.push(dependency);
     };
     const checkSymbol = (symbol: Symbol | undefined): void => {
       if (symbol !== undefined && symbol.checkerId !== undefined && symbol.checkerId !== source.id)
@@ -47,16 +66,21 @@ function admittedInputs(type: Type, source: Checker, admitted: Map<Type, Literal
       if (symbol?.checkerId !== undefined && cachedLateBoundSymbolDeclaration(source, symbol) === undefined)
         throw new TypeError("The literal Symbol input retains both actual source declaration caches");
     };
+    const operation = creation.creator;
     checkTarget(input.symbol);
-    for (const member of input.members) {
-      checkSymbol(member.symbol);
-      checkTarget(member.target);
-      checkTarget(member.parent);
-      if (member.target === undefined) checkTarget(member.symbol);
-      if (member.target !== undefined) checkType(member.value);
-      if (member.nameType !== undefined) checkType(member.nameType);
+    if (operation.kind === "literal-merge") { checkType(operation.left); checkType(operation.right); }
+    else if (operation.kind === "literal-partial") { checkType(operation.source); checkType(operation.other); }
+    else {
+      for (const member of input.members) {
+        checkSymbol(member.symbol);
+        checkTarget(member.target);
+        checkTarget(member.parent);
+        if (member.target === undefined) checkTarget(member.symbol);
+        if (member.target !== undefined) checkType(member.value);
+        if (member.nameType !== undefined) checkType(member.nameType);
+      }
+      for (const index of input.indexes) { checkType(index.keyType); checkType(index.valueType); checkTarget(index.indexSymbol); }
     }
-    for (const index of input.indexes) { checkType(index.keyType); checkType(index.valueType); checkTarget(index.indexSymbol); }
   }
   if (root === undefined) throw new Error("The admitted native creation retains its input vector");
   for (const [value, input] of staged) admitted.set(value, input);
@@ -64,7 +88,7 @@ function admittedInputs(type: Type, source: Checker, admitted: Map<Type, Literal
 }
 
 export function reacquireFreshLiteral(producer: Checker, type: Type, normalize: (type: Type) => Type,
-  admitted: Map<Type, LiteralCreationInput>): Type {
+  admitted: Map<Type, LiteralCreationInput | null>): Type {
   const source = type.checker;
   if (source === undefined) throw new TypeError("A fresh literal retains its actual checker");
   const input = admittedInputs(type, source, admitted);
@@ -84,6 +108,17 @@ export function reacquireFreshLiteral(producer: Checker, type: Type, normalize: 
     if (selected === undefined) throw new TypeError("The actual native literal symbol retains its cached producer relation");
     return selected;
   };
+  const operation = creation.creator;
+  if (operation.kind === "literal-merge" || operation.kind === "literal-partial") {
+    const selected = operation.kind === "literal-merge"
+      ? Checker_getSpreadType(producer, selectedType(operation.left), selectedType(operation.right), selectedSymbol(input.symbol),
+        operation.flags, operation.readonly, operation.site)
+      : Checker_tryMergeUnionOfObjectTypeAndEmptyObject(producer, selectedType(operation.source), operation.readonly,
+        { site: operation.site, role: operation.role, other: selectedType(operation.other) });
+    if (selected?.checker !== producer || LiteralCreation.read(selected) === undefined)
+      throw new Error("The actual native spread constructor retains its fresh target-owned result");
+    return selected;
+  }
   const members: SymbolTable = new Map();
   for (const member of input.members) {
     let selected: Symbol | undefined;
@@ -115,6 +150,6 @@ export function reacquireFreshLiteral(producer: Checker, type: Type, normalize: 
     selected.indexSymbol = selectedSymbol(index.indexSymbol);
     return selected;
   });
-  return LiteralCreation.create(producer, creation.node, creation.mode, selectedSymbol(input.symbol), members,
+  return LiteralCreation.create(producer, operation, selectedSymbol(input.symbol), members,
     [], [], indexes, input.flags, input.pattern);
 }

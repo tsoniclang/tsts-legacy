@@ -1,4 +1,5 @@
 import type { bool, int } from "../../../go/scalars.js";
+import type { LiteralConstructionOwner } from "./literal-creation.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import * as slices from "../../../go/slices.js";
 import { AppendIfUnique, Every, IfElse, LastOrNil, OrElse } from "../../core/core.js";
@@ -521,10 +522,10 @@ export function Checker_areDeclarationFlagsIdentical(receiver: GoPtr<Checker>, l
  * 	return exprType
  * }
  */
-export function Checker_checkSatisfiesExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
+export function Checker_checkSatisfiesExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const typeNode = Node_Type(node);
   Checker_checkSourceElement(receiver, typeNode);
-  const exprType = Checker_checkExpression(receiver, Node_Expression(node));
+  const exprType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const targetType = Checker_getTypeFromTypeNode(receiver, typeNode);
   if (Checker_isErrorType(receiver, targetType)) {
     return targetType;
@@ -963,11 +964,11 @@ export function Checker_isTypeEqualityComparableTo(receiver: GoPtr<Checker>, sou
  * 	return initializerType
  * }
  */
-export function Checker_checkPropertyAssignment(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkPropertyAssignment(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if (IsComputedPropertyName(Node_Name(node))) {
     Checker_checkComputedPropertyName(receiver, Node_Name(node));
   }
-  const initializerType = Checker_checkExpressionForMutableLocation(receiver, Node_Initializer(node) as unknown as GoPtr<Node>, checkMode);
+  const initializerType = Checker_checkExpressionForMutableLocation(receiver, Node_Initializer(node) as unknown as GoPtr<Node>, checkMode, constructionOwner);
   const typeNode = Node_Type(node);
   if (typeNode !== undefined) {
     const t = Checker_getTypeFromTypeNode(receiver, typeNode);

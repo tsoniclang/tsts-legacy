@@ -34,11 +34,9 @@ function normalizeOrigin(source: Checker, producer: Checker, origin: Type, norma
   return result;
 }
 
-export function reacquireCompositeType(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+export function cachedCompositeConstruction(source: Checker, type: Type) {
   if (type.alias !== undefined || (type.flags & (TypeFlagsUnion | TypeFlagsIntersection)) === 0) return undefined;
-  const source = type.checker;
-  if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles())
-    throw new TypeError("A native composite type retains its actual Program and producer");
+  if (type.checker !== source) throw new TypeError("A native composite type retains its actual producing checker");
   const members = Type_Types(type);
   const union = (type.flags & TypeFlagsUnion) !== 0;
   const origin = union ? Type_AsUnionType(type)?.origin : undefined;
@@ -49,6 +47,17 @@ export function reacquireCompositeType(producer: Checker, type: Type, normalize:
     intersectionFlags = IntersectionFlagsNoConstraintReduction;
     if (source.intersectionTypes.get(getIntersectionKey(members, intersectionFlags, undefined)) !== type) return undefined;
   }
+  return { members, union, origin, intersectionFlags };
+}
+
+export function reacquireCompositeType(producer: Checker, type: Type, normalize: (type: Type) => Type): Type | undefined {
+  if (type.alias !== undefined || (type.flags & (TypeFlagsUnion | TypeFlagsIntersection)) === 0) return undefined;
+  const source = type.checker;
+  if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native composite type retains its actual Program and producer");
+  const construction = cachedCompositeConstruction(source, type);
+  if (construction === undefined) return undefined;
+  const { union, origin, intersectionFlags } = construction;
   const selected = normalizeMembers(source, producer, type, normalize);
   const selectedOrigin = origin === undefined ? undefined : normalizeOrigin(source, producer, origin, normalize);
   if (selectedOrigin !== undefined && selectedOrigin.checker !== producer)

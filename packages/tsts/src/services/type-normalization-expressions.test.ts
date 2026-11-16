@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { CheckModeContextual, CheckModeNormal } from "../internal/checker/checker/state.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_checkExpressionCached, Checker_checkExpressionEx } from "../internal/checker/checker/syntax-checking.js";
 import { Checker_getRegularTypeOfObjectLiteral, Checker_getWidenedType, Checker_newAnonymousType } from "../internal/checker/checker/types.js";
@@ -48,8 +49,8 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         const original = Checker_checkExpressionCached(source, node);
         const expected = Checker_checkExpressionCached(producer, node);
         if (original === undefined || expected === undefined) throw new Error("The actual fresh and cached literal operations complete");
-        assert.equal(original.derivation?.kind === "object-literal" && original.derivation.creation.node === node
-          && original.derivation.creation.mode === CheckModeNormal, true);
+        const creation = LiteralCreation.read(original);
+        assert.equal(creation !== undefined && creation.node === node && creation.mode === CheckModeNormal, true);
         assert.equal(LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType === original, true,
           "the complete normal literal belongs to its actual completed cached question");
         const recipe = original.derivation;
@@ -72,7 +73,7 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         if (clone === undefined) throw new Error("The actual independent native clone is produced");
         clone.derivation = uncached.derivation;
         assert.equal(reacquireLiteralGraph(unread, clone, () => assert.fail("a copied capability cannot normalize"),
-          () => assert.fail("a copied capability cannot seed a memo"), new Map()), undefined,
+          () => assert.fail("a copied capability cannot seed a memo"), new Map(), new Map()), undefined,
         "copying the genuine creation record cannot retarget its authenticated output");
         const constructions = [
           ["regular-of", Checker_getRegularTypeOfObjectLiteral(source, original), Checker_getRegularTypeOfObjectLiteral(producer, expected)],
@@ -96,7 +97,7 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         assert.equal(original.derivation === recipe, true, "derived results never overwrite the fresh input's own recipe");
         const contextual = Checker_checkExpressionEx(source, node, CheckModeContextual);
         if (contextual === undefined) throw new Error("The genuine contextual producing operation completes");
-        assert.equal(contextual.derivation?.kind === "object-literal" && contextual.derivation.creation.mode === CheckModeContextual, true);
+        assert.equal(LiteralCreation.read(contextual)?.mode === CheckModeContextual, true);
         assert.equal(reacquireExpressionConstruction(producer, contextual, normalization.type), undefined,
           "an uncached contextual operation cannot be relabeled as its normal cached answer");
         const unrelated = Checker_newAnonymousType(source, original.symbol, new Map(), [], [], []);

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { Node_Symbol } from "../internal/ast/ast.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { contextWideningKey, UnionReductionNone } from "../internal/checker/checker/state.js";
 import { Checker_getTypeArguments } from "../internal/checker/checker/signatures.js";
@@ -19,7 +20,9 @@ function record(value: Type) {
   if (result?.kind !== "widened-in") throw new Error("The actual native contextual widening retains its fresh producing record");
   const literal = result.source.derivation;
   if (literal?.kind !== "object-literal") throw new Error("This authored widening's source is its complete native object literal");
-  return { ...result, node: literal.creation.node };
+  const creation = LiteralCreation.read(result.source);
+  if (creation === undefined) throw new Error("The actual widening source retains its authenticated creation");
+  return { ...result, node: creation.node };
 }
 
 function fixture(checkers: number) {

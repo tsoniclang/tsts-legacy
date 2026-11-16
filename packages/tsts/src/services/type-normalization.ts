@@ -8,6 +8,7 @@ import { reacquireCompositeType } from "./type-normalization-composites.js";
 import { reacquireTypeOperator } from "./type-normalization-operators.js";
 import { reacquireContextualArgument } from "./type-normalization-contextual-arguments.js";
 import { reacquireLiteralGraph } from "./type-normalization-spreads.js";
+import type { LiteralGraph } from "./type-normalization-spreads.js";
 import { reacquireCachedObjectExpression, reacquireCachedRestType, reacquireContextWidening, reacquireExpressionConstruction } from "./type-normalization-expressions.js";
 import { cachedSignatureArguments, cachedSignatureConstruction, reacquireCachedSignature, reacquireCompositeSignature, reacquireHigherOrderSignature, reacquireMemberSignature, reacquireSignatureInstantiation, reacquireSignatureType } from "./type-normalization-signatures.js";
 import { reacquireAnonymousInstantiation, reacquireCachedValueType, reacquireCachedTypeNode, reacquireDeclarationSignature, reacquireMappedParameter, reacquireRestrictiveParameter, reacquireDeclaredType, reacquireTypeAlias, reacquireTypeReference } from "./type-normalization-declarations.js";
@@ -19,7 +20,8 @@ export interface TypeNormalization {
 export function createTypeNormalization(producer: Checker): TypeNormalization {
   const types = new Map<Type, Type>();
   const signatures = new Map<Signature, Signature>();
-  const literalInputs = new Map<Type, LiteralCreationInput>();
+  const literalInputs = new Map<Type, LiteralCreationInput | null>();
+  const literalGraphs = new Map<Type, LiteralGraph | undefined>();
   const files = producer.program.SourceFiles();
 
   const requireSource = (source: Checker): void => {
@@ -75,7 +77,9 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (source === producer) return type;
     const known = types.get(type);
     if (known !== undefined) return known;
-    if (type.derivation?.kind === "object-literal" && LiteralCreation.read(type) === undefined)
+    const literal = type.derivation?.kind;
+    if ((literal === "object-literal" || literal === "literal-fragment" || literal === "literal-merge" || literal === "literal-partial")
+      && LiteralCreation.read(type) === undefined)
       throw new TypeError("A complete literal cannot replace its authenticated actual creation");
     if (type.derivation?.kind === "signature-parameter") {
       const derivation = type.derivation;
@@ -100,7 +104,6 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)
       ?? reacquireTypeReference(producer, type, normalize);
-    const literal = type.derivation?.kind;
     if (result === undefined && (literal === "object-literal" || literal === "literal-fragment"
       || literal === "literal-merge" || literal === "literal-partial")) {
       result = reacquireLiteralGraph(producer, type, normalize, (original, selected) => {
@@ -108,7 +111,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
         if (previous !== undefined && previous !== selected)
           throw new Error("A native construction preserves its previously admitted normalization");
         types.set(original, selected);
-      }, literalInputs);
+      }, literalInputs, literalGraphs);
       if (result === undefined) throw new TypeError("The native literal retains its unambiguous actual source lifetime");
     }
     result ??= reacquireContextWidening(producer, type, normalize)

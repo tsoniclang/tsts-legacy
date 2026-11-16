@@ -142,16 +142,27 @@ for (const checkers of [1, 4]) test(`fresh literal capabilities cannot be copied
       assert.throws(() => reacquireFreshLiteral(unread, value, () => assert.fail("no crossed wrapper normalization"), new Map()), TypeError);
     } finally { links.resolvedType = original; }
     assert.throws(() => createTypeNormalization(foreign).type(value), TypeError);
-    const copiedInputs = record.creation.inputs();
+    const copiedInputs = LiteralCreation.read(value)!.inputs();
     Reflect.set(copiedInputs, "flags", 0);
-    assert.equal(record.creation.inputs().flags === value.objectFlags, true,
+    assert.equal(LiteralCreation.read(value)!.inputs().flags === value.objectFlags, true,
       "a caller's input snapshot cannot mutate the authenticated private construction");
+    const actualView = LiteralCreation.read(value);
+    if (actualView === undefined) throw new Error("The genuine output retains its private factory capability");
+    Object.assign(record.creation, { node: undefined, mode: undefined,
+      inputs: () => assert.fail("A capability's caller-installed input method is not authority"),
+      creator: () => assert.fail("A capability's caller-installed creator method is not authority") });
+    const privateView = LiteralCreation.read(value);
+    if (privateView === undefined) throw new Error("Caller-shadowed methods cannot replace the genuine private-slot view");
+    assert.equal(privateView?.capability === record.creation && privateView.node === actualView.node
+      && privateView.mode === actualView.mode, true);
+    assert.deepEqual(privateView.inputs(), actualView.inputs());
+    assert.deepEqual(privateView.creator, actualView.creator);
     const flags = value.objectFlags;
     try {
       value.objectFlags ^= ObjectFlagsJSLiteral;
       assert.throws(() => reacquireFreshLiteral(unread, value, () => assert.fail("no corrupted factory flags"), new Map()), TypeError);
       value.objectFlags = flags | ObjectFlagsCouldContainTypeVariablesComputed;
-      assert.equal(LiteralCreation.read(value) === record.creation, true,
+      assert.equal(LiteralCreation.read(value)?.capability === record.creation, true,
         "genuine lazy native computation bits do not replace retained factory semantics");
     } finally { value.objectFlags = flags; }
     try {

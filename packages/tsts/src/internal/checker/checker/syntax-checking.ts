@@ -1,4 +1,5 @@
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
+import { LiteralConstructionOwner } from "./literal-creation.js";
 import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
@@ -1370,7 +1371,10 @@ export function Checker_checkExpressionCachedEx(receiver: GoPtr<Checker>, node: 
     const saveFlowTypeCache = receiver!.flowTypeCache;
     receiver!.flowLoopStack = [];
     receiver!.flowTypeCache = undefined as unknown as GoMap<GoPtr<Node>, GoPtr<Type>>;
-    links!.resolvedType = Checker_checkExpressionEx(receiver, node, checkMode);
+    const constructionOwner = LiteralConstructionOwner.begin(receiver!, node!, links!);
+    const resolved = Checker_checkExpressionEx(receiver, node, checkMode, constructionOwner);
+    links!.resolvedType = resolved;
+    LiteralConstructionOwner.complete(constructionOwner, resolved);
     receiver!.flowTypeCache = saveFlowTypeCache;
     receiver!.flowLoopStack = saveFlowLoopStack;
   }
@@ -1385,8 +1389,8 @@ export function Checker_checkExpressionCachedEx(receiver: GoPtr<Checker>, node: 
  * 	return c.checkExpressionEx(node, CheckModeNormal)
  * }
  */
-export function Checker_checkExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
-  return Checker_checkExpressionEx(receiver, node, CheckModeNormal);
+export function Checker_checkExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  return Checker_checkExpressionEx(receiver, node, CheckModeNormal, constructionOwner);
 }
 
 /**
@@ -1410,11 +1414,11 @@ export function Checker_checkExpression(receiver: GoPtr<Checker>, node: GoPtr<No
  * 	return t
  * }
  */
-export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const saveCurrentNode = receiver!.currentNode;
   receiver!.currentNode = node;
   receiver!.instantiationCount = 0;
-  const uninstantiatedType = Checker_checkExpressionWorker(receiver, node, checkMode);
+  const uninstantiatedType = Checker_checkExpressionWorker(receiver, node, checkMode, constructionOwner);
   const t = Checker_instantiateTypeWithSingleGenericCallSignature(receiver, node, uninstantiatedType, checkMode);
   if (isConstEnumObjectType(t)) {
     Checker_checkConstEnumAccess(receiver, node, t);
@@ -1536,7 +1540,7 @@ export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<
  * 	return c.errorType
  * }
  */
-export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   switch (node!.Kind) {
     case KindIdentifier:
       return Checker_checkIdentifier(receiver, node, checkMode);
@@ -1569,15 +1573,15 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
     case KindRegularExpressionLiteral:
       return Checker_checkRegularExpressionLiteral(receiver, node);
     case KindArrayLiteralExpression:
-      return Checker_checkArrayLiteral(receiver, node, checkMode);
+      return Checker_checkArrayLiteral(receiver, node, checkMode, constructionOwner);
     case KindObjectLiteralExpression:
-      return Checker_checkObjectLiteral(receiver, node, checkMode);
+      return Checker_checkObjectLiteral(receiver, node, checkMode, constructionOwner);
     case KindPropertyAccessExpression:
-      return Checker_checkPropertyAccessExpression(receiver, node, checkMode, false);
+      return Checker_checkPropertyAccessExpression(receiver, node, checkMode, false, constructionOwner);
     case KindQualifiedName:
       return Checker_checkQualifiedName(receiver, node, checkMode);
     case KindElementAccessExpression:
-      return Checker_checkIndexedAccess(receiver, node, checkMode);
+      return Checker_checkIndexedAccess(receiver, node, checkMode, constructionOwner);
     case KindCallExpression:
       if (IsImportCall(node)) {
         return Checker_checkImportCallExpression(receiver, node);
@@ -1588,7 +1592,7 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
     case KindTaggedTemplateExpression:
       return Checker_checkTaggedTemplateExpression(receiver, node);
     case KindParenthesizedExpression:
-      return Checker_checkParenthesizedExpression(receiver, node, checkMode);
+      return Checker_checkParenthesizedExpression(receiver, node, checkMode, constructionOwner);
     case KindClassExpression:
       return Checker_checkClassExpression(receiver, node);
     case KindFunctionExpression:
@@ -1596,15 +1600,15 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
       return Checker_checkFunctionExpressionOrObjectLiteralMethod(receiver, node, checkMode);
     case KindTypeAssertionExpression:
     case KindAsExpression:
-      return Checker_checkAssertion(receiver, node, checkMode);
+      return Checker_checkAssertion(receiver, node, checkMode, constructionOwner);
     case KindTypeOfExpression:
       return Checker_checkTypeOfExpression(receiver, node);
     case KindNonNullExpression:
-      return Checker_checkNonNullAssertion(receiver, node);
+      return Checker_checkNonNullAssertion(receiver, node, constructionOwner);
     case KindExpressionWithTypeArguments:
       return Checker_checkExpressionWithTypeArguments(receiver, node);
     case KindSatisfiesExpression:
-      return Checker_checkSatisfiesExpression(receiver, node);
+      return Checker_checkSatisfiesExpression(receiver, node, constructionOwner);
     case KindMetaProperty:
       return Checker_checkMetaProperty(receiver, node);
     case KindDeleteExpression:
@@ -1618,11 +1622,11 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
     case KindPostfixUnaryExpression:
       return Checker_checkPostfixUnaryExpression(receiver, node);
     case KindBinaryExpression:
-      return Checker_checkBinaryExpression(receiver, node, checkMode);
+      return Checker_checkBinaryExpression(receiver, node, checkMode, constructionOwner);
     case KindConditionalExpression:
-      return Checker_checkConditionalExpression(receiver, node, checkMode);
+      return Checker_checkConditionalExpression(receiver, node, checkMode, constructionOwner);
     case KindSpreadElement:
-      return Checker_checkSpreadExpression(receiver, node, checkMode);
+      return Checker_checkSpreadExpression(receiver, node, checkMode, constructionOwner);
     case KindOmittedExpression:
       return receiver!.undefinedWideningType;
     case KindYieldExpression:
@@ -2170,8 +2174,8 @@ export function Checker_skippedGenericFunction(receiver: GoPtr<Checker>, node: G
  * 	return c.checkExpressionEx(node.Expression(), checkMode)
  * }
  */
-export function Checker_checkParenthesizedExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
-  return Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode);
+export function Checker_checkParenthesizedExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  return Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode, constructionOwner);
 }
 
 /**
@@ -2501,8 +2505,8 @@ export function Checker_checkPostfixUnaryExpression(receiver: GoPtr<Checker>, no
  * 	return c.checkIteratedTypeOrElementType(IterationUseSpread, arrayOrIterableType, c.undefinedType, node.Expression())
  * }
  */
-export function Checker_checkSpreadExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
-  return checkSpreadExpressionWithIteration(receiver, node, checkMode);
+export function Checker_checkSpreadExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  return checkSpreadExpressionWithIteration(receiver, node, checkMode, undefined, constructionOwner);
 }
 
 function checkSpreadExpressionWithIteration(
@@ -2510,8 +2514,9 @@ function checkSpreadExpressionWithIteration(
   node: GoPtr<Node>,
   checkMode: CheckMode,
   onIteration?: (sourceIterableType: Type, sourceElementType: Type) => void,
+  constructionOwner?: LiteralConstructionOwner,
 ): GoPtr<Type> {
-  const arrayOrIterableType = Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode);
+  const arrayOrIterableType = Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode, constructionOwner);
   const elementType = Checker_checkIteratedTypeOrElementType(receiver, IterationUseSpread, arrayOrIterableType, receiver!.undefinedType, Node_Expression(node));
   if (onIteration !== undefined && arrayOrIterableType !== undefined && elementType !== undefined) {
     onIteration(arrayOrIterableType, elementType);
@@ -2837,26 +2842,26 @@ export function Checker_checkThisExpression(receiver: GoPtr<Checker>, node: GoPt
  * 	return c.checkBinaryLikeExpression(binary.Left, binary.OperatorToken, binary.Right, checkMode, node)
  * }
  */
-export function Checker_checkBinaryExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkBinaryExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const binary = AsBinaryExpression(node);
   if (isIterativelyCheckableNonLogicalBinaryExpression(node)) {
-    return Checker_checkNonLogicalBinaryExpressionIterative(receiver, node, checkMode);
+    return Checker_checkNonLogicalBinaryExpressionIterative(receiver, node, checkMode, constructionOwner);
   }
-  return Checker_checkBinaryLikeExpression(receiver, binary!.Left, binary!.OperatorToken, binary!.Right, checkMode, node);
+  return Checker_checkBinaryLikeExpression(receiver, binary!.Left, binary!.OperatorToken, binary!.Right, checkMode, node, constructionOwner);
 }
 
-function Checker_checkNonLogicalBinaryExpressionIterative(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+function Checker_checkNonLogicalBinaryExpressionIterative(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const binaryChain: GoPtr<Node>[] = [];
   let leftEdge: GoPtr<Node> = node;
   while (isIterativelyCheckableNonLogicalBinaryExpression(leftEdge)) {
     binaryChain.push(leftEdge);
     leftEdge = AsBinaryExpression(leftEdge)!.Left;
   }
-  let leftType = Checker_checkExpressionEx(receiver, leftEdge, checkMode);
+  let leftType = Checker_checkExpressionEx(receiver, leftEdge, checkMode, constructionOwner);
   for (let index = binaryChain.length - 1; index >= 0; index--) {
     const current = binaryChain[index];
     const binary = AsBinaryExpression(current);
-    const rightType = Checker_checkExpressionEx(receiver, binary!.Right, checkMode);
+    const rightType = Checker_checkExpressionEx(receiver, binary!.Right, checkMode, constructionOwner);
     if (index === 0) {
       return Checker_checkBinaryLikeExpressionWithTypes(receiver, binary!.Left, binary!.OperatorToken, binary!.Right, checkMode, current, leftType, rightType);
     }
@@ -3107,19 +3112,19 @@ function isIterativelyCheckableNonLogicalBinaryExpression(node: GoPtr<Node>): bo
  * 	panic("Unhandled case in checkBinaryLikeExpression")
  * }
  */
-export function Checker_checkBinaryLikeExpression(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>): GoPtr<Type> {
+export function Checker_checkBinaryLikeExpression(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const operator = operatorToken!.Kind;
   if (operator === KindEqualsToken && (left!.Kind === KindObjectLiteralExpression || left!.Kind === KindArrayLiteralExpression)) {
     return Checker_checkDestructuringAssignment(
       receiver,
       left,
-      Checker_checkExpressionEx(receiver, right, checkMode),
+      Checker_checkExpressionEx(receiver, right, checkMode, constructionOwner),
       checkMode,
       right!.Kind === KindThisKeyword,
     );
   }
-  const leftType = Checker_checkExpressionEx(receiver, left, checkMode);
-  const rightType = Checker_checkExpressionEx(receiver, right, checkMode);
+  const leftType = Checker_checkExpressionEx(receiver, left, checkMode, constructionOwner);
+  const rightType = Checker_checkExpressionEx(receiver, right, checkMode, constructionOwner);
   return Checker_checkBinaryLikeExpressionWithTypes(receiver, left, operatorToken, right, checkMode, errorNode, leftType, rightType);
 }
 
@@ -3557,8 +3562,8 @@ export function Checker_checkReferenceExpression(receiver: GoPtr<Checker>, expr:
  * 	}
  * }
  */
-export function Checker_checkExpressionForMutableLocation(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
-  const t = Checker_checkExpressionEx(receiver, node, checkMode);
+export function Checker_checkExpressionForMutableLocation(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  const t = Checker_checkExpressionEx(receiver, node, checkMode, constructionOwner);
   if (Checker_isConstContext(receiver, node)) {
     return Checker_getRegularTypeOfLiteralType(receiver, t);
   }

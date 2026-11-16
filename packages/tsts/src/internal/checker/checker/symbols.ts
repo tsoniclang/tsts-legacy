@@ -1,4 +1,5 @@
 import type { bool, int } from "../../../go/scalars.js";
+import type { LiteralConstructionOwner } from "./literal-creation.js";
 import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
 import { Checker_instantiateTypeWorkerWithCapture } from "./types.js";
@@ -5480,11 +5481,11 @@ export function Checker_checkQualifiedName(receiver: GoPtr<Checker>, node: GoPtr
  * 	return c.checkElementAccessExpression(node, c.checkNonNullExpression(node.Expression()), checkMode)
  * }
  */
-export function Checker_checkIndexedAccess(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkIndexedAccess(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if ((node!.Flags & NodeFlagsOptionalChain) !== 0) {
-    return Checker_checkElementAccessChain(receiver, node, checkMode);
+    return Checker_checkElementAccessChain(receiver, node, checkMode, constructionOwner);
   }
-  const sourceReceiverType = Checker_checkNonNullExpression(receiver, Node_Expression(node));
+  const sourceReceiverType = Checker_checkNonNullExpression(receiver, Node_Expression(node), constructionOwner);
   const selected = selectedElementAccessCapture(receiver, node);
   const result = checkElementAccessExpressionWithEvidence(receiver, node, sourceReceiverType, checkMode, selected);
   if (selected !== undefined) {
@@ -5503,9 +5504,9 @@ export function Checker_checkIndexedAccess(receiver: GoPtr<Checker>, node: GoPtr
  * 	return c.propagateOptionalTypeMarker(c.checkElementAccessExpression(node, c.checkNonNullType(nonOptionalType, node.Expression()), checkMode), node, nonOptionalType != exprType)
  * }
  */
-export function Checker_checkElementAccessChain(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkElementAccessChain(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const selected = selectedElementAccessCapture(receiver, node);
-  const result = checkElementAccessChainWithEvidence(receiver, node, checkMode, selected);
+  const result = checkElementAccessChainWithEvidence(receiver, node, checkMode, selected, constructionOwner);
   if (selected !== undefined) {
     recordSelectedElementAccessEvidence(receiver, node, selected, result);
   }
@@ -5517,8 +5518,9 @@ function checkElementAccessChainWithEvidence(
   node: GoPtr<Node>,
   checkMode: CheckMode,
   selected: SelectedElementAccessCheck | undefined,
+  constructionOwner?: LiteralConstructionOwner,
 ): GoPtr<Type> {
-  const exprType = Checker_checkExpression(receiver, Node_Expression(node));
+  const exprType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const nonOptionalType = Checker_getOptionalExpressionType(receiver, exprType, Node_Expression(node));
   const sourceReceiverType = Checker_checkNonNullType(receiver, nonOptionalType, Node_Expression(node));
   const selectedResult = checkElementAccessExpressionWithEvidence(receiver, node, sourceReceiverType, checkMode, selected);
@@ -6835,12 +6837,12 @@ export function Checker_isSameScopedBindingElement(receiver: GoPtr<Checker>, nod
  * 	return c.checkPropertyAccessExpressionOrQualifiedName(node, expr, c.checkNonNullExpression(expr), node.AsPropertyAccessExpression().Name(), checkMode, writeOnly)
  * }
  */
-export function Checker_checkPropertyAccessExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, writeOnly: bool): GoPtr<Type> {
+export function Checker_checkPropertyAccessExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, writeOnly: bool, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if ((node!.Flags & NodeFlagsOptionalChain) !== 0) {
-    return Checker_checkPropertyAccessChain(receiver, node, checkMode);
+    return Checker_checkPropertyAccessChain(receiver, node, checkMode, constructionOwner);
   }
   const expr = Node_Expression(node);
-  const sourceReceiverType = Checker_checkNonNullExpression(receiver, expr);
+  const sourceReceiverType = Checker_checkNonNullExpression(receiver, expr, constructionOwner);
   const selected = selectedPropertyAccessCapture(receiver, node);
   const result = checkPropertyAccessExpressionOrQualifiedNameWithEvidence(
     receiver,
@@ -6868,8 +6870,8 @@ export function Checker_checkPropertyAccessExpression(receiver: GoPtr<Checker>, 
  * 	return c.propagateOptionalTypeMarker(c.checkPropertyAccessExpressionOrQualifiedName(node, node.Expression(), c.checkNonNullType(nonOptionalType, node.Expression()), node.Name(), checkMode, false), node, nonOptionalType != leftType)
  * }
  */
-export function Checker_checkPropertyAccessChain(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
-  const leftType = Checker_checkExpression(receiver, Node_Expression(node));
+export function Checker_checkPropertyAccessChain(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  const leftType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const nonOptionalType = Checker_getOptionalExpressionType(receiver, leftType, Node_Expression(node));
   const sourceReceiverType = Checker_checkNonNullType(receiver, nonOptionalType, Node_Expression(node));
   const selected = selectedPropertyAccessCapture(receiver, node);

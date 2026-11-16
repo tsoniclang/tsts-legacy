@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { Node_Symbol } from "../internal/ast/ast.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_checkExpressionCached } from "../internal/checker/checker/syntax-checking.js";
 import { Checker_getRegularTypeOfObjectLiteral, Checker_getSpreadType, Checker_getWidenedType } from "../internal/checker/checker/types.js";
@@ -72,7 +73,7 @@ for (const checkers of [1, 4]) test(`cached spread expression roots retain their
           assert.equal(reacquireCachedObjectExpression(producer, original) === target, true);
           assert.equal(normalization.type(original) === target && normalization.type(original) === target, true);
           if (original === originalsAt[0]) assert.equal(original.derivation?.kind === "literal-merge"
-            && original.derivation.site.node === node, true,
+            && LiteralCreation.read(original)?.node === node, true,
           "the fresh creation record preserves the existing complete expression cache identity");
           else assert.equal((original.derivation?.kind === "regular-of" || original.derivation?.kind === "widened-from")
             && original.derivation.source === originalsAt[0], true,

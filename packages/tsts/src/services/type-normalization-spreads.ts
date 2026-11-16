@@ -2,36 +2,37 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindArrayLiteralType, CheckModeNormal, getTypeListKey } from "../internal/checker/checker/state.js";
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_checkExpressionCached } from "../internal/checker/checker/syntax-checking.js";
-import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
+import { LiteralConstructionOwner, LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import type { LiteralCreationInput } from "../internal/checker/checker/literal-creation.js";
+import type { LiteralCreatorInput } from "../internal/checker/checker/literal-creation.js";
 import { reacquireFreshLiteral } from "./type-normalization-fresh-literals.js";
 import type { Node } from "../internal/ast/spine.js";
 import { Node_Properties, SourceFile_FileName } from "../internal/ast/ast.js";
 import { IsArrayLiteralExpression, IsObjectLiteralExpression, IsSpreadAssignment } from "../internal/ast/generated/predicates.js";
 import { GetSourceFileOfNode } from "../internal/ast/utilities.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import type { Type, TypeDerivation } from "../internal/checker/types.js";
+import type { Type } from "../internal/checker/types.js";
 import { ObjectFlagsArrayLiteral, ObjectFlagsObjectLiteral, TypeFlagsObject, TypeFlagsUnion,
   Type_AsObjectType, Type_AsStructuredType, Type_AsTypeReference, Type_Target, Type_Types } from "../internal/checker/types.js";
 
-type Event = Extract<TypeDerivation, { readonly kind: "object-literal" | "literal-fragment" | "literal-merge" | "literal-partial" }>;
+type Event = LiteralCreatorInput;
 interface Produced { readonly type: Type; readonly event: Event }
 type EventIndex = Map<Node, Map<Node | null, Map<string, Type>>>;
-interface Graph {
+export interface LiteralGraph {
   readonly values: ReadonlySet<Type>;
   readonly events: readonly Produced[];
   readonly index: EventIndex;
 }
-interface Question { readonly node: Node; readonly root: Type; readonly graph: Graph }
+interface Question { readonly node: Node; readonly root: Type; readonly graph: LiteralGraph }
 
 function construction(type: Type): Event | undefined {
-  const value = type.derivation;
-  if (value?.kind === "object-literal") return LiteralCreation.read(type) === undefined ? undefined : value;
-  return value?.kind === "literal-fragment" || value?.kind === "literal-merge" || value?.kind === "literal-partial"
-    ? value : undefined;
+  const creation = LiteralCreation.read(type);
+  return creation === undefined || creation.owner !== undefined
+    && (type.checker === undefined || LiteralConstructionOwner.read(creation.owner, type.checker) === undefined)
+    ? undefined : creation.creator;
 }
 
-function siteOf(event: Event) { return event.kind === "object-literal" ? event.creation
+function siteOf(event: Event) { return event.kind === "object-literal" ? event
   : event.kind === "literal-fragment" ? event : event.site; }
 function boundaryOf(event: Event): Node | null {
   return event.kind === "object-literal" ? null : event.kind === "literal-fragment" ? event.boundary : event.site.boundary;
@@ -81,7 +82,7 @@ function arrayInputs(owner: Checker, type: Type): readonly (Type | undefined)[] 
   return values;
 }
 
-function collect(owner: Checker, root: Type): Graph | undefined {
+function collect(owner: Checker, root: Type): LiteralGraph | undefined {
   const states = new Map<Type, "active" | "complete">();
   const events: Produced[] = [];
   const index: EventIndex = new Map();
@@ -102,12 +103,15 @@ function collect(owner: Checker, root: Type): Graph | undefined {
     if (state === "active") return undefined;
     if (state === "complete") continue;
     const event = construction(type);
-    if (event === undefined && type.derivation?.kind === "object-literal") return undefined;
+    if (event === undefined) {
+      const kind = type.derivation?.kind;
+      if (kind === "object-literal" || kind === "literal-fragment" || kind === "literal-merge" || kind === "literal-partial") return undefined;
+    }
     states.set(type, "active");
     pending.push({ type, exit: true });
     if (event !== undefined) {
       const site = siteOf(event);
-      if (site.mode !== CheckModeNormal || !IsObjectLiteralExpression(site.node)
+      if (!IsObjectLiteralExpression(site.node)
         || (type.flags & TypeFlagsObject) === 0
         || event.kind !== "object-literal" && (type.objectFlags & ObjectFlagsObjectLiteral) === 0) return undefined;
       let boundaries = owners.get(site.node);
@@ -157,13 +161,26 @@ function collect(owner: Checker, root: Type): Graph | undefined {
   return { values: new Set(states.keys()), events, index };
 }
 
-function question(source: Checker, type: Type, site: Node): Question | "absent" | "invalid" {
+function cachedGraph(owner: Checker, root: Type, graphs: Map<Type, LiteralGraph | undefined>): LiteralGraph | undefined {
+  if (graphs.has(root)) return graphs.get(root);
+  const graph = collect(owner, root);
+  graphs.set(root, graph);
+  return graph;
+}
+
+function question(source: Checker, type: Type, site: Node, graphs: Map<Type, LiteralGraph | undefined>): Question | "absent" | "invalid" {
   let selected: Question | undefined;
-  for (let node: Node | undefined = site; node !== undefined; node = node.Parent) {
-    if (!IsObjectLiteralExpression(node) && !IsArrayLiteralExpression(node)) continue;
+  const creation = LiteralCreation.read(type);
+  const publication = creation?.owner === undefined ? undefined : LiteralConstructionOwner.read(creation.owner, source);
+  if (creation?.owner !== undefined && publication === undefined) return "invalid";
+  const nodes = new Set<Node>();
+  if (publication !== undefined) nodes.add(publication.node);
+  for (let node: Node | undefined = site; node !== undefined; node = node.Parent)
+    if (IsObjectLiteralExpression(node) || IsArrayLiteralExpression(node)) nodes.add(node);
+  for (const node of nodes) {
     const root = LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType;
     if (root === undefined) continue;
-    const graph = collect(source, root);
+    const graph = cachedGraph(source, root, graphs);
     if (graph === undefined) return "invalid";
     if (!graph.values.has(type)) continue;
     if (selected !== undefined) return "invalid";
@@ -173,7 +190,8 @@ function question(source: Checker, type: Type, site: Node): Question | "absent" 
 }
 
 export function reacquireLiteralGraph(producer: Checker, type: Type, normalize: (type: Type) => Type,
-  remember: (original: Type, selected: Type) => void, admitted: Map<Type, LiteralCreationInput>): Type | undefined {
+  remember: (original: Type, selected: Type) => void, admitted: Map<Type, LiteralCreationInput | null>,
+  graphs: Map<Type, LiteralGraph | undefined>): Type | undefined {
   const event = construction(type);
   if (event === undefined) return undefined;
   const source = type.checker;
@@ -181,17 +199,18 @@ export function reacquireLiteralGraph(producer: Checker, type: Type, normalize: 
     throw new TypeError("A native spread retains its actual producing checker in the same Program");
   const site = siteOf(event);
   if (!IsObjectLiteralExpression(site.node)) return undefined;
-  if (site.mode !== CheckModeNormal) return event.kind === "object-literal" ? reacquireFreshLiteral(producer, type, normalize, admitted) : undefined;
-  const original = question(source, type, site.node);
+  if (site.mode !== CheckModeNormal && LiteralCreation.read(type)?.owner === undefined)
+    return reacquireFreshLiteral(producer, type, normalize, admitted);
+  const original = question(source, type, site.node, graphs);
   if (original === "invalid") return undefined;
-  if (original === "absent") return event.kind === "object-literal" ? reacquireFreshLiteral(producer, type, normalize, admitted) : undefined;
+  if (original === "absent") return reacquireFreshLiteral(producer, type, normalize, admitted);
   if (source.program.SourceFiles() !== producer.program.SourceFiles())
     throw new TypeError("A native spread retains its actual producing checker in the same Program");
   const sourceGraph = original.graph;
   const target = Checker_checkExpressionCached(producer, original.node);
   if (target === undefined || target.checker !== producer)
     throw new Error("The actual cached literal retains its target producer");
-  const targetGraph = collect(producer, target);
+  const targetGraph = cachedGraph(producer, target, graphs);
   if (targetGraph === undefined) throw new Error("The actual target literal retains its unique native construction graph");
   const matched = new Map<Type, Type>();
   const inputOf = (value: Type): Type => {

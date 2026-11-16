@@ -1,6 +1,7 @@
 import type { bool, byte, int } from "../../../go/scalars.js";
 import type { LiteralSpreadSite, LiteralPartialSite } from "../types.js";
 import { LiteralCreation } from "./literal-creation.js";
+import type { LiteralConstructionOwner } from "./literal-creation.js";
 import type { GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
 import { NewGoStructMap } from "../../../go/compat.js";
 import type {
@@ -2179,8 +2180,8 @@ export function Checker_getQuickTypeOfExpression(receiver: GoPtr<Checker>, node:
  * 	return c.checkNonNullType(c.checkExpression(node), node)
  * }
  */
-export function Checker_checkNonNullExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
-  return Checker_checkNonNullType(receiver, Checker_checkExpression(receiver, node), node);
+export function Checker_checkNonNullExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  return Checker_checkNonNullType(receiver, Checker_checkExpression(receiver, node, constructionOwner), node);
 }
 
 /**
@@ -2560,7 +2561,7 @@ export function Checker_checkRegularExpressionLiteral(receiver: GoPtr<Checker>, 
  * 	return c.createArrayLiteralType(c.createArrayTypeEx(elementType, inConstContext))
  * }
  */
-export function Checker_checkArrayLiteral(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkArrayLiteral(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const elements = Node_Elements(node) ?? [];
   const elementTypes: GoPtr<Type>[] = new Array(elements.length);
   const elementInfos: TupleElementInfo[] = new Array(elements.length);
@@ -2580,7 +2581,7 @@ export function Checker_checkArrayLiteral(receiver: GoPtr<Checker>, node: GoPtr<
     for (let i = 0; i < elements.length; i++) {
       const element = elements[i];
       if (IsSpreadElement(element)) {
-        const spreadType = Checker_checkExpressionEx(receiver, Node_Expression(element), checkMode);
+        const spreadType = Checker_checkExpressionEx(receiver, Node_Expression(element), checkMode, constructionOwner);
         if (Checker_isArrayLikeType(receiver, spreadType)) {
           elementTypes[i] = spreadType;
           elementInfos[i] = { flags: ElementFlagsVariadic, labeledDeclaration: undefined };
@@ -2603,7 +2604,7 @@ export function Checker_checkArrayLiteral(receiver: GoPtr<Checker>, node: GoPtr<
         elementTypes[i] = receiver!.undefinedOrMissingType;
         elementInfos[i] = { flags: ElementFlagsOptionalFlag, labeledDeclaration: undefined };
       } else {
-        const t = Checker_checkExpressionForMutableLocation(receiver, element, checkMode);
+        const t = Checker_checkExpressionForMutableLocation(receiver, element, checkMode, constructionOwner);
         elementTypes[i] = Checker_addOptionalityEx(receiver, t, true, hasOmittedExpression);
         elementInfos[i] = { flags: core.IfElse(hasOmittedExpression, ElementFlagsOptionalFlag, ElementFlagsRequired), labeledDeclaration: undefined };
         if (inTupleContext && (checkMode & CheckModeInferential) !== 0 && (checkMode & CheckModeSkipContextSensitive) === 0 && Checker_isContextSensitive(receiver, element)) {
@@ -3113,11 +3114,11 @@ export function Checker_checkTypeOfExpression(receiver: GoPtr<Checker>, node: Go
  * 	return c.GetNonNullableType(c.checkExpression(node.Expression()))
  * }
  */
-export function Checker_checkNonNullAssertion(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
+export function Checker_checkNonNullAssertion(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if ((node!.Flags & NodeFlagsOptionalChain) !== 0) {
-    return Checker_checkNonNullChain(receiver, node);
+    return Checker_checkNonNullChain(receiver, node, constructionOwner);
   }
-  return Checker_GetNonNullableType(receiver, Checker_checkExpression(receiver, Node_Expression(node)));
+  return Checker_GetNonNullableType(receiver, Checker_checkExpression(receiver, Node_Expression(node), constructionOwner));
 }
 
 /**
@@ -3130,8 +3131,8 @@ export function Checker_checkNonNullAssertion(receiver: GoPtr<Checker>, node: Go
  * 	return c.propagateOptionalTypeMarker(c.GetNonNullableType(nonOptionalType), node, nonOptionalType != leftType)
  * }
  */
-export function Checker_checkNonNullChain(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
-  const leftType = Checker_checkExpression(receiver, Node_Expression(node));
+export function Checker_checkNonNullChain(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  const leftType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const nonOptionalType = Checker_getOptionalExpressionType(receiver, leftType, Node_Expression(node));
   return Checker_propagateOptionalTypeMarker(receiver, Checker_GetNonNullableType(receiver, nonOptionalType), node, nonOptionalType !== leftType);
 }
@@ -3188,12 +3189,12 @@ export function Checker_getUnaryResultType(receiver: GoPtr<Checker>, operandType
  * 	return c.getUnionTypeEx([]*Type{type1, type2}, UnionReductionSubtype, nil, nil)
  * }
  */
-export function Checker_checkConditionalExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkConditionalExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const cond = AsConditionalExpression(node);
   const t = Checker_checkTruthinessExpression(receiver, cond!.Condition, checkMode);
   Checker_checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType(receiver, cond!.Condition, t, cond!.WhenTrue);
-  const type1 = Checker_checkExpressionEx(receiver, cond!.WhenTrue, checkMode);
-  const type2 = Checker_checkExpressionEx(receiver, cond!.WhenFalse, checkMode);
+  const type1 = Checker_checkExpressionEx(receiver, cond!.WhenTrue, checkMode, constructionOwner);
+  const type2 = Checker_checkExpressionEx(receiver, cond!.WhenFalse, checkMode, constructionOwner);
   return Checker_getUnionTypeEx(receiver, [type1, type2], UnionReductionSubtype, undefined, undefined);
 }
 
@@ -3768,11 +3769,11 @@ export function Checker_hasEmptyObjectIntersection(receiver: GoPtr<Checker>, t: 
  * 	return createObjectLiteralType()
  * }
  */
-export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const nodeSymbol = Node_Symbol(node);
   if ((Node_Properties(node)?.length ?? 0) === 0 && nodeSymbol !== undefined && (nodeSymbol!.Exports?.size ?? 0) !== 0) {
-    return LiteralCreation.create(receiver!, node!, checkMode, nodeSymbol, nodeSymbol.Exports, [], [], [],
-      IsInJSFile(node) && !IsInJsonFile(node) ? ObjectFlagsJSLiteral : ObjectFlagsNone, undefined);
+    return LiteralCreation.create(receiver!, { kind: "object-literal", node: node!, mode: checkMode }, nodeSymbol, nodeSymbol.Exports, [], [], [],
+      IsInJSFile(node) && !IsInJsonFile(node) ? ObjectFlagsJSLiteral : ObjectFlagsNone, undefined, constructionOwner);
   }
   const inDestructuringPattern = IsAssignmentTarget(node);
   Checker_checkGrammarObjectLiteralExpression(receiver, AsObjectLiteralExpression(node), inDestructuringPattern);
@@ -3825,16 +3826,12 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     if (patternWithComputedProperties) {
       finalFlags |= ObjectFlagsObjectLiteralPatternWithComputedProperties;
     }
-    if (!fragment) return LiteralCreation.create(receiver!, node!, checkMode, Node_Symbol(node), propertiesTable,
+    return LiteralCreation.create(receiver!, fragment ? { kind: "literal-fragment", node: node!, mode: checkMode, boundary }
+      : { kind: "object-literal", node: node!, mode: checkMode }, Node_Symbol(node), propertiesTable,
       [], [], indexInfos.map(info => {
         if (info === undefined) throw new Error("The actual literal factory supplies dense index inputs");
         return info;
-      }), finalFlags, inDestructuringPattern ? node : undefined);
-    const result = Checker_newAnonymousType(receiver, Node_Symbol(node), propertiesTable, [], [], indexInfos);
-    result!.objectFlags |= finalFlags;
-    if (inDestructuringPattern) receiver!.patternForType.set(result, node);
-    if (checkMode === CheckModeNormal) result!.derivation = { kind: "literal-fragment", node: node!, mode: checkMode, boundary };
-    return result;
+      }), finalFlags, inDestructuringPattern ? node : undefined, constructionOwner);
   };
   for (const memberDecl of Node_Properties(node) ?? []) {
     let member = Checker_getSymbolOfDeclaration(receiver, memberDecl);
@@ -3847,7 +3844,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
       let t: GoPtr<Type>;
       switch (memberDecl!.Kind) {
         case KindPropertyAssignment:
-          t = Checker_checkPropertyAssignment(receiver, memberDecl, checkMode);
+          t = Checker_checkPropertyAssignment(receiver, memberDecl, checkMode, constructionOwner);
           break;
         case KindShorthandPropertyAssignment:
           t = Checker_checkShorthandPropertyAssignment(receiver, memberDecl, inDestructuringPattern, checkMode);
@@ -3901,17 +3898,17 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     } else if (memberDecl!.Kind === KindSpreadAssignment) {
       if (propertiesArray.length > 0) {
         spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(memberDecl!, true), Node_Symbol(node), objectFlags, inConstContext,
-          checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: memberDecl!, phase: "properties" } : null);
+          { node: node!, mode: checkMode, boundary: memberDecl!, phase: "properties" }, constructionOwner);
         propertiesArray = [];
         propertiesTable = new globalThis.Map<string, GoPtr<Symbol>>();
         hasComputedStringProperty = false;
         hasComputedNumberProperty = false;
         hasComputedSymbolProperty = false;
       }
-      const t = Checker_getReducedType(receiver, Checker_checkExpressionEx(receiver, Node_Expression(memberDecl), (checkMode & CheckModeInferential) as CheckMode));
+      const t = Checker_getReducedType(receiver, Checker_checkExpressionEx(receiver, Node_Expression(memberDecl), (checkMode & CheckModeInferential) as CheckMode, constructionOwner));
       if (Checker_isValidSpreadType(receiver, t)) {
         const mergedType = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, t, inConstContext,
-          checkMode === CheckModeNormal ? { site: { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" }, role: "operand", other: spread! } : null);
+        { site: { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" }, role: "operand", other: spread! }, constructionOwner);
         if (allPropertiesTable !== undefined) {
           Checker_checkSpreadPropOverrides(receiver, mergedType, allPropertiesTable, memberDecl);
         }
@@ -3920,7 +3917,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
           continue;
         }
         spread = Checker_getSpreadType(receiver, spread, mergedType, Node_Symbol(node), objectFlags, inConstContext,
-          checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" } : null);
+          { node: node!, mode: checkMode, boundary: memberDecl!, phase: "spread" }, constructionOwner);
       } else {
         Checker_error(receiver, memberDecl, diagnosticsMessages.Spread_types_may_only_be_created_from_object_types);
         spread = receiver!.errorType;
@@ -3954,7 +3951,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
   if (spread !== receiver!.emptyObjectType) {
     if (propertiesArray.length > 0) {
       spread = Checker_getSpreadType(receiver, spread, createObjectLiteralType(null, true), Node_Symbol(node), objectFlags, inConstContext,
-        checkMode === CheckModeNormal ? { node: node!, mode: checkMode, boundary: null, phase: "properties" } : null);
+        { node: node!, mode: checkMode, boundary: null, phase: "properties" }, constructionOwner);
       propertiesArray = [];
       propertiesTable = new globalThis.Map<string, GoPtr<Symbol>>();
       hasComputedStringProperty = false;
@@ -4086,7 +4083,7 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
  * 	return spread
  * }
  */
-export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type>, right: GoPtr<Type>, symbol_: GoPtr<Symbol>, objectFlags: ObjectFlags, readonly: bool, site: LiteralSpreadSite | null): GoPtr<Type> {
+export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type>, right: GoPtr<Type>, symbol_: GoPtr<Symbol>, objectFlags: ObjectFlags, readonly: bool, site: LiteralSpreadSite | null, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if ((left!.flags & TypeFlagsAny) !== 0 || (right!.flags & TypeFlagsAny) !== 0) {
     return receiver!.anyType;
   }
@@ -4100,21 +4097,21 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
     return left;
   }
   left = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, left, readonly,
-    site === null ? null : { site, role: "left", other: right! });
+    site === null ? null : { site, role: "left", other: right! }, constructionOwner);
   if ((left!.flags & TypeFlagsUnion) !== 0) {
     if (Checker_checkCrossProductUnion(receiver, [left, right])) {
       return Checker_mapType(receiver, left, (t: GoPtr<Type>): GoPtr<Type> => {
-        return Checker_getSpreadType(receiver, t, right, symbol_, objectFlags, readonly, site);
+        return Checker_getSpreadType(receiver, t, right, symbol_, objectFlags, readonly, site, constructionOwner);
       });
     }
     return receiver!.errorType;
   }
   right = Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver, right, readonly,
-    site === null ? null : { site, role: "right", other: left! });
+    site === null ? null : { site, role: "right", other: left! }, constructionOwner);
   if ((right!.flags & TypeFlagsUnion) !== 0) {
     if (Checker_checkCrossProductUnion(receiver, [left, right])) {
       return Checker_mapType(receiver, right, (t: GoPtr<Type>): GoPtr<Type> => {
-        return Checker_getSpreadType(receiver, left, t, symbol_, objectFlags, readonly, site);
+        return Checker_getSpreadType(receiver, left, t, symbol_, objectFlags, readonly, site, constructionOwner);
       });
     }
     return receiver!.errorType;
@@ -4131,7 +4128,7 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
       const lastLeft = types[types.length - 1]!;
       if (Checker_isNonGenericObjectType(receiver, lastLeft) && Checker_isNonGenericObjectType(receiver, right)) {
         const newTypes = slices.Clone(types)!;
-        newTypes[newTypes.length - 1] = Checker_getSpreadType(receiver, lastLeft, right, symbol_, objectFlags, readonly, site);
+        newTypes[newTypes.length - 1] = Checker_getSpreadType(receiver, lastLeft, right, symbol_, objectFlags, readonly, site, constructionOwner);
         return Checker_getIntersectionType(receiver, newTypes);
       }
     }
@@ -4182,9 +4179,13 @@ export function Checker_getSpreadType(receiver: GoPtr<Checker>, left: GoPtr<Type
   const spreadIndexInfos = core.SameMap(indexInfos, (info: GoPtr<IndexInfo>): GoPtr<IndexInfo> => {
     return Checker_getIndexInfoWithReadonly(receiver, info, readonly);
   });
+  if (site !== null) return LiteralCreation.create(receiver!, { kind: "literal-merge", site, left: left!, right: right!, flags: objectFlags, readonly },
+    symbol_, members, [], [], spreadIndexInfos.map(info => {
+      if (info === undefined) throw new Error("The actual native spread factory has dense index inputs");
+      return info;
+    }), (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral | ObjectFlagsContainsSpread | objectFlags) as ObjectFlags, undefined, constructionOwner);
   const spread = Checker_newAnonymousType(receiver, symbol_, members, [], [], spreadIndexInfos);
   spread!.objectFlags |= (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral | ObjectFlagsContainsSpread | objectFlags) as ObjectFlags;
-  if (site !== null) spread!.derivation = { kind: "literal-merge", site, left: left!, right: right!, flags: objectFlags, readonly };
   return spread;
 }
 
@@ -4270,7 +4271,7 @@ export function Checker_isNonGenericObjectType(receiver: GoPtr<Checker>, t: GoPt
  * 	return spread
  * }
  */
-export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<Checker>, t: GoPtr<Type>, readonly: bool, context: LiteralPartialSite | null): GoPtr<Type> {
+export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<Checker>, t: GoPtr<Type>, readonly: bool, context: LiteralPartialSite | null, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if ((t!.flags & TypeFlagsUnion) === 0) {
     return t;
   }
@@ -4315,10 +4316,14 @@ export function Checker_tryMergeUnionOfObjectTypeAndEmptyObject(receiver: GoPtr<
       members.set(prop!.Name, result);
     }
   }
-  const spread = Checker_newAnonymousType(receiver, firstType!.symbol, members, [], [], Checker_getIndexInfosOfType(receiver, firstType));
+  const indexes = Checker_getIndexInfosOfType(receiver, firstType);
+  if (context !== null) return LiteralCreation.create(receiver!, { kind: "literal-partial", site: context.site, source: t!,
+    other: context.other, role: context.role, readonly }, firstType!.symbol, members, [], [], indexes.map(info => {
+      if (info === undefined) throw new Error("The actual native partial factory has dense index inputs");
+      return info;
+    }), (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral) as ObjectFlags, undefined, constructionOwner);
+  const spread = Checker_newAnonymousType(receiver, firstType!.symbol, members, [], [], indexes);
   spread!.objectFlags |= (ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral) as ObjectFlags;
-  if (context !== null) spread!.derivation = { kind: "literal-partial", site: context.site, source: t!,
-    other: context.other, role: context.role, readonly };
   return spread;
 }
 

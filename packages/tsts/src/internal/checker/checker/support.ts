@@ -1,4 +1,5 @@
 import type { bool, byte, int } from "../../../go/scalars.js";
+import type { LiteralConstructionOwner } from "./literal-creation.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import { Node_End, Node_FlowNodeData, Node_ForEachChild, Node_Name, Node_Pos } from "../../ast/spine.js";
 import type { Node } from "../../ast/spine.js";
@@ -1158,7 +1159,7 @@ export function Checker_checkThisBeforeSuper(receiver: GoPtr<Checker>, node: GoP
  * 	return c.getTypeFromTypeNode(typeNode)
  * }
  */
-export function Checker_checkAssertion(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkAssertion(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if (node!.Kind === KindTypeAssertionExpression) {
     if (Checker_shouldCheckErasableSyntax(receiver, node)) {
       const sourceFile = GetSourceFileOfNode(node);
@@ -1170,7 +1171,7 @@ export function Checker_checkAssertion(receiver: GoPtr<Checker>, node: GoPtr<Nod
     }
   }
   const typeNode = Node_Type(node);
-  const exprType = Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode);
+  const exprType = Checker_checkExpressionEx(receiver, Node_Expression(node), checkMode, constructionOwner);
   if (isConstTypeReference(typeNode)) {
     if (!Checker_isValidConstAssertionArgument(receiver, Node_Expression(node))) {
       Checker_error(receiver, Node_Expression(node), A_const_assertion_can_only_be_applied_to_references_to_enum_members_or_string_number_boolean_array_or_object_literals);

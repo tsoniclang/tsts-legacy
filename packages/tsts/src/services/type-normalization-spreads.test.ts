@@ -6,6 +6,8 @@ import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../ex
 import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindArrayLiteralType, CheckModeInferential, getTypeListKey, UnionReductionNone } from "../internal/checker/checker/state.js";
 import type { Type, TypeDerivation } from "../internal/checker/types.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
+import type { LiteralCreatorInput } from "../internal/checker/checker/literal-creation.js";
 import type { Node } from "../internal/ast/spine.js";
 import { TypeFlagsUnion, Type_AsObjectType, Type_AsStructuredType, Type_AsTypeReference, Type_Target, Type_Types } from "../internal/checker/types.js";
 import { Checker_cloneTypeReference, Checker_getUnionTypeEx, Checker_newAnonymousType } from "../internal/checker/checker/types.js";
@@ -15,16 +17,15 @@ import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { createTypeNormalization } from "./type-normalization.js";
 import { reacquireLiteralGraph } from "./type-normalization-spreads.js";
 
-type Event = Extract<TypeDerivation, { readonly kind: "object-literal" | "literal-fragment" | "literal-merge" | "literal-partial" }>;
+type Event = LiteralCreatorInput;
 function eventOf(type: Type): Event | undefined {
-  const event = type.derivation;
-  return event?.kind === "object-literal" || event?.kind === "literal-fragment" || event?.kind === "literal-merge" || event?.kind === "literal-partial" ? event : undefined;
+  return LiteralCreation.read(type)?.creator;
 }
 function inputs(event: Event): readonly Type[] {
   return event.kind === "literal-merge" ? [event.left, event.right] : event.kind === "literal-partial" ? [event.source, event.other] : [];
 }
 function siteOf(event: Event) {
-  return event.kind === "object-literal" ? { node: event.creation.node, mode: event.creation.mode, boundary: null }
+  return event.kind === "object-literal" ? { node: event.node, mode: event.mode, boundary: null }
     : event.kind === "literal-fragment" ? event : event.site;
 }
 function fixture(checkers: number) {
@@ -197,16 +198,15 @@ test("copied and crossed spread recipes cannot query a target before actual sour
     if (recipe === undefined) continue;
     const clone = Checker_newAnonymousType(source, original.symbol, new Map(), [], [], []);
     if (clone === undefined) throw new Error("The actual native clone constructor retains its producer");
-    const site = siteOf(recipe);
-    const changes: Event[] = [recipe, recipe.kind === "object-literal" ? { ...recipe, creation: Object.assign({}, recipe.creation) }
-      : recipe.kind === "literal-fragment" ? { ...recipe, mode: CheckModeInferential }
-      : { ...recipe, site: { ...site, phase: recipe.site.phase === "properties" ? "spread" : "properties" } }];
-    if (recipe.kind === "literal-partial") changes.push({ ...recipe, role: recipe.role === "left" ? "right" : "left", other: original });
-    if (recipe.kind === "literal-merge") changes.push({ ...recipe, left: recipe.right, right: recipe.left });
+    const record = original.derivation;
+    if (record === undefined || !("creation" in record)) throw new Error("The actual event has its authenticated native factory capability");
+    const changes: TypeDerivation[] = [record, { ...record, creation: Object.assign({}, record.creation) }];
+    for (const kind of ["object-literal", "literal-fragment", "literal-merge", "literal-partial"] as const)
+      if (kind !== record.kind) changes.push({ kind, creation: record.creation });
     for (const changed of changes) {
       clone.derivation = changed;
       assert.equal(reacquireLiteralGraph(producer, clone, () => assert.fail("invalid source cannot normalize an input"),
-        () => assert.fail("invalid source cannot seed a memo"), new Map()), undefined);
+        () => assert.fail("invalid source cannot seed a memo"), new Map(), new Map()), undefined);
       exercised++;
     }
   }
@@ -235,7 +235,7 @@ test("absent and ambiguous completed source questions reject before any target w
     return Reflect.get(owner, key, receiver);
   } });
   const reject = () => assert.equal(reacquireLiteralGraph(unread, actual.value,
-    () => assert.fail("source ownership must precede normalization"), () => assert.fail("source ownership must precede memo writes"), new Map()), undefined);
+    () => assert.fail("source ownership must precede normalization"), () => assert.fail("source ownership must precede memo writes"), new Map(), new Map()), undefined);
   const saved = new Map(source.typeNodeLinks.entries);
   try {
     for (let node: Node | undefined = actual.node; node !== undefined; node = node.Parent) source.typeNodeLinks.entries.delete(node);
@@ -256,7 +256,7 @@ test("absent and ambiguous completed source questions reject before any target w
   const foreign = fixture(1).owners[0];
   if (foreign === undefined) throw new Error("The unrelated Program retains its native producer");
   assert.throws(() => reacquireLiteralGraph(foreign, actual.value,
-    () => assert.fail("a foreign Program cannot normalize an input"), () => assert.fail("a foreign Program cannot seed a memo"), new Map()),
+    () => assert.fail("a foreign Program cannot normalize an input"), () => assert.fail("a foreign Program cannot seed a memo"), new Map(), new Map()),
   error => error instanceof TypeError);
 });
 
@@ -275,7 +275,8 @@ test("duplicate complete native event coordinates reject before target access", 
   if (recipe === undefined) throw new Error("The actual fresh merge retains its construction record");
   const clone = Checker_newAnonymousType(source, value.symbol, new Map(), [], [], []);
   if (clone === undefined) throw new Error("The independent native clone retains its producer");
-  clone.derivation = recipe;
+  if (value.derivation === undefined) throw new Error("The original native event retains its capability");
+  clone.derivation = value.derivation;
   clone.objectFlags = value.objectFlags;
   const duplicate = Checker_getUnionTypeEx(source, [value, clone], UnionReductionNone, undefined, undefined);
   const links = LinkStore_TryGet(source.typeNodeLinks, node);
@@ -288,7 +289,7 @@ test("duplicate complete native event coordinates reject before target access", 
   try {
     links.resolvedType = duplicate;
     assert.equal(reacquireLiteralGraph(unread, value, () => assert.fail("duplicate source coordinates cannot normalize inputs"),
-      () => assert.fail("duplicate source coordinates cannot seed a memo"), new Map()), undefined);
+      () => assert.fail("duplicate source coordinates cannot seed a memo"), new Map(), new Map()), undefined);
   } finally { links.resolvedType = original; }
 });
 
@@ -307,10 +308,11 @@ test("a cold target question is queried only after complete source admission", (
   if (recipe === undefined) throw new Error("The actual fresh merge retains its construction record");
   const clone = Checker_newAnonymousType(source, value.symbol, new Map(), [], [], []);
   if (clone === undefined) throw new Error("The independent native clone retains its producer");
-  clone.derivation = recipe;
+  if (value.derivation === undefined) throw new Error("The original native event retains its capability");
+  clone.derivation = value.derivation;
   const before = LinkStore_TryGet(producer.typeNodeLinks, node);
   assert.equal(reacquireLiteralGraph(producer, clone, () => assert.fail("a copied recipe cannot normalize inputs"),
-    () => assert.fail("a copied recipe cannot seed a memo"), new Map()), undefined);
+    () => assert.fail("a copied recipe cannot seed a memo"), new Map(), new Map()), undefined);
   assert.equal(LinkStore_TryGet(producer.typeNodeLinks, node) === before && before?.resolvedType === undefined, true);
   const normalize = createTypeNormalization(producer);
   const result = normalize.type(value);
@@ -407,7 +409,7 @@ test("array clone and stored member input admission rejects missing or copied na
     return Reflect.get(owner, name, receiver);
   } });
   const reject = () => assert.equal(reacquireLiteralGraph(unread, child, () => assert.fail("native prefix admission precedes input normalization"),
-    () => assert.fail("native prefix admission precedes memo writes"), new Map()), undefined);
+    () => assert.fail("native prefix admission precedes memo writes"), new Map(), new Map()), undefined);
   try { source.cachedTypes.delete(key); reject(); }
   finally { source.cachedTypes.set(key, root); }
   try { source.cachedTypes.set(key, reference); reject(); }
@@ -439,7 +441,7 @@ test("array clone and stored member input admission rejects missing or copied na
       const type = LinkStore_TryGet(producer.valueSymbolLinks, symbol)?.resolvedType;
       const event = type === undefined ? undefined : eventOf(type);
       if (type !== undefined && recipe?.kind === "object-literal" && event?.kind === "object-literal"
-        && recipe.creation.node === event.creation.node && recipe.creation.mode === event.creation.mode) expected.push(type);
+        && recipe.node === event.node && recipe.mode === event.mode) expected.push(type);
     }
   }
   assert.equal(expected.length === 1 && expected[0] === result, true,

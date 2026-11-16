@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { Checker_getResolvedSignature } from "../internal/checker/checker/signatures.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import { Checker_getPropertiesOfType, Checker_newAnonymousType, Checker_newObjectType } from "../internal/checker/checker/types.js";
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_getTypeOfSymbol } from "../internal/checker/checker/symbols.js";
@@ -77,7 +78,9 @@ function literal(type: Type) {
   const recipe = type.derivation;
   if (recipe?.kind !== "widened-in" || recipe.source.derivation?.kind !== "object-literal")
     throw new Error("The contextual member retains its actual literal and widening path");
-  return { path: recipe.path, node: recipe.source.derivation.creation.node, mode: recipe.source.derivation.creation.mode };
+  const creation = LiteralCreation.read(recipe.source);
+  if (creation === undefined) throw new Error("The contextual source retains its authenticated creation");
+  return { path: recipe.path, node: creation.node, mode: creation.mode };
 }
 
 for (const checkers of [1, 4]) test(`completed contextual arguments and their members retain actual owners with ${checkers} checkers`, () => {
