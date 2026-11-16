@@ -1,5 +1,6 @@
 import type { bool, byte, int } from "../../../go/scalars.js";
 import type { LiteralSpreadSite, LiteralPartialSite } from "../types.js";
+import { LiteralCreation } from "./literal-creation.js";
 import type { GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
 import { NewGoStructMap } from "../../../go/compat.js";
 import type {
@@ -3555,7 +3556,7 @@ export function Checker_hasEmptyObjectIntersection(receiver: GoPtr<Checker>, t: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkObjectLiteral","kind":"method","status":"implemented","sigHash":"76f563d67df11b553d680ffb6444ff025f6b4ee91def1549b368ae23496e6879","bodyHash":"9571affc8c9b52f6a243b629f696c4a557d4fe3118b672d3688976e1de2c96cf"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-15–20 retain actual node/mode on fresh complete literals and actual boundary/phase inputs on fresh normal spread fragments; native normal/contextual decisions, borrowed results and caches remain unchanged."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-22 authenticates the exact newly allocated complete literal and final native factory inputs; R5-20 retains actual spread boundaries. Native creation, flow, contextual decisions and caches remain unchanged."}
  *
  * Go source:
  * func (c *Checker) checkObjectLiteral(node *ast.Node, checkMode CheckMode) *Type {
@@ -3770,12 +3771,8 @@ export function Checker_hasEmptyObjectIntersection(receiver: GoPtr<Checker>, t: 
 export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
   const nodeSymbol = Node_Symbol(node);
   if ((Node_Properties(node)?.length ?? 0) === 0 && nodeSymbol !== undefined && (nodeSymbol!.Exports?.size ?? 0) !== 0) {
-    const result = Checker_newAnonymousType(receiver, nodeSymbol, nodeSymbol!.Exports as SymbolTable, undefined as unknown as GoSlice<GoPtr<Signature>>, undefined as unknown as GoSlice<GoPtr<Signature>>, undefined as unknown as GoSlice<GoPtr<IndexInfo>>);
-    if (IsInJSFile(node) && !IsInJsonFile(node)) {
-      result!.objectFlags |= ObjectFlagsJSLiteral;
-    }
-    result!.derivation = { kind: "object-literal", node: node!, mode: checkMode };
-    return result;
+    return LiteralCreation.create(receiver!, node!, checkMode, nodeSymbol, nodeSymbol.Exports, [], [], [],
+      IsInJSFile(node) && !IsInJsonFile(node) ? ObjectFlagsJSLiteral : ObjectFlagsNone, undefined);
   }
   const inDestructuringPattern = IsAssignmentTarget(node);
   Checker_checkGrammarObjectLiteralExpression(receiver, AsObjectLiteralExpression(node), inDestructuringPattern);
@@ -3821,19 +3818,22 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     if (hasComputedSymbolProperty) {
       indexInfos.push(Checker_getObjectLiteralIndexInfo(receiver, isReadonly, propertiesArray.slice(offset), receiver!.esSymbolType));
     }
-    const result = Checker_newAnonymousType(receiver, Node_Symbol(node), propertiesTable, undefined as unknown as GoSlice<GoPtr<Signature>>, undefined as unknown as GoSlice<GoPtr<Signature>>, indexInfos);
-    result!.objectFlags |= (objectFlags | ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral) as ObjectFlags;
+    let finalFlags = (objectFlags | ObjectFlagsObjectLiteral | ObjectFlagsContainsObjectOrArrayLiteral) as ObjectFlags;
     if (contextualType === undefined && IsInJSFile(node) && !IsInJsonFile(node)) {
-      result!.objectFlags |= ObjectFlagsJSLiteral;
+      finalFlags |= ObjectFlagsJSLiteral;
     }
     if (patternWithComputedProperties) {
-      result!.objectFlags |= ObjectFlagsObjectLiteralPatternWithComputedProperties;
+      finalFlags |= ObjectFlagsObjectLiteralPatternWithComputedProperties;
     }
-    if (inDestructuringPattern) {
-      receiver!.patternForType.set(result, node);
-    }
-    if (fragment && checkMode === CheckModeNormal)
-      result!.derivation = { kind: "literal-fragment", node: node!, mode: checkMode, boundary };
+    if (!fragment) return LiteralCreation.create(receiver!, node!, checkMode, Node_Symbol(node), propertiesTable,
+      [], [], indexInfos.map(info => {
+        if (info === undefined) throw new Error("The actual literal factory supplies dense index inputs");
+        return info;
+      }), finalFlags, inDestructuringPattern ? node : undefined);
+    const result = Checker_newAnonymousType(receiver, Node_Symbol(node), propertiesTable, [], [], indexInfos);
+    result!.objectFlags |= finalFlags;
+    if (inDestructuringPattern) receiver!.patternForType.set(result, node);
+    if (checkMode === CheckModeNormal) result!.derivation = { kind: "literal-fragment", node: node!, mode: checkMode, boundary };
     return result;
   };
   for (const memberDecl of Node_Properties(node) ?? []) {
@@ -3968,7 +3968,6 @@ export function Checker_checkObjectLiteral(receiver: GoPtr<Checker>, node: GoPtr
     });
   }
   const result = createObjectLiteralType(null, false);
-  result!.derivation = { kind: "object-literal", node: node!, mode: checkMode };
   return result;
 }
 

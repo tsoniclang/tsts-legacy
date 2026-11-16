@@ -2,6 +2,9 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { CachedTypeKindArrayLiteralType, CheckModeNormal, getTypeListKey } from "../internal/checker/checker/state.js";
 import { cachedReferenceInputs } from "../internal/checker/checker.js";
 import { Checker_checkExpressionCached } from "../internal/checker/checker/syntax-checking.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
+import type { LiteralCreationInput } from "../internal/checker/checker/literal-creation.js";
+import { reacquireFreshLiteral } from "./type-normalization-fresh-literals.js";
 import type { Node } from "../internal/ast/spine.js";
 import { Node_Properties, SourceFile_FileName } from "../internal/ast/ast.js";
 import { IsArrayLiteralExpression, IsObjectLiteralExpression, IsSpreadAssignment } from "../internal/ast/generated/predicates.js";
@@ -23,11 +26,13 @@ interface Question { readonly node: Node; readonly root: Type; readonly graph: G
 
 function construction(type: Type): Event | undefined {
   const value = type.derivation;
-  return value?.kind === "object-literal" || value?.kind === "literal-fragment" || value?.kind === "literal-merge" || value?.kind === "literal-partial"
+  if (value?.kind === "object-literal") return LiteralCreation.read(type) === undefined ? undefined : value;
+  return value?.kind === "literal-fragment" || value?.kind === "literal-merge" || value?.kind === "literal-partial"
     ? value : undefined;
 }
 
-function siteOf(event: Event) { return event.kind === "object-literal" || event.kind === "literal-fragment" ? event : event.site; }
+function siteOf(event: Event) { return event.kind === "object-literal" ? event.creation
+  : event.kind === "literal-fragment" ? event : event.site; }
 function boundaryOf(event: Event): Node | null {
   return event.kind === "object-literal" ? null : event.kind === "literal-fragment" ? event.boundary : event.site.boundary;
 }
@@ -97,6 +102,7 @@ function collect(owner: Checker, root: Type): Graph | undefined {
     if (state === "active") return undefined;
     if (state === "complete") continue;
     const event = construction(type);
+    if (event === undefined && type.derivation?.kind === "object-literal") return undefined;
     states.set(type, "active");
     pending.push({ type, exit: true });
     if (event !== undefined) {
@@ -151,32 +157,36 @@ function collect(owner: Checker, root: Type): Graph | undefined {
   return { values: new Set(states.keys()), events, index };
 }
 
-function question(source: Checker, type: Type, site: Node): Question | undefined {
+function question(source: Checker, type: Type, site: Node): Question | "absent" | "invalid" {
   let selected: Question | undefined;
   for (let node: Node | undefined = site; node !== undefined; node = node.Parent) {
     if (!IsObjectLiteralExpression(node) && !IsArrayLiteralExpression(node)) continue;
     const root = LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType;
     if (root === undefined) continue;
     const graph = collect(source, root);
-    if (graph === undefined) return undefined;
+    if (graph === undefined) return "invalid";
     if (!graph.values.has(type)) continue;
-    if (selected !== undefined) return undefined;
+    if (selected !== undefined) return "invalid";
     selected = { node, root, graph };
   }
-  return selected;
+  return selected ?? "absent";
 }
 
 export function reacquireLiteralGraph(producer: Checker, type: Type, normalize: (type: Type) => Type,
-  remember: (original: Type, selected: Type) => void): Type | undefined {
+  remember: (original: Type, selected: Type) => void, admitted: Map<Type, LiteralCreationInput>): Type | undefined {
   const event = construction(type);
   if (event === undefined) return undefined;
   const source = type.checker;
-  if (source === undefined || source.program.SourceFiles() !== producer.program.SourceFiles())
+  if (source === undefined)
     throw new TypeError("A native spread retains its actual producing checker in the same Program");
   const site = siteOf(event);
-  if (site.mode !== CheckModeNormal || !IsObjectLiteralExpression(site.node)) return undefined;
+  if (!IsObjectLiteralExpression(site.node)) return undefined;
+  if (site.mode !== CheckModeNormal) return event.kind === "object-literal" ? reacquireFreshLiteral(producer, type, normalize, admitted) : undefined;
   const original = question(source, type, site.node);
-  if (original === undefined) return undefined;
+  if (original === "invalid") return undefined;
+  if (original === "absent") return event.kind === "object-literal" ? reacquireFreshLiteral(producer, type, normalize, admitted) : undefined;
+  if (source.program.SourceFiles() !== producer.program.SourceFiles())
+    throw new TypeError("A native spread retains its actual producing checker in the same Program");
   const sourceGraph = original.graph;
   const target = Checker_checkExpressionCached(producer, original.node);
   if (target === undefined || target.checker !== producer)

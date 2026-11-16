@@ -5,6 +5,7 @@ import type { GoComparable, GoConstraint, GoMap, GoPtr, GoSeq, GoSlice } from ".
 import { NewGoStructMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
 import { GetNodeId } from "../../ast/utilities.js";
+import { LiteralCreation } from "./literal-creation.js";
 import type { Hasher, Uint128 } from "../../../go/github.com/zeebo/xxh3.js";
 import * as xxh3 from "../../../go/github.com/zeebo/xxh3.js";
 import { Uint32, Uint64 } from "../../../go/sync/atomic.js";
@@ -1247,8 +1248,8 @@ export function contextWideningKey(root: Type, path: readonly string[], source: 
   let original = source;
   while (original.derivation?.kind === "regular-of" || original.derivation?.kind === "widened-from")
     original = original.derivation.source;
-  const literal = original.derivation;
-  if (literal?.kind !== "object-literal") return undefined;
+  const literal = LiteralCreation.read(original);
+  if (literal === undefined) return undefined;
   return JSON.stringify([String(root.id), path, String(GetNodeId(literal.node)), literal.mode]);
 }
 

@@ -19,7 +19,7 @@ function record(value: Type) {
   if (result?.kind !== "widened-in") throw new Error("The actual native contextual widening retains its fresh producing record");
   const literal = result.source.derivation;
   if (literal?.kind !== "object-literal") throw new Error("This authored widening's source is its complete native object literal");
-  return { ...result, node: literal.node };
+  return { ...result, node: literal.creation.node };
 }
 
 function fixture(checkers: number) {

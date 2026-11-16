@@ -6,6 +6,7 @@ import { Node_Symbol } from "../internal/ast/ast.js";
 import type { Symbol as NativeSymbol } from "../internal/ast/symbol.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import { Checker_GetTypeAtLocation, Checker_newAnonymousType } from "../internal/checker/checker/types.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import { Checker_getTypeOfSymbol, Checker_newSymbolEx } from "../internal/checker/checker/symbols.js";
 import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../internal/core/linkstore.js";
@@ -153,7 +154,12 @@ for (const checkers of [1, 4]) test(`cached function source admission precedes t
     if (fresh === undefined) throw new Error("The genuine fresh TypeOnly recursive literal is handed out");
     assert.equal(reacquireCachedValueType(unread, fresh), undefined,
       "the cached method input does not turn its fresh containing literal into a cached function value");
-    if (source !== producer) assert.throws(() => createTypeNormalization(producer).type(fresh), /unfinished/,
-      "the actual TypeOnly root still needs its genuine creation and handout relation");
+    const selected = createTypeNormalization(producer).type(fresh);
+    const actual = Checker_GetTypeAtLocation(producer, current.literal);
+    if (actual === undefined) throw new Error("The actual target retains its independent literal handout");
+    assert.equal(selected.checker === producer && LiteralCreation.read(selected) !== undefined, true,
+      "the fresh containing literal uses its authenticated native creation, not the method's value cache");
+    assert.equal(Checker_isTypeIdenticalTo(producer, selected, actual), true);
+    if (source !== producer) assert.equal(selected !== fresh, true);
   }
 });

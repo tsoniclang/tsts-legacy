@@ -48,8 +48,8 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         const original = Checker_checkExpressionCached(source, node);
         const expected = Checker_checkExpressionCached(producer, node);
         if (original === undefined || expected === undefined) throw new Error("The actual fresh and cached literal operations complete");
-        assert.equal(original.derivation?.kind === "object-literal" && original.derivation.node === node
-          && original.derivation.mode === CheckModeNormal, true);
+        assert.equal(original.derivation?.kind === "object-literal" && original.derivation.creation.node === node
+          && original.derivation.creation.mode === CheckModeNormal, true);
         assert.equal(LinkStore_TryGet(source.typeNodeLinks, node)?.resolvedType === original, true,
           "the complete normal literal belongs to its actual completed cached question");
         const recipe = original.derivation;
@@ -59,15 +59,21 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         assert.equal(reacquireExpressionConstruction(producer, original, normalization.type), undefined,
           "complete normal inputs have one canonical graph reader, not a blind expression recheck");
         const uncached = Checker_checkExpressionEx(source, node, CheckModeNormal);
-        if (uncached === undefined) throw new Error("The actual uncached normal check completes");
+        if (uncached?.derivation?.kind !== "object-literal") throw new Error("The actual uncached normal check completes with its creation");
         assert.equal(uncached !== original && uncached.derivation?.kind === "object-literal", true);
         const unread = new Proxy(producer, { get(owner, key, receiver) {
           if (key === "typeNodeLinks" || key === "cachedTypes") assert.fail("an unowned normal construction cannot read a target cache");
           return Reflect.get(owner, key, receiver);
         } });
-        assert.equal(reacquireLiteralGraph(unread, uncached, () => assert.fail("an unowned normal input cannot normalize"),
-          () => assert.fail("an unowned normal input cannot seed a memo")), undefined,
-        "a genuine standalone uncached normal construction still requires its original owning relation");
+        const fresh = normalization.type(uncached);
+        assert.equal(fresh.checker === producer && (source === producer ? fresh === uncached : fresh !== expected), true,
+          "an authenticated uncached normal creation keeps its actual native freshness");
+        const clone = Checker_newAnonymousType(source, uncached.symbol, new Map(), [], [], []);
+        if (clone === undefined) throw new Error("The actual independent native clone is produced");
+        clone.derivation = uncached.derivation;
+        assert.equal(reacquireLiteralGraph(unread, clone, () => assert.fail("a copied capability cannot normalize"),
+          () => assert.fail("a copied capability cannot seed a memo"), new Map()), undefined,
+        "copying the genuine creation record cannot retarget its authenticated output");
         const constructions = [
           ["regular-of", Checker_getRegularTypeOfObjectLiteral(source, original), Checker_getRegularTypeOfObjectLiteral(producer, expected)],
           ["widened-from", Checker_getWidenedType(source, original), Checker_getWidenedType(producer, expected)],
@@ -90,7 +96,7 @@ for (const checkers of [1, 4]) test(`fresh complete literal and context-free con
         assert.equal(original.derivation === recipe, true, "derived results never overwrite the fresh input's own recipe");
         const contextual = Checker_checkExpressionEx(source, node, CheckModeContextual);
         if (contextual === undefined) throw new Error("The genuine contextual producing operation completes");
-        assert.equal(contextual.derivation?.kind === "object-literal" && contextual.derivation.mode === CheckModeContextual, true);
+        assert.equal(contextual.derivation?.kind === "object-literal" && contextual.derivation.creation.mode === CheckModeContextual, true);
         assert.equal(reacquireExpressionConstruction(producer, contextual, normalization.type), undefined,
           "an uncached contextual operation cannot be relabeled as its normal cached answer");
         const unrelated = Checker_newAnonymousType(source, original.symbol, new Map(), [], [], []);

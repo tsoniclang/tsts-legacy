@@ -1,7 +1,8 @@
 import type { InferenceContext, InferenceInfo } from "./state.js";
-import { CheckModeNormal } from "./state.js";
+import { CheckModeContextual, CheckModeInferential } from "./state.js";
 import type { Checker } from "./state.js";
 import { cachedReferenceInputs } from "../checker.js";
+import { LiteralCreation } from "./literal-creation.js";
 import type { Node } from "../../ast/spine.js";
 import { IsCallOrNewExpression } from "../../ast/utilities.js";
 import { TypeFlagsUnion, Type_Types } from "../types.js";
@@ -385,8 +386,9 @@ function ownedContextualInput(checker: Checker, type: Type, at: Node): boolean {
     visited.add(current);
     const recipe = current.derivation;
     if (recipe?.kind === "object-literal") {
-      if (recipe.mode === CheckModeNormal) continue;
-      for (let node: Node | undefined = recipe.node; node !== undefined; node = node.Parent) {
+      const creation = LiteralCreation.read(current);
+      if (creation === undefined || (creation.mode & (CheckModeContextual | CheckModeInferential)) === 0) continue;
+      for (let node: Node | undefined = creation.node; node !== undefined; node = node.Parent) {
         if (node === at) return true;
         if (IsCallOrNewExpression(node)) break;
       }

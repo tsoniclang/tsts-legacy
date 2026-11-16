@@ -77,7 +77,7 @@ function literal(type: Type) {
   const recipe = type.derivation;
   if (recipe?.kind !== "widened-in" || recipe.source.derivation?.kind !== "object-literal")
     throw new Error("The contextual member retains its actual literal and widening path");
-  return { path: recipe.path, node: recipe.source.derivation.node, mode: recipe.source.derivation.mode };
+  return { path: recipe.path, node: recipe.source.derivation.creation.node, mode: recipe.source.derivation.creation.mode };
 }
 
 for (const checkers of [1, 4]) test(`completed contextual arguments and their members retain actual owners with ${checkers} checkers`, () => {

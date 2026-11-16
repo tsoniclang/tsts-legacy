@@ -27,6 +27,7 @@ import type { CacheHashKey, Checker, CheckMode } from "./checker/state.js";
 import { isTupleType } from "./checker/state.js";
 import type { TypeMapper } from "./mapper.js";
 import { ValueToString } from "./utilities.js";
+import type { LiteralCreation } from "./checker/literal-creation.js";
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::ParseFlags","kind":"type","status":"implemented","sigHash":"351ebf721cd2754016dc44fcbdf16dc89d33b4fc6a92eed1f9db4696eed47fcd","bodyHash":"ec2c138c6126fd16db739ef0b467090e9d970a145b42a30cb3dfebf6b442776b"}
@@ -1663,7 +1664,7 @@ export interface LiteralPartialSite {
 }
 export type TypeDerivation =
   | { readonly kind: "inferred-at"; readonly at: Node; readonly index: number; readonly path: readonly number[] }
-  | { readonly kind: "object-literal"; readonly node: Node; readonly mode: CheckMode }
+  | { readonly kind: "object-literal"; readonly creation: LiteralCreation }
   | { readonly kind: "literal-fragment"; readonly node: Node; readonly mode: CheckMode; readonly boundary: Node | null }
   | { readonly kind: "literal-merge"; readonly site: LiteralSpreadSite; readonly left: Type; readonly right: Type;
     readonly flags: ObjectFlags; readonly readonly: boolean }

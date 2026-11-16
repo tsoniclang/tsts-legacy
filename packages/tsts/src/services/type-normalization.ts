@@ -1,5 +1,7 @@
 import type { Checker } from "../internal/checker/checker/state.js";
 import type { Signature, Type } from "../internal/checker/types.js";
+import type { LiteralCreationInput } from "../internal/checker/checker/literal-creation.js";
+import { LiteralCreation } from "../internal/checker/checker/literal-creation.js";
 import { reacquireBuiltinSignature, reacquireBuiltinType } from "./type-normalization-builtins.js";
 import { reacquireLiteralType } from "./type-normalization-literals.js";
 import { reacquireCompositeType } from "./type-normalization-composites.js";
@@ -17,6 +19,7 @@ export interface TypeNormalization {
 export function createTypeNormalization(producer: Checker): TypeNormalization {
   const types = new Map<Type, Type>();
   const signatures = new Map<Signature, Signature>();
+  const literalInputs = new Map<Type, LiteralCreationInput>();
   const files = producer.program.SourceFiles();
 
   const requireSource = (source: Checker): void => {
@@ -72,6 +75,8 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
     if (source === producer) return type;
     const known = types.get(type);
     if (known !== undefined) return known;
+    if (type.derivation?.kind === "object-literal" && LiteralCreation.read(type) === undefined)
+      throw new TypeError("A complete literal cannot replace its authenticated actual creation");
     if (type.derivation?.kind === "signature-parameter") {
       const derivation = type.derivation;
       if (derivation.signature.typeParameters[derivation.index] !== type)
@@ -82,7 +87,7 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       types.set(type, selected);
       return selected;
     }
-    const result = reacquireContextualArgument(producer, type)
+    let result = reacquireContextualArgument(producer, type)
       ?? reacquireBuiltinType(producer, type)
       ?? reacquireDeclaredType(producer, type)
       ?? reacquireRestrictiveParameter(producer, type, normalize)
@@ -94,14 +99,19 @@ export function createTypeNormalization(producer: Checker): TypeNormalization {
       ?? reacquireAnonymousInstantiation(producer, type, normalize)
       ?? reacquireLiteralType(producer, type)
       ?? reacquireTypeOperator(producer, type, normalize)
-      ?? reacquireTypeReference(producer, type, normalize)
-      ?? reacquireLiteralGraph(producer, type, normalize, (original, selected) => {
+      ?? reacquireTypeReference(producer, type, normalize);
+    const literal = type.derivation?.kind;
+    if (result === undefined && (literal === "object-literal" || literal === "literal-fragment"
+      || literal === "literal-merge" || literal === "literal-partial")) {
+      result = reacquireLiteralGraph(producer, type, normalize, (original, selected) => {
         const previous = types.get(original);
         if (previous !== undefined && previous !== selected)
           throw new Error("A native construction preserves its previously admitted normalization");
         types.set(original, selected);
-      })
-      ?? reacquireContextWidening(producer, type, normalize)
+      }, literalInputs);
+      if (result === undefined) throw new TypeError("The native literal retains its unambiguous actual source lifetime");
+    }
+    result ??= reacquireContextWidening(producer, type, normalize)
       ?? reacquireExpressionConstruction(producer, type, normalize)
       ?? reacquireCachedRestType(producer, type)
       ?? reacquireCachedObjectExpression(producer, type)
