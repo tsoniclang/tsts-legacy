@@ -18,9 +18,11 @@ import { ContextFlagsNone } from "../internal/checker/types.js";
 function open(checkers: number, source: string, noCheck = false) {
   const session = createCompilerSessionFromFiles({ currentDirectory: "/assignment-answers", includeBundledLibraries: false,
     files: { "/assignment-answers/core.d.ts": testCoreDeclarations, "/assignment-answers/use.ts": source,
-      "/assignment-answers/other.ts": "export const other=1;" },
+      "/assignment-answers/other.ts": "export const other=1;", "/assignment-answers/last.ts": "export const last=2;" },
     compilerOptions: { ...testNoLibCompilerOptions, strict: true, checkers, noCheck } });
   const checked = session.checkSource();
+  assert.equal(session.program?.compilerCheckerPool?.checkers.length, checkers,
+    "the actual native pool contains every requested checker");
   const file = checked.getSourceFile("/assignment-answers/use.ts");
   if (file === undefined) throw new Error("The actual assignment file belongs to this Program");
   const view = checked.getSourceFileQueries(file);
