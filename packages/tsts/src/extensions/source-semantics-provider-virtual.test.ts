@@ -208,7 +208,7 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
               const queries = context.source.getSourceFileQueries(file);
               const declaration = findNodes(file, queries.ast.children, queries.ast.is.IsVariableDeclaration)
                 .find(node => queries.ast.text(queries.ast.name(node)) === "temporary");
-              const type = queries.checker.getTypeAtLocation(declaration);
+              const type = queries.checker.getTypeAtLocation(declaration)?.type;
               const symbol = Type_Symbol(type);
               if (symbol === undefined) throw new Error("the inverse requires the actual canonical checked symbol");
               conflictingSymbol = symbol;
@@ -241,12 +241,12 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
     const declarations = findNodes(sourceFile, source.ast.children, source.ast.is.IsVariableDeclaration);
     const canonical = declarations.find(node => source.ast.text(source.ast.name(node)) === "temporary");
     assert.equal(canonical !== undefined, true, "the original factory value is present");
-    const canonicalType = source.checker.getTypeAtLocation(canonical);
+    const canonicalType = source.checker.getTypeAtLocation(canonical)?.type;
     const canonicalSymbol = Type_Symbol(canonicalType);
     assert.equal(canonicalSymbol !== undefined, true, "the checked canonical type has its bound symbol");
     for (const declaration of declarations) {
       const name = source.ast.text(source.ast.name(declaration));
-      const type = source.checker.getTypeAtLocation(declaration);
+      const type = source.checker.getTypeAtLocation(declaration)?.type;
       const symbol = Type_Symbol(type);
       if (name === "other" || name === "plain") {
         assert.equal(checked.sourceFacts.getFact(symbol, sourceMarkerFactKey) === undefined, true, name);
@@ -257,7 +257,7 @@ for (const [explicitImport, conflicting] of [[false, false], [true, false], [fal
     }
     const parameters = findNodes(sourceFile, source.ast.children, source.ast.is.IsParameterDeclaration);
     assert.equal(parameters.length, 1, "the genuinely unannotated callback is retained");
-    const parameterType = source.checker.getTypeAtLocation(parameters[0]);
+    const parameterType = source.checker.getTypeAtLocation(parameters[0])?.type;
     assert.equal(Type_Symbol(parameterType) === canonicalSymbol, true, "contextual callback alias uses the canonical symbol");
     assert.deepEqual(checked.sourceFacts.getFact(Type_Symbol(parameterType), sourceMarkerFactKey), { kind: "type-marker", marker: "js-string" });
   });

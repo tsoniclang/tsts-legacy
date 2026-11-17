@@ -12,9 +12,12 @@ import {
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetSourceFile, Program_GetTypeChecker } from "../internal/compiler/program.js";
-import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
-import { withOwnedChecker } from "./checker-ownership.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_SourceFiles } from "../internal/compiler/program.js";
+import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
+import { createTypeNormalization } from "./type-normalization.js";
+import { sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
+import type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import {
@@ -162,7 +165,7 @@ export interface TypeIntrinsicNullishFlags {
 
 export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
-  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
+  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
   readonly getTypeAliasApplication: (type: GoPtr<Type>) => TypeAliasApplicationInfo | undefined;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
@@ -228,7 +231,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
   }
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
-    getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
+    getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, checker =>
+      sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node))),
     instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
@@ -241,9 +245,10 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeIndexedAccessComponents(checker, type),
     ),
-    selectIndexedAccess: (objectType, indexType) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
-      checker => selectTypeIndexedAccess(checker, objectType, indexType),
+    selectIndexedAccess: (objectType, indexType) => withOwnedChecker(
+      program, defaultOptions.sourceFile, objectType?.checker, defaultOptions.context ?? Background(),
+      checker => checker.program.SourceFiles() === Program_SourceFiles(program)
+        ? selectTypeIndexedAccess(checker, objectType, indexType) : undefined,
     ),
     getConstantValue: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetConstantValue(checker, node)),
     getNumericLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
@@ -279,14 +284,13 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     isTypeReference: (type) => type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0,
     isTuple: isTupleType,
     isArrayLike: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_IsArrayLikeType(checker, type)) === true,
-    isTypeIdenticalTo: (left, right) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
+    isTypeIdenticalTo: (left, right) => withOwnedChecker(
+      program, defaultOptions.sourceFile, left?.checker, defaultOptions.context ?? Background(),
       checker => {
-        if (checker === undefined || left?.checker === undefined || right?.checker === undefined ||
-          left.checker !== checker || right.checker !== checker ||
-          left.checker.program!.SourceFiles() !== checker.program!.SourceFiles() ||
+        if (left === undefined || right?.checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program) ||
           right.checker.program!.SourceFiles() !== checker.program!.SourceFiles()) return false;
-        return Checker_isTypeIdenticalTo(checker, left, right);
+        return Checker_isTypeIdenticalTo(checker, left,
+          right.checker === checker ? right : createTypeNormalization(checker).type(right));
       },
     ) === true,
     couldContainTypeVariables: (type) => withCheckerForType(
@@ -378,8 +382,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
           }),
       )) ?? Object.freeze([]);
     },
-    getDeclarationSignatureInfo: declaration => !IsFunctionLike(declaration) ? undefined : withCheckerForSourceFile(
-      program, GetSourceFileOfNode(declaration), defaultOptions, checker => {
+    getDeclarationSignatureInfo: declaration => !IsFunctionLike(declaration) ? undefined : withCheckerForNode(
+      program, declaration, defaultOptions, checker => {
         const signature = Checker_getSignatureFromDeclaration(checker, declaration);
         return signature === undefined ? undefined : getTypeSignatureInfo(checker, signature);
       },
@@ -577,15 +581,15 @@ function withCheckerForNode<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (node === undefined) {
+  const sourceFile = GetSourceFileOfNode(node);
+  if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
+    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
     return undefined;
   }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
+  const [checker, done] = Program_GetTypeCheckerForFile(program,
+    WithCheckerLifetime(defaultOptions.context ?? Background(), CheckerLifetimeDiagnostics), sourceFile);
+  try { return callback(checker); } finally { done(); }
 }
 
 function withCheckerForType<T>(
@@ -594,18 +598,8 @@ function withCheckerForType<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (program === undefined || type === undefined) {
-    return undefined;
-  }
-  if (type.checker !== undefined) {
-    return callback(type.checker);
-  }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
+  return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+    defaultOptions.context ?? Background(), callback);
 }
 
 function withCheckerForSignature<T>(
@@ -614,34 +608,6 @@ function withCheckerForSignature<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (program === undefined || signature === undefined) {
-    return undefined;
-  }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
-}
-
-function withCheckerForSourceFile<T>(
-  program: GoPtr<Program>,
-  sourceFile: GoPtr<SourceFile>,
-  defaultOptions: CreateTypeShapeQueriesOptions,
-  callback: (checker: GoPtr<Checker>) => T,
-): T | undefined {
-  if (program === undefined || sourceFile === undefined ||
-    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
-    return undefined;
-  }
-  const [checker, done] = Program_GetTypeChecker(
-    program,
-    WithCheckerLifetime(defaultOptions.context ?? Background(), CheckerLifetimeAPI),
-  );
-  try {
-    return callback(checker);
-  } finally {
-    done();
-  }
+  return signature === undefined ? undefined : withCheckerById(program, defaultOptions.sourceFile,
+    signature.checkerId, defaultOptions.context ?? Background(), callback);
 }

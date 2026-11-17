@@ -375,6 +375,6 @@ test("checked query capabilities preserve checker ownership independently for ev
   assert.notEqual(leftQueries.typeShape, rightQueries.typeShape);
   assert.ok(leftQueries.checker.getSymbolSourceFile(leftSymbol) === leftFile);
   assert.ok(rightQueries.checker.getSymbolSourceFile(rightSymbol) === rightFile);
-  assert.equal(leftQueries.checker.typeToString(leftQueries.checker.getTypeAtLocation(leftName)), '"left"');
-  assert.equal(rightQueries.checker.typeToString(rightQueries.checker.getTypeAtLocation(rightName)), "1");
+  assert.equal(leftQueries.checker.typeToString(leftQueries.checker.getTypeAtLocation(leftName)?.type), '"left"');
+  assert.equal(rightQueries.checker.typeToString(rightQueries.checker.getTypeAtLocation(rightName)?.type), "1");
 });

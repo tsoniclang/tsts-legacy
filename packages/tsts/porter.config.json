@@ -257,7 +257,12 @@
     {
       "match": "packages/tsts/src/internal/checker/checker/literal-creation.ts",
       "category": "extension-internal",
-      "reason": "R5-22 authenticates the exact fresh native literal output and its completed factory inputs without a registry, source replay or permanent semantic cache."
+      "reason": "R5-22 authenticates the exact fresh native literal output and its completed factory inputs; R5-23 retains its explicit actual native cache-publication owner. Neither adds a registry, ambient state, source replay or permanent semantic cache."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/source-type-answers.ts",
+      "category": "extension-internal",
+      "reason": "The one public source-Type envelope reads only the matching native paired answer/cause. Actual contextual delegation transports that same completed answer without a cache, query replay or diagnostic matching."
     },
     {
       "match": "packages/tsts/src/internal/checker/call-declaration-order.ts",

@@ -115,7 +115,7 @@ test("provider export notifications publish exact owned markers before source an
   const variables = findNodes(file, queries.ast.children, queries.ast.is.IsVariableDeclaration);
   assert.equal(variables.length, 2);
   for (const [index, variable] of variables.entries()) {
-    const symbol = queries.checker.getTypeSymbol(queries.checker.getTypeAtLocation(variable));
+    const symbol = queries.checker.getTypeSymbol(queries.checker.getTypeAtLocation(variable)?.type);
     assert.equal(events.some(event => event.symbol === symbol && event.declaration.exportName === "ExactText"),
       true, "an inferred type has the exact pre-seal materialized owner without a type import");
     assert.equal(checked.sourceFacts.getFact(symbol, sourceMarkerFactKey)?.marker,

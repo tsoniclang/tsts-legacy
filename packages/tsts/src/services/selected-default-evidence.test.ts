@@ -20,7 +20,7 @@ function selectedCalls(sourceText: string, warm: boolean) {
   const calls = findNodesByKind(index, KindCallExpression);
   if (warm) {
     assertCleanSemanticDiagnostics(program, index);
-    for (const call of calls) queries.getTypeAtLocation(call);
+    for (const call of calls) queries.getTypeAtLocation(call)?.type;
   }
   const selected = calls.map(call => {
     const evidence = requireApplicableCallInfo(queries.getResolvedCallInfo(call));

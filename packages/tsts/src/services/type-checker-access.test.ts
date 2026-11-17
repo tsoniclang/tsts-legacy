@@ -208,7 +208,7 @@ test("effective numeric property-name types never depend on a property's value t
     assert.equal(queries.getEffectivePropertyName(name)?.type === selected?.type, true,
       `property ${position} never recomputes its checked key type`);
   }
-  assert.equal((queries.getTypeAtLocation(Node_Name(properties[0]))?.flags ?? 0) & TypeFlagsString, TypeFlagsString,
+  assert.equal((queries.getTypeAtLocation(Node_Name(properties[0]))?.type?.flags ?? 0) & TypeFlagsString, TypeFlagsString,
     "the generic location query answers the value-type question and cannot be a key-type substitute");
 });
 
@@ -819,7 +819,7 @@ test("mapped property metadata retains actual mapped owners, checked keys and sy
     { name: "fields", owner: Node_Type(alias("Fields")), keys: ["value"], origin: field },
   ];
   for (const entry of cases) {
-    const type = queries.getTypeAtLocation(variable(entry.name));
+    const type = queries.getTypeAtLocation(variable(entry.name))?.type;
     const properties = shape.getPropertyInfos(type);
     const expectedOwner = entry.owner ?? Node_Type(queries.getPrimarySymbolDeclaration(queries.getTypeAliasSymbol(type)));
     assert.equal(expectedOwner?.Kind, KindMappedType, entry.name);
@@ -851,7 +851,7 @@ test("mapped property metadata retains actual mapped owners, checked keys and sy
       property.mapped?.syntheticOrigin === properties[position]?.mapped?.syntheticOrigin &&
       property.mapped?.declaration === properties[position]?.mapped?.declaration), true, entry.name);
   }
-  assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))).every(property => property.mapped === undefined), true);
+  assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))?.type).every(property => property.mapped === undefined), true);
 });
 
 test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {
@@ -884,8 +884,8 @@ test("spread iteration subjects expose the checker's own element type in arrays 
       assert.equal(result?.subject.kind, "spread", label);
       assert.equal(result?.subject.node === spread, true, label);
       assert.equal(result !== undefined && !("iterationKind" in result) && !("mechanism" in result), true, label);
-      assert.equal(result?.sourceIterableType === queries.getTypeAtLocation(Node_Expression(spread)), true, label);
-      assert.equal(result?.sourceElementType === queries.getTypeAtLocation(spread), true, label);
+      assert.equal(result?.sourceIterableType === queries.getTypeAtLocation(Node_Expression(spread))?.type, true, label);
+      assert.equal(result?.sourceElementType === queries.getTypeAtLocation(spread)?.type, true, label);
       assert.equal(queries.typeToString(result?.sourceElementType).split(" | ").sort().join(" | "), entry.element, label);
       assert.equal(queries.getResolvedIterationInfo(spread) === result, true, label);
       assert.equal(Object.isFrozen(result) && Object.isFrozen(result?.subject), true, label);

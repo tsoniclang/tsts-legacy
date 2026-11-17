@@ -738,7 +738,7 @@ test("a conversion call marker does not fabricate a type marker for plain or for
   assert.deepEqual(extended.extensionHost.facts.get(conversion, sourceMarkerFactKey), { kind: "call-marker", marker: "js-string" });
   for (const name of ["plain", "foreign"]) {
     const declaration = getVariableDeclaration(index, name);
-    const type = source.checker.getTypeAtLocation(declaration);
+    const type = source.checker.getTypeAtLocation(declaration)?.type;
     assert.equal(extended.extensionHost.facts.get(type, sourceMarkerFactKey) === undefined, true, name + ": no invented type fact");
     assert.equal(extended.extensionHost.facts.get(Type_Symbol(type), sourceMarkerFactKey) === undefined, true, name + ": no invented symbol fact");
   }

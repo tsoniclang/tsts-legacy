@@ -66,7 +66,7 @@ function alias(source: SourceFileQueries, name: string) {
 function aliasType(source: SourceFileQueries, name: string): Type {
   const typeNode = source.ast.typeNode(alias(source, name));
   assert.ok(typeNode, name);
-  const type = source.typeShape.getTypeFromTypeNode(typeNode);
+  const type = source.typeShape.getTypeFromTypeNode(typeNode)?.type;
   assert.ok(type, name);
   return type;
 }
@@ -79,7 +79,7 @@ function functionParameterType(source: SourceFileQueries, name: string): Type {
   assert.ok(parameter);
   const typeNode = source.ast.typeNode(parameter);
   assert.ok(typeNode);
-  const type = source.typeShape.getTypeFromTypeNode(typeNode);
+  const type = source.typeShape.getTypeFromTypeNode(typeNode)?.type;
   assert.ok(type);
   return type;
 }

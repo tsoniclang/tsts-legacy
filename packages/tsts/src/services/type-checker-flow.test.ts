@@ -29,7 +29,7 @@ test("public type-checker queries expose flow-narrowed receiver member access", 
     "current",
     (node) => node?.Parent?.Kind === KindExpressionStatement,
   );
-  const narrowedCurrentType = queries.getTypeAtLocation(narrowedCurrent);
+  const narrowedCurrentType = queries.getTypeAtLocation(narrowedCurrent)?.type;
   assert.equal(queries.getSymbolName(queries.getTypeSymbol(narrowedCurrentType)), "PageValue");
 
   const valueAccess = findPropertyAccessByName(
@@ -37,7 +37,7 @@ test("public type-checker queries expose flow-narrowed receiver member access", 
     "value",
     (node) => node?.Parent?.Kind === KindExpressionStatement,
   );
-  const valueType = queries.getTypeAtLocation(valueAccess);
+  const valueType = queries.getTypeAtLocation(valueAccess)?.type;
   assert.equal((valueType?.flags ?? 0) & TypeFlagsString, TypeFlagsString);
   assert.equal(queries.getSymbolAtLocation(Node_Name(valueAccess))?.Name, "value");
   assertCleanSemanticDiagnostics(program, index);

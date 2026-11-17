@@ -1339,6 +1339,7 @@ export function Checker_checkExpressionCached(receiver: GoPtr<Checker>, node: Go
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkExpressionCachedEx","kind":"method","status":"implemented","sigHash":"55526f03bb11723c8b24b03eca25a08f6eaabe3473f31db484c2f99768cc033a","bodyHash":"2db17af4190acec66ec5403894cae77267dac64595d06754330aab296a028ffa"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-23 retains and completes the exact native cache-publication owner and restores the existing transient flow scope even when publication fails; native cache selection and successful results are unchanged."}
  *
  * Go source:
  * func (c *Checker) checkExpressionCachedEx(node *ast.Node, checkMode CheckMode) *Type {
@@ -1372,17 +1373,21 @@ export function Checker_checkExpressionCachedEx(receiver: GoPtr<Checker>, node: 
     receiver!.flowLoopStack = [];
     receiver!.flowTypeCache = undefined as unknown as GoMap<GoPtr<Node>, GoPtr<Type>>;
     const constructionOwner = LiteralConstructionOwner.begin(receiver!, node!, links!);
-    const resolved = Checker_checkExpressionEx(receiver, node, checkMode, constructionOwner);
-    links!.resolvedType = resolved;
-    LiteralConstructionOwner.complete(constructionOwner, resolved);
-    receiver!.flowTypeCache = saveFlowTypeCache;
-    receiver!.flowLoopStack = saveFlowLoopStack;
+    try {
+      const resolved = Checker_checkExpressionEx(receiver, node, checkMode, constructionOwner);
+      links!.resolvedType = resolved;
+      LiteralConstructionOwner.complete(constructionOwner, resolved);
+    } finally {
+      receiver!.flowTypeCache = saveFlowTypeCache;
+      receiver!.flowLoopStack = saveFlowLoopStack;
+    }
   }
   return links!.resolvedType;
 }
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkExpression","kind":"method","status":"implemented","sigHash":"81797b5ec5b389fb4a11ed9f62c1106215c42900c68fda78073336b7347e6f13","bodyHash":"f9f2b95f80850b076e2f3a582c0450caf13257c06da75229897848d3bc834e05"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkExpression(node *ast.Node) *Type {
@@ -1395,7 +1400,7 @@ export function Checker_checkExpression(receiver: GoPtr<Checker>, node: GoPtr<No
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkExpressionEx","kind":"method","status":"implemented","sigHash":"31bd9e3fc117abfabc0575cde0857843657e3214d7e55490b82e7e0476269dc5","bodyHash":"6d15ed64bbe48c3b4af70c5311044f49e9dd3fe52bf5c7d9312b1bdca9e97804"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"After TS-Go has produced an instantiated call/new result backed by source-order cached signature evidence in an actual source-checking mode, publish that immutable evidence immediately so contextual inner calls are retained before their enclosing calls without checker re-entry; provisional, query-only, and transient-flow checks remain observation-free."}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"After TS-Go has produced an instantiated call/new result backed by source-order cached signature evidence in an actual source-checking mode, publish that immutable evidence immediately so contextual inner calls are retained before their enclosing calls without checker re-entry; provisional, query-only, and transient-flow checks remain observation-free. R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkExpressionEx(node *ast.Node, checkMode CheckMode) *Type {
@@ -1432,6 +1437,7 @@ export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkExpressionWorker","kind":"method","status":"implemented","sigHash":"105e7d5c8b4b0e027ee058f1999a2a659be48c67035fc2a5a6cc8e13226f5d89","bodyHash":"0280ce1cabe9f198511c120f1c05b45fde64c7983c5ffb54e82de7958bbbf710"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkExpressionWorker(node *ast.Node, checkMode CheckMode) *Type {
@@ -1586,11 +1592,11 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
       if (IsImportCall(node)) {
         return Checker_checkImportCallExpression(receiver, node);
       }
-      return Checker_checkCallExpression(receiver, node, checkMode);
+      return Checker_checkCallExpression(receiver, node, checkMode, constructionOwner);
     case KindNewExpression:
-      return Checker_checkCallExpression(receiver, node, checkMode);
+      return Checker_checkCallExpression(receiver, node, checkMode, constructionOwner);
     case KindTaggedTemplateExpression:
-      return Checker_checkTaggedTemplateExpression(receiver, node);
+      return Checker_checkTaggedTemplateExpression(receiver, node, constructionOwner);
     case KindParenthesizedExpression:
       return Checker_checkParenthesizedExpression(receiver, node, checkMode, constructionOwner);
     case KindClassExpression:
@@ -1616,7 +1622,7 @@ export function Checker_checkExpressionWorker(receiver: GoPtr<Checker>, node: Go
     case KindVoidExpression:
       return Checker_checkVoidExpression(receiver, node);
     case KindAwaitExpression:
-      return Checker_checkAwaitExpression(receiver, node);
+      return Checker_checkAwaitExpression(receiver, node, constructionOwner);
     case KindPrefixUnaryExpression:
       return Checker_checkPrefixUnaryExpression(receiver, node);
     case KindPostfixUnaryExpression:
@@ -1856,7 +1862,7 @@ export function Checker_checkSuperExpression(receiver: GoPtr<Checker>, node: GoP
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveNewExpression","kind":"method","status":"implemented","sigHash":"8a47b2162d02435b75fbb4d861b25b846ff133aa869ee2a9e738af5f20205d9a","bodyHash":"0e05b7e72d36969eda35ffbf98747ffe602a0b10f76086fffb618f8aa47850e4"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"The exact TS-Go new-expression resolver is retained; an internal worker returns immutable evidence from the same successful constructor-selection attempt for atomic resolved-signature caching."}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"The exact TS-Go new-expression resolver is retained; an internal worker returns immutable evidence from the same successful constructor-selection attempt for atomic resolved-signature caching. R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>>>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>>>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>"}
  *
  * Go source:
  * func (c *Checker) resolveNewExpression(node *ast.Node, candidatesOutArray *[]*Signature, checkMode CheckMode) *Signature {
@@ -1932,8 +1938,8 @@ export function Checker_checkSuperExpression(receiver: GoPtr<Checker>, node: GoP
  * 	return c.resolveErrorCall(node)
  * }
  */
-export function Checker_resolveNewExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, candidatesOutArray: GoPtr<GoSlice<GoPtr<Signature>>>, checkMode: CheckMode): GoPtr<Signature> {
-  return Checker_resolveNewExpressionWithEvidence(receiver, node, candidatesOutArray, checkMode, undefined);
+export function Checker_resolveNewExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, candidatesOutArray: GoPtr<GoSlice<GoPtr<Signature>>>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Signature> {
+  return Checker_resolveNewExpressionWithEvidence(receiver, node, candidatesOutArray, checkMode, undefined, constructionOwner);
 }
 
 export function Checker_resolveNewExpressionWithEvidence(
@@ -1941,9 +1947,9 @@ export function Checker_resolveNewExpressionWithEvidence(
   node: GoPtr<Node>,
   candidatesOutArray: GoPtr<GoSlice<GoPtr<Signature>>>,
   checkMode: CheckMode,
-  output: { evidence?: ResolvedCallSelectionEvidence } | undefined,
+  output: { evidence?: ResolvedCallSelectionEvidence } | undefined, constructionOwner?: LiteralConstructionOwner,
 ): GoPtr<Signature> {
-  let expressionType = Checker_checkNonNullExpression(receiver, Node_Expression(node));
+  let expressionType = Checker_checkNonNullExpression(receiver, Node_Expression(node), constructionOwner);
   const selectedOutput = output;
   if (expressionType === receiver!.silentNeverType) {
     return receiver!.silentNeverSignature;
@@ -1951,42 +1957,42 @@ export function Checker_resolveNewExpressionWithEvidence(
   const sourceCalleeType = expressionType;
   expressionType = Checker_getApparentType(receiver, expressionType);
   if (Checker_isErrorType(receiver, expressionType)) {
-    return Checker_resolveErrorCall(receiver, node);
+    return Checker_resolveErrorCall(receiver, node, constructionOwner);
   }
   if (IsTypeAny(expressionType)) {
     if ((Node_TypeArguments(node) ?? []).length !== 0) {
       Checker_error(receiver, node, Untyped_function_calls_may_not_accept_type_arguments);
     }
     return selectedOutput === undefined
-      ? Checker_resolveUntypedCall(receiver, node)
-      : Checker_resolveUntypedCallWithEvidence(receiver, node, sourceCalleeType, selectedOutput);
+      ? Checker_resolveUntypedCall(receiver, node, constructionOwner)
+      : Checker_resolveUntypedCallWithEvidence(receiver, node, sourceCalleeType, selectedOutput, constructionOwner);
   }
   const constructSignatures = Checker_getSignaturesOfType(receiver, expressionType, SignatureKindConstruct);
   if (constructSignatures.length !== 0) {
     const providerConstructors = hasExactProviderConstructorDeclarations(
       receiver!.program, constructSignatures.map(signature => signature?.declaration));
     if (!providerConstructors && !Checker_isConstructorAccessible(receiver, node, constructSignatures[0])) {
-      return Checker_resolveErrorCall(receiver, node);
+      return Checker_resolveErrorCall(receiver, node, constructionOwner);
     }
     if (someSignature(constructSignatures, (signature) => (signature!.flags & SignatureFlagsAbstract) !== 0)) {
       Checker_error(receiver, node, Cannot_create_an_instance_of_an_abstract_class);
-      return Checker_resolveErrorCall(receiver, node);
+      return Checker_resolveErrorCall(receiver, node, constructionOwner);
     }
     if (expressionType!["symbol"] !== undefined) {
       const valueDeclaration = GetClassLikeDeclarationOfSymbol(expressionType!["symbol"]);
       if (valueDeclaration !== undefined && HasModifier(valueDeclaration, ModifierFlagsAbstract)) {
         Checker_error(receiver, node, Cannot_create_an_instance_of_an_abstract_class);
-        return Checker_resolveErrorCall(receiver, node);
+        return Checker_resolveErrorCall(receiver, node, constructionOwner);
       }
     }
     if (selectedOutput === undefined) {
-      const selected = Checker_resolveCall(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined);
+      const selected = Checker_resolveCall(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, constructionOwner);
       return providerConstructors && !Checker_isConstructorAccessible(receiver, node, selected)
-        ? Checker_resolveErrorCall(receiver, node) : selected;
+        ? Checker_resolveErrorCall(receiver, node, constructionOwner) : selected;
     }
-    const resolved = Checker_resolveCallWithEvidence(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, sourceCalleeType);
+    const resolved = Checker_resolveCallWithEvidence(receiver, node, constructSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, sourceCalleeType, constructionOwner);
     if (providerConstructors && !Checker_isConstructorAccessible(receiver, node, resolved.signature)) {
-      return Checker_resolveErrorCall(receiver, node);
+      return Checker_resolveErrorCall(receiver, node, constructionOwner);
     }
     if (resolved.evidence !== undefined) {
       selectedOutput.evidence = resolved.evidence;
@@ -1997,9 +2003,9 @@ export function Checker_resolveNewExpressionWithEvidence(
   if (callSignatures.length !== 0) {
     let signature: GoPtr<Signature>;
     if (selectedOutput === undefined) {
-      signature = Checker_resolveCall(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined);
+      signature = Checker_resolveCall(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, constructionOwner);
     } else {
-      const resolved = Checker_resolveCallWithEvidence(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, sourceCalleeType);
+      const resolved = Checker_resolveCallWithEvidence(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, sourceCalleeType, constructionOwner);
       signature = resolved.signature;
       if (resolved.evidence !== undefined) {
         selectedOutput.evidence = resolved.evidence;
@@ -2016,11 +2022,12 @@ export function Checker_resolveNewExpressionWithEvidence(
     return signature;
   }
   Checker_invocationError(receiver, Node_Expression(node), expressionType, SignatureKindConstruct, undefined);
-  return Checker_resolveErrorCall(receiver, node);
+  return Checker_resolveErrorCall(receiver, node, constructionOwner);
 }
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.resolveInstanceofExpression","kind":"method","status":"implemented","sigHash":"2d8f498ac5bffc3bf268aafddf73dca51418ef3592e08a635521fde73a6011a6","bodyHash":"b9fc552852c48b36d318f94bc4427992fe15a5a0abdfe2c866ee0a2fc7201f99"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>>>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>>>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Signature>"}
  *
  * Go source:
  * func (c *Checker) resolveInstanceofExpression(node *ast.Node, candidatesOutArray *[]*Signature, checkMode CheckMode) *Signature {
@@ -2053,23 +2060,23 @@ export function Checker_resolveNewExpressionWithEvidence(
  * 	return c.anySignature
  * }
  */
-export function Checker_resolveInstanceofExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, candidatesOutArray: GoPtr<GoSlice<GoPtr<Signature>>>, checkMode: CheckMode): GoPtr<Signature> {
+export function Checker_resolveInstanceofExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, candidatesOutArray: GoPtr<GoSlice<GoPtr<Signature>>>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Signature> {
   const right = AsBinaryExpression(node)!.Right;
-  const rightType = Checker_checkExpression(receiver, right);
+  const rightType = Checker_checkExpression(receiver, right, constructionOwner);
   if (!IsTypeAny(rightType)) {
     const hasInstanceMethodType = Checker_getSymbolHasInstanceMethodOfObjectType(receiver, rightType);
     if (hasInstanceMethodType !== undefined) {
       const apparentType = Checker_getApparentType(receiver, hasInstanceMethodType);
       if (Checker_isErrorType(receiver, apparentType)) {
-        return Checker_resolveErrorCall(receiver, node);
+        return Checker_resolveErrorCall(receiver, node, constructionOwner);
       }
       const callSignatures = Checker_getSignaturesOfType(receiver, apparentType, SignatureKindCall);
       const constructSignatures = Checker_getSignaturesOfType(receiver, apparentType, SignatureKindConstruct);
       if (Checker_isUntypedFunctionCall(receiver, hasInstanceMethodType, apparentType, callSignatures.length, constructSignatures.length)) {
-        return Checker_resolveUntypedCall(receiver, node);
+        return Checker_resolveUntypedCall(receiver, node, constructionOwner);
       }
       if (callSignatures.length !== 0) {
-        return Checker_resolveCall(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined);
+        return Checker_resolveCall(receiver, node, callSignatures, candidatesOutArray, checkMode, SignatureFlagsNone, undefined, constructionOwner);
       }
     } else if (!(Checker_typeHasCallOrConstructSignatures(receiver, rightType) || Checker_isTypeSubtypeOf(receiver, rightType, receiver!.globalFunctionType))) {
       Checker_error(
@@ -2077,7 +2084,7 @@ export function Checker_resolveInstanceofExpression(receiver: GoPtr<Checker>, no
         right,
         The_right_hand_side_of_an_instanceof_expression_must_be_either_of_type_any_a_class_function_or_other_type_assignable_to_the_Function_interface_type_or_an_object_type_with_a_Symbol_hasInstance_method,
       );
-      return Checker_resolveErrorCall(receiver, node);
+      return Checker_resolveErrorCall(receiver, node, constructionOwner);
     }
   }
   return receiver!.anySignature;
@@ -2168,6 +2175,7 @@ export function Checker_skippedGenericFunction(receiver: GoPtr<Checker>, node: G
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkParenthesizedExpression","kind":"method","status":"implemented","sigHash":"b3dc6afe3288d6ce46e7e171cb71433faded9b32746681e95c56855ee898209d","bodyHash":"c9998282a3f719e45baec70504ce623789ee9fe082ea1565649ef00ef48041a4"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkParenthesizedExpression(node *ast.Node, checkMode CheckMode) *Type {
@@ -2302,6 +2310,7 @@ export function Checker_checkDeleteExpressionMustBeOptional(receiver: GoPtr<Chec
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkAwaitExpression","kind":"method","status":"implemented","sigHash":"17c30161bbc79fc1ed85b35725b04d8b86a6498644a0387c2cf8fe827d0d0ed4","bodyHash":"243489682abfb5dc8b2a3c612e70e01b165a21685452573736e9b80c2a9d5c32"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkAwaitExpression(node *ast.Node) *Type {
@@ -2314,9 +2323,9 @@ export function Checker_checkDeleteExpressionMustBeOptional(receiver: GoPtr<Chec
  * 	return awaitedType
  * }
  */
-export function Checker_checkAwaitExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
+export function Checker_checkAwaitExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   Checker_checkGrammarAwaitOrAwaitUsing(receiver, node);
-  const operandType = Checker_checkExpression(receiver, Node_Expression(node));
+  const operandType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const awaitedType = Checker_checkAwaitedType(receiver, operandType, true, node, Type_of_await_operand_must_either_be_a_valid_promise_or_must_not_contain_a_callable_then_member);
   if (awaitedType === operandType && !Checker_isErrorType(receiver, awaitedType) && (operandType!.flags & TypeFlagsAnyOrUnknown) === 0) {
     Checker_addErrorOrSuggestion(receiver, false, createDiagnosticForNode(node, X_await_has_no_effect_on_the_type_of_this_expression));
@@ -2497,7 +2506,7 @@ export function Checker_checkPostfixUnaryExpression(receiver: GoPtr<Checker>, no
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkSpreadExpression","kind":"method","status":"implemented","sigHash":"ea28f33c4c792dc8dc6ee3b45dc136c7ec32e335a19f40f31ea1a6e8637cd34a","bodyHash":"935a89ed85ee2fbfbe72eaedd4ac99375f1814c02818ead10b1c7ba5ce928969"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"One worker retains the exact TS-Go spread computation; the existing iteration query observes its actual iterable and element types without changing checking, caching or the ordinary signature."}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"One worker retains the exact TS-Go spread computation; the existing iteration query observes its actual iterable and element types without changing checking, caching or the ordinary signature. R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkSpreadExpression(node *ast.Node, checkMode CheckMode) *Type {
@@ -2834,7 +2843,7 @@ export function Checker_checkThisExpression(receiver: GoPtr<Checker>, node: GoPt
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkBinaryExpression","kind":"method","status":"implemented","sigHash":"7789a2bf27bb77f18361e12bbc4e9dd02304e6f162df1c874f94945d2d4b1bcf","bodyHash":"9faf599e69844635f35db6e35e11439ef3ffa75966c09b3c8e952309b3251d42"}
- * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Evaluate deep non-logical binary chains iteratively to avoid JavaScript call-stack exhaustion while preserving TS-Go's left-to-right checks and result types."}
+ * @tsgo-override {"category":"runtime-performance","allow":["body","signature"],"reason":"Evaluate deep non-logical binary chains iteratively to avoid JavaScript call-stack exhaustion while preserving TS-Go's left-to-right checks and result types. R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkBinaryExpression(node *ast.Node, checkMode CheckMode) *Type {
@@ -2893,7 +2902,7 @@ function isIterativelyCheckableNonLogicalBinaryExpression(node: GoPtr<Node>): bo
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkBinaryLikeExpression","kind":"method","status":"implemented","sigHash":"058951d0c451f4334faaa90f108eb88c838ea7af7a55bddace4da2ff77570115","bodyHash":"35a4d3d98cecf55f83774842062fdfe4dbc8bb5d764df060a73c2c94e942e66b"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Retain the already-checked original operator operands and Diagnostic relation through the shared iterative and ordinary binary worker; ordinary checker admission is unchanged and only the Host may prove a backed constraint."}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"Retain the already-checked original operator operands and Diagnostic relation through the shared iterative and ordinary binary worker; ordinary checker admission is unchanged and only the Host may prove a backed constraint. R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkBinaryLikeExpression(left *ast.Node, operatorToken *ast.Node, right *ast.Node, checkMode CheckMode, errorNode *ast.Node) *Type {
@@ -3548,6 +3557,7 @@ export function Checker_checkReferenceExpression(receiver: GoPtr<Checker>, expr:
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkExpressionForMutableLocation","kind":"method","status":"implemented","sigHash":"5ab211d59ca5aa49a44fd1cd91603434ccb0b5dd082b156554d682831bd1c328","bodyHash":"7adf4830c0b6a169d6ded7ea16349c9d67f07c0ab523524404aed344f45cc965"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkExpressionForMutableLocation(node *ast.Node, checkMode CheckMode) *Type {

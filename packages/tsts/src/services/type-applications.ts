@@ -18,6 +18,7 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import type { Type } from "../internal/checker/types.js";
 import { Type_AsConditionalType, TypeFlagsConditional, TypeFlagsTypeParameter } from "../internal/checker/types.js";
 import { getExtensionHost } from "../extensions/host.js";
+import { createTypeNormalization, type TypeNormalization } from "./type-normalization.js";
 
 export interface TypeAliasConditionalStep {
   readonly conditional: Node;
@@ -81,14 +82,13 @@ export function resolveTypeAliasApplication(
   }
   const sourceFile = GetSourceFileOfNode(declaration);
   if (queryChecker === undefined || sourceFile === undefined || !queryChecker.fileIndexMap.has(sourceFile)) return undefined;
-  const argumentChecker = arguments_[0]?.checker;
-  if (argumentChecker !== undefined && argumentChecker !== queryChecker) {
-    const owner = getExtensionHost(queryChecker.program);
-    if (owner === undefined || getExtensionHost(argumentChecker.program) !== owner) return undefined;
-  }
-  const checker = argumentChecker ?? queryChecker;
+  const checker = queryChecker;
   if (!checker.fileIndexMap.has(sourceFile) ||
-    arguments_.some(argument => argument.checker !== checker || argument === checker.errorType)) return undefined;
+    arguments_.some(argument => argument.checker === undefined ||
+      argument.checker.program.SourceFiles() !== checker.program.SourceFiles() || argument === argument.checker.errorType)) return undefined;
+  let normalization: TypeNormalization | undefined;
+  const selectedArguments = arguments_.map(argument => argument.checker === checker ? argument
+    : (normalization ??= createTypeNormalization(checker)).type(argument));
   const typeNode = Node_Type(declaration);
   if (typeNode === undefined) return undefined;
   const sourceParameters: Type[] = [];
@@ -103,7 +103,7 @@ export function resolveTypeAliasApplication(
   if (template === undefined || template === checker.errorType) return undefined;
   const minimumArguments = Checker_getMinTypeArgumentCount(checker, sourceParameters);
   if (arguments_.length < minimumArguments) return undefined;
-  const effectiveArguments = Checker_fillMissingTypeArguments(checker, [...arguments_], sourceParameters, minimumArguments, false);
+  const effectiveArguments = Checker_fillMissingTypeArguments(checker, selectedArguments, sourceParameters, minimumArguments, false);
   if (effectiveArguments.length !== sourceParameters.length || effectiveArguments.some(argument =>
     argument === undefined || argument === checker.errorType || argument.checker !== checker)) return undefined;
   const mapper = sourceParameters.length === 0 ? undefined : newTypeMapper(sourceParameters, effectiveArguments);
@@ -124,7 +124,7 @@ export function resolveTypeAliasApplication(
     declaration,
     typeNode,
     bindings: Object.freeze(parameters.map((parameter, index) => Object.freeze({
-      declaration: parameter!, parameter: sourceParameters[index]!, argument: effectiveArguments[index]!,
+      declaration: parameter!, parameter: sourceParameters[index]!, argument: arguments_[index] ?? effectiveArguments[index]!,
     }))),
     result,
     conditionalSteps,

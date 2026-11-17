@@ -30,7 +30,7 @@ function fixture(body: string, declarations = "") {
     return {
       signature,
       invocation: queries.checker.getInvocationReturnTypeOfSignature(signature),
-      completion: queries.checker.getTypeAtLocation(call),
+      completion: queries.checker.getTypeAtLocation(call)?.type,
     };
   });
   return { queries, results };

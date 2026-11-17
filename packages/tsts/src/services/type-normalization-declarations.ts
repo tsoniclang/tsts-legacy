@@ -162,7 +162,8 @@ export function reacquireTypeAlias(producer: Checker, type: Type, normalize: (ty
   if (links?.declaredType === type) {
     result = Checker_getDeclaredTypeOfSymbol(producer, alias.symbol);
   } else {
-    if (links?.instantiations?.get(getTypeAliasInstantiationKey(alias.typeArguments, undefined)) !== type) return undefined;
+    const qualified = links?.instantiations?.get(getTypeAliasInstantiationKey(alias.typeArguments, alias)) === type;
+    if (!qualified && links?.instantiations?.get(getTypeAliasInstantiationKey(alias.typeArguments, undefined)) !== type) return undefined;
     const arguments_: Type[] = [];
     for (const value of alias.typeArguments) {
       if (value === undefined) throw new TypeError("A native type alias requires its actual arguments");
@@ -170,7 +171,8 @@ export function reacquireTypeAlias(producer: Checker, type: Type, normalize: (ty
       if (selected.checker !== producer) throw new TypeError("A native type alias requires its normalized input producer");
       arguments_.push(selected);
     }
-    result = Checker_getTypeAliasInstantiation(producer, alias.symbol, arguments_, undefined);
+    result = Checker_getTypeAliasInstantiation(producer, alias.symbol, arguments_,
+      qualified ? { symbol: alias.symbol, typeArguments: arguments_ } : undefined);
   }
   if (result === undefined) throw new Error("The native type alias constructor did not return its value");
   return result;

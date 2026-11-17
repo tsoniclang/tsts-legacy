@@ -192,7 +192,7 @@ test("public type-checker queries expose TS-Go checker facts without emitter re-
     "value",
     (node) => node?.Parent?.Kind === KindExpressionStatement,
   );
-  const narrowedType = queries.getTypeAtLocation(narrowedValue);
+  const narrowedType = queries.getTypeAtLocation(narrowedValue)?.type;
   assert.equal((narrowedType?.flags ?? 0) & TypeFlagsString, TypeFlagsString);
 
   const valueSymbol = queries.getSymbolAtLocation(narrowedValue);
@@ -226,13 +226,13 @@ test("public type-checker queries expose TS-Go checker facts without emitter re-
   );
 
   const arrow = findFirstNodeByKind(index, KindArrowFunction);
-  assert.ok(queries.getContextualType(arrow) !== undefined);
+  assert.ok(queries.getContextualType(arrow)?.type !== undefined);
   const idIdentifier = findIdentifierByText(
     index,
     "id",
     (node) => node?.Parent?.Kind === KindCallExpression,
   );
-  const idType = queries.getTypeAtLocation(idIdentifier);
+  const idType = queries.getTypeAtLocation(idIdentifier)?.type;
   assert.equal(queries.getCallSignaturesOfType(idType).length, 1);
   assert.equal(queries.getConstructSignaturesOfType(idType).length, 0);
   assertCleanSemanticDiagnostics(program, index);
@@ -623,7 +623,7 @@ test("resolved call info preserves omission semantics without inventing effectiv
   `);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const call = findFirstNodeByKind(index, KindCallExpression);
-  queries.getTypeAtLocation(call);
+  queries.getTypeAtLocation(call)?.type;
   const selected = requireApplicableCallInfo(queries.getResolvedCallInfo(call));
 
   assert.equal(selected?.kind, "applicable");
@@ -679,7 +679,7 @@ test("public type-checker queries expose instantiated generic member types", () 
     "value",
     (node) => node?.Parent?.Kind === KindExpressionStatement,
   );
-  const finalValueType = queries.getTypeAtLocation(finalValueAccess);
+  const finalValueType = queries.getTypeAtLocation(finalValueAccess)?.type;
   assert.equal((finalValueType?.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
 
   const finalValueSymbol = queries.getSymbolAtLocation(Node_Name(finalValueAccess));

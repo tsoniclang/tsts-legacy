@@ -28,7 +28,7 @@ test("type-derived signature queries retain their checker owner across imports a
   const typeFor = (name: string) => {
     const declaration = variables.find(node => api.ast.text(api.ast.name(node)) === name);
     assert.ok(declaration);
-    return api.checker.getTypeAtLocation(api.ast.name(declaration));
+    return api.checker.getTypeAtLocation(api.ast.name(declaration))?.type;
   };
   const callback = typeFor("callback");
   const original = api.typeShape.getSignatureInfos(callback, "call");
@@ -79,7 +79,7 @@ test("type-derived omission retains checker arity independently of syntax and ab
   ]);
   for (const declaration of declarations) {
     const name = queries.ast.text(queries.ast.name(declaration));
-    const type = queries.checker.getTypeAtLocation(queries.ast.name(declaration));
+    const type = queries.checker.getTypeAtLocation(queries.ast.name(declaration))?.type;
     const signature = queries.typeShape.getSignatureInfos(type, "call")[0];
     assert.ok(signature);
     assert.deepEqual(signature.parameters.map(parameter => parameter.acceptsOmission), expected.get(name), name);

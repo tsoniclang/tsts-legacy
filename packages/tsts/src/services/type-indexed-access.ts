@@ -11,9 +11,9 @@ import {
 import { Checker_getReducedApparentType } from "../internal/checker/checker/types.js";
 import { Checker_getApplicableIndexInfo } from "../internal/checker/checker/signatures.js";
 import { getPropertyNameFromType, isTypeUsableAsPropertyName } from "../internal/checker/utilities.js";
-import { getExtensionHost } from "../extensions/host.js";
 import type { TypeIndexInfo, TypePropertyInfo } from "./type-shape.js";
 import { readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
+import { createTypeNormalization } from "./type-normalization.js";
 
 export interface TypeIndexedAccessComponents {
   readonly objectType: Type;
@@ -51,8 +51,10 @@ export function selectTypeIndexedAccess(
 ): TypeIndexedAccessSelection | undefined {
   const checker = objectType?.checker;
   if (query === undefined || checker === undefined || objectType === undefined || indexType === undefined ||
-    !ownsChecker(query, checker) || indexType.checker !== checker ||
-    objectType === checker.errorType || indexType === checker.errorType) return undefined;
+    !ownsChecker(query, checker) || indexType.checker === undefined ||
+    indexType.checker.program.SourceFiles() !== checker.program.SourceFiles() ||
+    objectType === checker.errorType || indexType === indexType.checker.errorType) return undefined;
+  if (indexType.checker !== checker) indexType = createTypeNormalization(checker).type(indexType);
   const readType = Checker_getIndexedAccessTypeOrUndefined(checker, objectType, indexType, AccessFlagsNone, undefined, undefined);
   const writeType = Checker_getIndexedAccessTypeOrUndefined(checker, objectType, indexType, AccessFlagsWriting, undefined, undefined);
   if (readType === undefined || writeType === undefined || readType === checker.errorType || writeType === checker.errorType) return undefined;
@@ -88,7 +90,5 @@ export function selectTypeIndexedAccess(
 }
 
 function ownsChecker(query: Checker, checker: Checker): boolean {
-  if (query === checker || query.program === checker.program) return true;
-  const owner = getExtensionHost(query.program);
-  return owner !== undefined && owner === getExtensionHost(checker.program);
+  return query.program.SourceFiles() === checker.program.SourceFiles();
 }

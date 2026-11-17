@@ -5,7 +5,7 @@ import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../ex
 
 function aliases(source: SourceFileQueries): ReadonlyMap<string, Type> {
   return new Map(findNodes(source.sourceFile, source.ast.children, source.ast.is.IsTypeAliasDeclaration).map(node => {
-    const type = source.typeShape.getTypeFromTypeNode(source.ast.typeNode(node));
+    const type = source.typeShape.getTypeFromTypeNode(source.ast.typeNode(node))?.type;
     assert.equal(type !== undefined, true);
     return [source.ast.text(source.ast.name(node)), type!];
   }));

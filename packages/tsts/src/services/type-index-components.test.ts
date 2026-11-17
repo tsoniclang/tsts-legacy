@@ -43,7 +43,7 @@ const value = numeric[1];
   const indexFor = (name: string) => {
     const variable = variables.find(node => source.ast.text(source.ast.name(node)) === name);
     assert.ok(variable !== undefined);
-    return source.typeShape.getIndexInfos(source.checker.getTypeAtLocation(source.ast.name(variable)));
+    return source.typeShape.getIndexInfos(source.checker.getTypeAtLocation(source.ast.name(variable))?.type);
   };
   for (const name of ["numeric", "inherited", "nested", "different"]) {
     const indexes = indexFor(name);
@@ -69,10 +69,10 @@ const value = numeric[1];
     assert.deepEqual(componentIds(info.components), new Set([0, 1]));
     assert.equal(Object.isFrozen(info.components), true);
     const variable = variables.find(node => source.ast.text(source.ast.name(node)) === name)!;
-    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable))?.type;
     const keyNode = findNodes(file, source.ast.children, source.ast.is.IsNumericLiteral)[0];
     assert.ok(keyNode !== undefined);
-    const key = source.checker.getTypeAtLocation(keyNode);
+    const key = source.checker.getTypeAtLocation(keyNode)?.type;
     const selected = source.typeShape.selectIndexedAccess(type, key);
     assert.equal(selected?.kind, "resolved");
     if (selected?.kind !== "resolved") assert.fail("Expected exact intersection index selection");
@@ -104,7 +104,7 @@ test("index provenance accounting fails closed without changing the checked inde
   const source = checked.getSourceFileQueries(file);
   const alias = findNodes(file, source.ast.children, source.ast.is.IsTypeAliasDeclaration)[0];
   assert.ok(alias !== undefined);
-  const type = source.checker.getTypeAtLocation(source.ast.name(alias));
+  const type = source.checker.getTypeAtLocation(source.ast.name(alias))?.type;
   const indexes = source.typeShape.getIndexInfos(type);
   assert.equal(indexes.length, 1);
   assert.equal(source.typeShape.isNumberLike(indexes[0]!.keyType), true);

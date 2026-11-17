@@ -1,4 +1,4 @@
-import type { bool, uint } from "../go/scalars.js";
+import type { bool } from "../go/scalars.js";
 import { checkerBackingConstraints } from "../internal/checker/checker/backing-constraint-evidence.js";
 import type { ResolvedCheckerBackingConstraint } from "../internal/checker/types.js";
 import type { GoPtr } from "../go/compat.js";
@@ -13,7 +13,10 @@ import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
 import { readInvocationReturnType } from "./signature-returns.js";
-import { withOwnedChecker } from "./checker-ownership.js";
+import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
+import { sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
+import type { ResolvedSourceTypeInfo, SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
+export type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 import type { TypeIndexInfo } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
@@ -60,7 +63,7 @@ import {
   SkipParentheses,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerById, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
 import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
@@ -258,15 +261,10 @@ export type ResolvedAliasStep =
 export interface ResolvedSourceStorageInfo {
   readonly expression: Node;
   readonly storageExpression: Node;
-  readonly type: Type;
+  readonly type: ResolvedSourceTypeInfo;
   readonly symbol?: Symbol;
   readonly declaration?: Node;
   readonly writable: boolean;
-}
-
-export interface ResolvedSourceTypeInfo {
-  readonly type: Type;
-  readonly cause: Diagnostic | undefined;
 }
 
 export interface TypeCheckerQueries {
@@ -274,9 +272,9 @@ export interface TypeCheckerQueries {
   readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
   readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
   readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
-  readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<Type>;
+  readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
-  readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<Type>;
+  readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getEffectivePropertyName: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyNameInfo>;
   readonly getSymbolAtLocation: (node: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getLexicallyResolvedSymbol: (identifier: GoPtr<Node>) => GoPtr<Symbol>;
@@ -385,18 +383,21 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         defaultOptions.context ?? Background(), owner => Checker_getAwaitedType(owner, type));
     },
     getTypeAtLocation: (node) =>
-      withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeAtLocation(checker, node)),
+      withCheckerForNode(program, node, defaultOptions, checker =>
+        sourceTypeAnswer(checker, node, Checker_GetTypeAtLocation(checker, node))),
     getTypeFromTypeNode(node) {
       if (node === undefined) return undefined;
       return withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, checker => {
-        const type = Checker_GetTypeFromTypeNode(checker, node);
-        if (type === undefined) return undefined;
-        const cause = LinkStore_TryGet(checker!.typeNodeLinks, node)?.resolutionFailure;
-        return { type, cause };
+        return sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node));
       });
     },
     getContextualType: (node, contextFlags = ContextFlagsNone) =>
-      withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getContextualType(checker, node, contextFlags)),
+      withCheckerForNode(program, node, defaultOptions, checker => {
+        const output: SourceTypeAnswerOutput = { value: undefined };
+        const type = Checker_getContextualType(checker, node, contextFlags, output);
+        return output.value?.type === type && output.value !== undefined
+          ? output.value : type === undefined ? undefined : { type, cause: undefined };
+      }),
     getEffectivePropertyName(node) {
       if (node === undefined) return undefined;
       const cached = propertyNames.get(node);
@@ -496,7 +497,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       if (!IsFunctionLike(declaration)) return undefined;
       const sourceFile = GetSourceFileOfNode(declaration);
       if (sourceFile === undefined || Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
-      return withChecker(program, sourceFile, defaultOptions,
+      return withCheckedFile(program, sourceFile, defaultOptions,
         checker => Checker_GetSignatureFromDeclaration(checker, declaration));
     },
     getResolvedCallInfo: (node) =>
@@ -746,7 +747,7 @@ function getResolvedSourceStorageInfo(
     const symbol = referenceSymbol !== undefined && (referenceSymbol.Flags & SymbolFlagsAlias) !== 0
       ? Checker_GetAliasedSymbol(checker, referenceSymbol)
       : referenceSymbol;
-    const type = Checker_GetTypeAtLocation(checker, storageExpression);
+    const type = sourceTypeAnswer(checker, storageExpression, Checker_GetTypeAtLocation(checker, storageExpression));
     if (symbol === undefined || symbol === checker.unknownSymbol || type === undefined) {
       return undefined;
     }
@@ -770,7 +771,7 @@ function getResolvedSourceStorageInfo(
       checker,
       storageExpression,
     );
-    const type = selectedAccessType(selected);
+    const type = sourceTypeAnswer(checker, storageExpression, selectedAccessType(selected));
     if (selected === undefined || type === undefined) {
       return undefined;
     }
@@ -792,7 +793,7 @@ function getResolvedSourceStorageInfo(
       checker,
       storageExpression,
     );
-    const type = selectedAccessType(selected);
+    const type = sourceTypeAnswer(checker, storageExpression, selectedAccessType(selected));
     if (selected === undefined || type === undefined) {
       return undefined;
     }
@@ -957,9 +958,9 @@ function withCheckerForNode<T>(
   if (node === undefined) {
     return undefined;
   }
-  return withChecker(
+  return withCheckedFile(
     program,
-    defaultOptions.sourceFile,
+    GetSourceFileOfNode(node),
     defaultOptions,
     callback,
   );
@@ -975,7 +976,8 @@ function withCheckerForSymbol<T>(
     return undefined;
   }
   if (symbol.checkerId !== undefined) {
-    return withCheckerById(program, symbol.checkerId, defaultOptions, callback);
+    return withCheckerById(program, defaultOptions.sourceFile, symbol.checkerId,
+      defaultOptions.context ?? Background(), callback);
   }
   return withChecker(
     program,
@@ -991,18 +993,8 @@ function withCheckerForType<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
-  if (type === undefined) {
-    return undefined;
-  }
-  if (type.checker !== undefined) {
-    return callback(type.checker);
-  }
-  return withChecker(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
+  return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+    defaultOptions.context ?? Background(), callback);
 }
 
 function withCheckerForSignature<T>(
@@ -1014,26 +1006,8 @@ function withCheckerForSignature<T>(
   if (signature === undefined) {
     return undefined;
   }
-  return withCheckerById(program, signature.checkerId, defaultOptions, callback);
-}
-
-function withCheckerById<T>(
-  program: GoPtr<Program>,
-  checkerId: uint,
-  defaultOptions: CreateTypeCheckerQueriesOptions,
-  callback: (checker: GoPtr<Checker>) => GoPtr<T>,
-): GoPtr<T> {
-  const sourceFile = defaultOptions.sourceFile;
-  if (program === undefined || sourceFile === undefined ||
-    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
-  const context = defaultOptions.context ?? Background();
-  const [checker, done] = Program_GetTypeCheckerById(program,
-    WithCheckerLifetime(context, CheckerLifetimeAPI), checkerId);
-  try {
-    return checker !== undefined && checker.id === checkerId ? callback(checker) : undefined;
-  } finally {
-    done();
-  }
+  return withCheckerById(program, defaultOptions.sourceFile, signature.checkerId,
+    defaultOptions.context ?? Background(), callback);
 }
 
 function withCheckedFile<T>(
@@ -1043,6 +1017,7 @@ function withCheckedFile<T>(
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
   if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
   const context = defaultOptions.context ?? Background();
   const [checker, done] = Program_GetTypeCheckerForFile(program,

@@ -36,7 +36,7 @@ test("intrinsic object identity remains exact across aliases and source query ow
       const aliases = findNodes(owner.sourceFile, owner.ast.children, owner.ast.is.IsTypeAliasDeclaration);
       for (const declaration of aliases) {
         const name = owner.ast.text(owner.ast.name(declaration));
-        const type = owner.typeShape.getTypeFromTypeNode(owner.ast.typeNode(declaration));
+        const type = owner.typeShape.getTypeFromTypeNode(owner.ast.typeNode(declaration))?.type;
         assert.equal(type !== undefined, true, name);
         assert.equal(query.typeShape.isNonPrimitive(type), ["Broad", "Alias", "CrossFile"].includes(name), name);
       }

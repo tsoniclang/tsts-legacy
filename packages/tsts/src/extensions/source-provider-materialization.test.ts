@@ -69,7 +69,7 @@ test("incremental providers materialize only exact structured exports demanded b
   assert.ok(rootUse !== undefined);
   const sourceQueries = checked.getSourceFileQueries(sourceFile);
   assert.doesNotThrow(() => sourceQueries.typeShape.getPropertyInfos(
-    sourceQueries.checker.getTypeAtLocation(rootUse),
+    sourceQueries.checker.getTypeAtLocation(rootUse)?.type,
   ));
 });
 

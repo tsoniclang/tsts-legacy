@@ -58,7 +58,7 @@ function identityFixture(checkers = 4) {
     const declarations = findNodes(queries.sourceFile, queries.ast.children, queries.ast.is.IsVariableDeclaration);
     const declaration = declarations.find(node => queries.ast.text(queries.ast.name(node)) === name);
     assert.equal(declaration !== undefined, true, `${name}: original authored variable`);
-    const type = queries.checker.getTypeAtLocation(queries.ast.name(declaration));
+    const type = queries.checker.getTypeAtLocation(queries.ast.name(declaration))?.type;
     assert.equal(type !== undefined, true, `${name}: actual checked type`);
     return type!;
   };
@@ -110,7 +110,7 @@ test("public identity preserves exact generic instances obtained from different 
   const { left, right, typeFor } = identityFixture();
   const numericLeft = typeFor(left, "numeric");
   const numericRight = typeFor(right, "numeric");
-  assert.equal(numericLeft.checker === numericRight.checker, true, "the public queries use the same native API semantic owner");
+  assert.equal(numericLeft.checker !== numericRight.checker, true, "the public queries retain their actual native file producers");
   left.typeShape.getPropertyInfos(numericLeft);
   right.typeShape.getPropertyInfos(numericRight);
   assertIdentityInBothOrders(left, numericLeft, numericRight, true, "identical Box<number> instances");
@@ -169,7 +169,7 @@ test("public identity is independent of file query and member inspection order",
     first.typeShape.getPropertyInfos(firstType);
     const secondType = typeFor(second, "mapped");
     second.typeShape.getPropertyInfos(secondType);
-    assert.equal(firstType.checker === secondType.checker, true, "query order preserves the native API owner");
+    assert.equal(firstType.checker !== secondType.checker, true, "query order preserves the distinct native file owners");
     assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
   }
 });
@@ -191,7 +191,7 @@ test("public generic, mapped, private and contextual identity behavior is unchan
   }
 });
 
-test("public identity rejects same-program operands owned by a native diagnostic checker", () => {
+test("public identity accepts actual same-program diagnostic producers", () => {
   const { checked, left, right, typeFor } = identityFixture();
   const publicType = typeFor(left, "numeric");
   let exercised = 0;
@@ -209,9 +209,9 @@ test("public identity rejects same-program operands owned by a native diagnostic
       assert.equal(diagnosticType!.checker === diagnosticChecker, true, "the diagnostic operand retains its native owner");
       assert.equal(diagnosticType!.checker!.program!.SourceFiles() === publicType.checker!.program!.SourceFiles(), true,
         "the diagnostic and public operands belong to exactly the same checked program");
-      assertIdentityInBothOrders(left, publicType, diagnosticType!, false, "the non-API diagnostic operand");
-      assert.equal(left.typeShape.isTypeIdenticalTo(diagnosticType, diagnosticType), false,
-        "identical diagnostic operands cannot bypass the public relation owner boundary");
+      assertIdentityInBothOrders(left, publicType, diagnosticType!, true, "the actual same-program diagnostic operand");
+      assert.equal(left.typeShape.isTypeIdenticalTo(diagnosticType, diagnosticType), true,
+        "a genuine diagnostic producer retains reflexive identity in its own native relation");
       assertIdentityInBothOrders(right, publicType, typeFor(right, "numeric"), true,
         "valid public operands still compare after diagnostic evidence is rejected");
       exercised += 1;
