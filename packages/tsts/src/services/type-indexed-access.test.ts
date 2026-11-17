@@ -54,7 +54,7 @@ function alias(source: SourceFileQueries, name: string): Type {
   const declaration = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsTypeAliasDeclaration)
     .find(node => source.ast.text(source.ast.name(node)) === name);
   const typeNode = declaration === undefined ? undefined : source.ast.typeNode(declaration);
-  const type = typeNode === undefined ? undefined : source.typeShape.getTypeFromTypeNode(typeNode);
+  const type = typeNode === undefined ? undefined : source.typeShape.getTypeFromTypeNode(typeNode)?.type;
   assert.ok(type, name);
   return type;
 }

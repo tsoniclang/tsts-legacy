@@ -37,7 +37,7 @@ const tuple: [number, string] = [1, "one"];
   for (const [name, text] of [["text", true], ["numeric", false]] as const) {
     const variable = variables.find(node => source.ast.text(source.ast.name(node)) === name);
     assert.ok(variable !== undefined);
-    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable))?.type;
     const bindings = source.typeShape.getTypeReferenceArgumentInfos(type);
     assert.equal(bindings?.length, 2);
     assert.ok(bindings !== undefined);
@@ -52,12 +52,12 @@ const tuple: [number, string] = [1, "one"];
   for (const name of ["plain", "record"]) {
     const variable = variables.find(node => source.ast.text(source.ast.name(node)) === name);
     assert.ok(variable !== undefined);
-    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable))?.type;
     assert.deepEqual(source.typeShape.getTypeReferenceArgumentInfos(type), []);
   }
   const tuple = variables.find(node => source.ast.text(source.ast.name(node)) === "tuple");
   assert.ok(tuple !== undefined);
-  const tupleType = source.checker.getTypeAtLocation(source.ast.name(tuple));
+  const tupleType = source.checker.getTypeAtLocation(source.ast.name(tuple))?.type;
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(tupleType), undefined);
   assert.equal(source.typeShape.getTupleElementTypes(tupleType).length, 2);
 });
@@ -92,14 +92,14 @@ function identity<T>(parameter: T): T { return parameter; }
   const variables = findNodes(file, source.ast.children, source.ast.is.IsVariableDeclaration);
   assert.equal(variables.length, 11);
   for (const variable of variables) {
-    const type = source.checker.getTypeAtLocation(source.ast.name(variable));
+    const type = source.checker.getTypeAtLocation(source.ast.name(variable))?.type;
     assert.ok(type !== undefined);
     assert.equal(source.typeShape.getTypeReferenceArgumentInfos(type), undefined);
   }
   const parameters = findNodes(file, source.ast.children, source.ast.is.IsParameterDeclaration);
   const parameter = parameters.find(node => source.ast.text(source.ast.name(node)) === "parameter");
   assert.ok(parameter !== undefined);
-  const parameterType = source.checker.getTypeAtLocation(source.ast.name(parameter));
+  const parameterType = source.checker.getTypeAtLocation(source.ast.name(parameter))?.type;
   assert.ok(parameterType !== undefined);
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(parameterType), undefined);
 });

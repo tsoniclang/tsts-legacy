@@ -8,12 +8,54 @@ import {
   type SourceDeclarationProvider,
 } from "./index.js";
 import { providerDeclarationClosureLimits } from "./provider-resource-limits.js";
+import { providerVirtualDeclarationFactKey } from "./facts.js";
+import { sourceProviderExtension } from "./source-provider-test-support.js";
 import {
   sourceProviderCompilerExtension,
   testProviderIdentity,
 } from "./source-provider-test-support.js";
 
 const rejectedChainModuleCount = providerDeclarationClosureLimits.maxCandidates + 1;
+
+test("provider resource members admit both exact well-known disposal symbols", () => {
+  const moduleSpecifier = "@test/disposable-resource.js";
+  const model: ProviderDeclarationModel = {
+    moduleSpecifier,
+    providerModuleId: "Test.DisposableResource",
+    exports: [{ id: "Resource", name: "Resource", kind: "interface", members:
+      (["dispose", "asyncDispose"] as const).map(name => ({ id: `Resource.${name}`,
+        name: { kind: "well-known-symbol", name }, kind: "method", signatures: [{
+          id: `Resource.${name}()`, parameters: [], returnType: name === "dispose" ? { kind: "void" }
+            : { kind: "source-global", name: "Promise", typeArguments: [{ kind: "void" }] },
+        }],
+      })),
+    }],
+  };
+  const host = new ExtensionHost({}, { extensions: [sourceProviderExtension(new Map([[moduleSpecifier, model]]))] });
+  const resolved = host.providers.resolveVirtualModule(moduleSpecifier);
+  assert.equal(resolved.kind, "resolved", "native provider disposal members resolve");
+  assert.equal(host.diagnostics.all().length, 0, "no boundary rejection for supported symbols");
+  const documents = host.providers.getVirtualDeclarationDocuments();
+  assert.equal(documents.length, 1, "one canonical provider module");
+  for (const name of ["dispose", "asyncDispose"] as const) {
+    const selected = providerVirtualDeclarationFactKey.snapshot({
+      providerId: "test.source-provider", providerVersion: "1.0.0", providerModuleId: model.providerModuleId,
+      moduleSpecifier, artifactFileName: "/provider/Test/DisposableResource.d.ts", exportId: "Resource",
+      memberId: `Resource.${name}`, memberKey: { kind: "well-known-symbol", name },
+    });
+    assert.equal(selected.memberKey?.kind, "well-known-symbol", `${name}: exact symbol namespace`);
+    assert.equal(selected.memberKey?.name, name, `${name}: immutable fact retains exact symbol identity`);
+    assert.equal(Object.isFrozen(selected.memberKey), true, `${name}: sealed member key`);
+  }
+});
+
+test("provider disposal validation does not admit arbitrary symbol names", () => {
+  assert.throws(() => providerVirtualDeclarationFactKey.snapshot({
+    providerId: "test.source-provider", providerVersion: "1.0.0", providerModuleId: "Test.Resource",
+    moduleSpecifier: "@test/resource.js", artifactFileName: "/provider/Test/Resource.d.ts",
+    memberKey: { kind: "well-known-symbol", name: "notDispose" as "dispose" },
+  }), /ProviderMemberKey kind\/name 'well-known-symbol:notDispose' is invalid/u);
+});
 
 test("distinct rejected provider closures share one exact provider budget rejection", () => {
   const fixture = rejectedChainFixture(["first", "second"]);

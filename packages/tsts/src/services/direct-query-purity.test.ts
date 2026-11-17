@@ -134,8 +134,8 @@ test("direct source queries are canonical and side-effect free across query orde
     () => source.checker.getResolvedCallInfo(call),
     () => source.checker.getResolvedPropertyAccessInfo(property),
     () => source.checker.getResolvedElementAccessInfo(element),
-    () => source.checker.getTypeAtLocation(assertion),
-    () => source.checker.getTypeAtLocation(binary),
+    () => source.checker.getTypeAtLocation(assertion)?.type,
+    () => source.checker.getTypeAtLocation(binary)?.type,
     () => source.checker.getResolvedIterationInfo(iteration),
     () => source.checker.getResolvedCallableCompletionInfo(callable),
   ] as const;

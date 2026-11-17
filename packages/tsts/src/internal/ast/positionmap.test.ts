@@ -99,3 +99,42 @@ test("PositionMapRoundtrip", () => {
     assert.equal(back, i, `roundtrip UTF16->UTF8->UTF16: ${i} -> ${utf8Pos} -> ${back}`);
   }
 });
+
+// Not a mirror of the Go test. SourceFile.GetPositionMap is exercised here
+// through the parser because its map must describe the whole text of a parsed
+// file, wherever the non-ASCII characters are.
+import type { SourceFileParseOptions } from "./parseoptions.js";
+import { SourceFile_GetPositionMap } from "./ast.js";
+import { GetScriptKindFromFileName } from "../core/core.js";
+import { ParseSourceFile } from "../parser/parser/statements-declarations.js";
+
+test("SourceFile_GetPositionMap builds its map from the whole text, once", () => {
+  const parse = (text: string) =>
+    ParseSourceFile({ FileName: "/main.ts", Path: "/main.ts" } satisfies SourceFileParseOptions, text, GetScriptKindFromFileName("/main.ts"));
+
+  // The only non-ASCII character is inside a string literal. The scanner does
+  // not set its non-ASCII flag for it, so the flag cannot decide the map.
+  const text = "export const s = \"é\";\nexport const t = 1;\n";
+  const file = parse(text);
+  assert.equal(file!.ContainsNonASCII, false, "precondition: the scanner flag is false for this text");
+  const pm = SourceFile_GetPositionMap(file);
+  assert.equal(PositionMap_IsAsciiOnly(pm), false, "not ASCII-only");
+  // `export const t` starts at byte 23, UTF-16 unit 22.
+  assert.equal(PositionMap_UTF8ToUTF16(pm, 23), 22);
+  const bytes = utf8Encoder.encode(text);
+  assert.equal(bytes.length, 43);
+  const decoder = new globalThis.TextDecoder("utf-8", { fatal: true });
+  for (let i = 0; i <= bytes.length; i++) {
+    if (i < bytes.length && (bytes[i]! & 0xc0) === 0x80) {
+      continue;
+    }
+    assert.equal(PositionMap_UTF8ToUTF16(pm, i), decoder.decode(bytes.subarray(0, i)).length, `UTF8ToUTF16(${i})`);
+  }
+  assert.equal(SourceFile_GetPositionMap(file), pm, "the second call returns the same map");
+
+  const asciiFile = parse("export const t = 1;\n");
+  const asciiMap = SourceFile_GetPositionMap(asciiFile);
+  assert.equal(PositionMap_IsAsciiOnly(asciiMap), true);
+  assert.equal(PositionMap_UTF8ToUTF16(asciiMap, 13), 13);
+  assert.equal(SourceFile_GetPositionMap(asciiFile), asciiMap, "the second call returns the same map");
+});

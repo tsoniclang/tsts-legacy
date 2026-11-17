@@ -220,7 +220,6 @@ const byteSlice = utf8.StringByteSlice;
 const byteAt = utf8.StringByteAt;
 const byteLen = utf8.StringByteLen;
 const decodeRuneInStringAt = utf8.DecodeRuneInStringAt;
-const decodeLastRuneInStringBefore = utf8.DecodeLastRuneInStringBefore;
 
 function scannerByteLen(s: Scanner): int {
   return s.end;
@@ -5593,6 +5592,7 @@ export function SkipTrivia(text: string, pos: int): int {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::SkipTriviaEx","kind":"func","status":"implemented","sigHash":"f42acfbbaab25a2aa14a08e991389f62a5072c61df54c5805c5d6b51e941080e","bodyHash":"264f0ba89784e8af4179e796b7094804838591eb6ee18f155ed929dacf112ada"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Delegate to skipTriviaInView, the single implementation: after the synthesized-position return it takes one UTF-8 byte view of the text (or uses the view its caller holds) and reads every byte through it; behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func SkipTriviaEx(text string, pos int, options *SkipTriviaOptions) int {
@@ -5687,6 +5687,15 @@ export function SkipTrivia(text: string, pos: int): int {
  * }
  */
 export function SkipTriviaEx(text: string, pos: int, options: GoPtr<SkipTriviaOptions>): int {
+  return skipTriviaInView(text, undefined, pos, options);
+}
+
+// The single trivia-skipping implementation. `heldView` is the UTF-8 byte view
+// of `text` when the caller already holds it; otherwise it is undefined and the
+// view is taken here, once, after the synthesized-position return, so a
+// position that is not read costs no view. The conflict-marker and shebang
+// checks read the same view.
+function skipTriviaInView(text: string, heldView: utf8.StringByteView | undefined, pos: int, options: GoPtr<SkipTriviaOptions>): int {
   if (PositionIsSynthesized(pos)) {
     return pos;
   }
@@ -5695,17 +5704,18 @@ export function SkipTriviaEx(text: string, pos: int, options: GoPtr<SkipTriviaOp
     opts = { StopAfterLineBreak: false, StopAtComments: false, InJSDoc: false };
   }
 
-  const textLen = byteLen(text);
+  const view = heldView ?? utf8.GetStringByteView(text);
+  const textLen = utf8.StringByteViewLen(text, view);
   let canConsumeStar = false;
   // Keep in sync with couldStartTrivia
   for (;;) {
     if (pos >= textLen) {
       return pos;
     }
-    const [ch, size] = decodeRuneInStringAt(text, pos);
+    const [ch, size] = utf8.DecodeRuneInStringViewAt(text, view, pos);
     switch (ch) {
       case "\r".charCodeAt(0): {
-        if (pos + 1 < textLen && byteAt(text, pos + 1) === "\n".charCodeAt(0)) {
+        if (pos + 1 < textLen && utf8.StringByteViewAt(text, view, pos + 1) === "\n".charCodeAt(0)) {
           pos++;
         }
         // fallthrough to '\n'
@@ -5735,10 +5745,10 @@ export function SkipTriviaEx(text: string, pos: int, options: GoPtr<SkipTriviaOp
           break;
         }
         if (pos + 1 < textLen) {
-          if (byteAt(text, pos + 1) === "/".charCodeAt(0)) {
+          if (utf8.StringByteViewAt(text, view, pos + 1) === "/".charCodeAt(0)) {
             pos += 2;
             while (pos < textLen) {
-              const [ch2, size2] = decodeRuneInStringAt(text, pos);
+              const [ch2, size2] = utf8.DecodeRuneInStringViewAt(text, view, pos);
               if (IsLineBreak(ch2)) {
                 break;
               }
@@ -5747,14 +5757,14 @@ export function SkipTriviaEx(text: string, pos: int, options: GoPtr<SkipTriviaOp
             canConsumeStar = false;
             continue;
           }
-          if (byteAt(text, pos + 1) === "*".charCodeAt(0)) {
+          if (utf8.StringByteViewAt(text, view, pos + 1) === "*".charCodeAt(0)) {
             pos += 2;
             while (pos < textLen) {
-              if (byteAt(text, pos) === "*".charCodeAt(0) && pos + 1 < textLen && byteAt(text, pos + 1) === "/".charCodeAt(0)) {
+              if (utf8.StringByteViewAt(text, view, pos) === "*".charCodeAt(0) && pos + 1 < textLen && utf8.StringByteViewAt(text, view, pos + 1) === "/".charCodeAt(0)) {
                 pos += 2;
                 break;
               }
-              const [, size2] = decodeRuneInStringAt(text, pos);
+              const [, size2] = utf8.DecodeRuneInStringViewAt(text, view, pos);
               pos += size2;
             }
             canConsumeStar = false;
@@ -5767,16 +5777,16 @@ export function SkipTriviaEx(text: string, pos: int, options: GoPtr<SkipTriviaOp
       case "|".charCodeAt(0):
       case "=".charCodeAt(0):
       case ">".charCodeAt(0): {
-        if (isConflictMarkerTrivia(text, pos)) {
-          pos = scanConflictMarkerTrivia(text, pos, undefined);
+        if (isConflictMarkerTriviaInView(text, view, pos)) {
+          pos = scanConflictMarkerTriviaInView(text, view, pos, undefined);
           canConsumeStar = false;
           continue;
         }
         break;
       }
       case "#".charCodeAt(0): {
-        if (pos === 0 && isShebangTrivia(text, pos)) {
-          pos = scanShebangTrivia(text, pos);
+        if (pos === 0 && isShebangTriviaInView(text, view, pos)) {
+          pos = scanShebangTriviaInView(text, view, pos);
           canConsumeStar = false;
           continue;
         }
@@ -5815,6 +5825,7 @@ export const maxAsciiCharacter: byte = 127 as byte;
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::isConflictMarkerTrivia","kind":"func","status":"implemented","sigHash":"9ea6f9f957b7886eeeb5b9323e900e44d6ace7d03a8b8a1b27df3442b47addc4","bodyHash":"8d05e9232b29f7976a75551535369a390faa47616116f73064629084f3a2ae3e"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Refuse a negative position, then take one UTF-8 byte view of the text and delegate to isConflictMarkerTriviaInView, the single implementation, which reads every byte through that view; behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func isConflictMarkerTrivia(text string, pos int) bool {
@@ -5856,31 +5867,40 @@ export function isConflictMarkerTrivia(text: string, pos: int): bool {
   if (pos < 0) {
     throw new globalThis.Error("pos < 0");
   }
+  return isConflictMarkerTriviaInView(text, utf8.GetStringByteView(text), pos);
+}
 
+// The single implementation of isConflictMarkerTrivia, over the byte view of
+// `text`. `pos` is not negative: the Go-signature function above refuses a
+// negative position before taking a view, skipTriviaInView calls this only past
+// its synthesized-position return, and scanConflictMarkerTriviaInView only
+// where it has read a byte at `pos`.
+function isConflictMarkerTriviaInView(text: string, view: utf8.StringByteView, pos: int): bool {
   // Fast reject: a conflict marker is the same byte repeated seven times. If the
   // second byte differs (the overwhelmingly common case for `<`, `>`, `=`, `|`
   // tokens), it cannot be a marker, so skip the line-start check entirely.
-  if (pos + 1 >= byteLen(text) || byteAt(text, pos + 1) !== byteAt(text, pos)) {
+  const textLen = utf8.StringByteViewLen(text, view);
+  if (pos + 1 >= textLen || utf8.StringByteViewAt(text, view, pos + 1) !== utf8.StringByteViewAt(text, view, pos)) {
     return false;
   }
 
   // Conflict markers must be at the start of a line.
-  let atLineStart = pos === 0 || IsLineBreak(byteAt(text, pos - 1));
+  let atLineStart = pos === 0 || IsLineBreak(utf8.StringByteViewAt(text, view, pos - 1));
   if (!atLineStart && pos >= 2) {
-    const [prev] = decodeLastRuneInStringBefore(text, pos - 2);
+    const [prev] = utf8.DecodeLastRuneInStringViewBefore(text, view, pos - 2);
     atLineStart = IsLineBreak(prev);
   }
   if (atLineStart) {
-    const ch = byteAt(text, pos);
+    const ch = utf8.StringByteViewAt(text, view, pos);
 
-    if (pos + mergeConflictMarkerLength < byteLen(text)) {
+    if (pos + mergeConflictMarkerLength < textLen) {
       for (let i = 0; i < mergeConflictMarkerLength; i++) {
-        if (byteAt(text, pos + i) !== ch) {
+        if (utf8.StringByteViewAt(text, view, pos + i) !== ch) {
           return false;
         }
       }
 
-      return ch === "=".charCodeAt(0) || byteAt(text, pos + mergeConflictMarkerLength) === " ".charCodeAt(0);
+      return ch === "=".charCodeAt(0) || utf8.StringByteViewAt(text, view, pos + mergeConflictMarkerLength) === " ".charCodeAt(0);
     }
   }
 
@@ -5889,6 +5909,7 @@ export function isConflictMarkerTrivia(text: string, pos: int): bool {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::scanConflictMarkerTrivia","kind":"func","status":"implemented","sigHash":"b334ec17533056d478a1cc632d556d9373722284c91f77eccfd35b2de2441b8f","bodyHash":"8e7392f3a0929d4bc5030cde3ff4a9fb144ec5f40f98c402d6bb8e9dc53aef7a"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Take one UTF-8 byte view of the text and delegate to scanConflictMarkerTriviaInView, the single implementation, which reads every byte through that view; behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func scanConflictMarkerTrivia(text string, pos int, reportError func(diag *diagnostics.Message, pos int, length int, args ...any)) int {
@@ -5927,16 +5948,26 @@ export function scanConflictMarkerTrivia(
   pos: int,
   reportError: ((diag: GoPtr<Message>, pos: int, length: int, ...args: Array<unknown>) => void) | undefined,
 ): int {
+  return scanConflictMarkerTriviaInView(text, utf8.GetStringByteView(text), pos, reportError);
+}
+
+// The single implementation of scanConflictMarkerTrivia, over the byte view of `text`.
+function scanConflictMarkerTriviaInView(
+  text: string,
+  view: utf8.StringByteView,
+  pos: int,
+  reportError: ((diag: GoPtr<Message>, pos: int, length: int, ...args: Array<unknown>) => void) | undefined,
+): int {
   if (reportError !== undefined) {
     reportError(Merge_conflict_marker_encountered, pos, mergeConflictMarkerLength);
   }
-  let [ch, size] = decodeRuneInStringAt(text, pos);
-  const length = byteLen(text);
+  let [ch, size] = utf8.DecodeRuneInStringViewAt(text, view, pos);
+  const length = utf8.StringByteViewLen(text, view);
 
   if (ch === "<".charCodeAt(0) || ch === ">".charCodeAt(0)) {
     while (pos < length && !IsLineBreak(ch)) {
       pos += size;
-      [ch, size] = decodeRuneInStringAt(text, pos);
+      [ch, size] = utf8.DecodeRuneInStringViewAt(text, view, pos);
     }
   } else {
     if (ch !== "|".charCodeAt(0) && ch !== "=".charCodeAt(0)) {
@@ -5945,11 +5976,11 @@ export function scanConflictMarkerTrivia(
     // Consume everything from the start of a ||||||| or ======= marker to the start
     // of the next ======= or >>>>>>> marker.
     while (pos < length) {
-      const currentChar = byteAt(text, pos);
+      const currentChar = utf8.StringByteViewAt(text, view, pos);
       if (
         (currentChar === "=".charCodeAt(0) || currentChar === ">".charCodeAt(0)) &&
         currentChar !== ch &&
-        isConflictMarkerTrivia(text, pos)
+        isConflictMarkerTriviaInView(text, view, pos)
       ) {
         break;
       }
@@ -5963,6 +5994,7 @@ export function scanConflictMarkerTrivia(
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::isShebangTrivia","kind":"func","status":"implemented","sigHash":"a4154018edaa22762f18889ebf0f1c21a75488c8c3de3256b4e4be0248f9fafc","bodyHash":"2a727f4711cee1e5105f083045903c6bb65019b3e1b6365bdbf58abf6f47aad3"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Take one UTF-8 byte view of the text and delegate to isShebangTriviaInView, the single implementation, which reads every byte through that view; behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func isShebangTrivia(text string, pos int) bool {
@@ -5976,17 +6008,23 @@ export function scanConflictMarkerTrivia(
  * }
  */
 export function isShebangTrivia(text: string, pos: int): bool {
-  if (byteLen(text) < 2) {
+  return isShebangTriviaInView(text, utf8.GetStringByteView(text), pos);
+}
+
+// The single implementation of isShebangTrivia, over the byte view of `text`.
+function isShebangTriviaInView(text: string, view: utf8.StringByteView, pos: int): bool {
+  if (utf8.StringByteViewLen(text, view) < 2) {
     return false;
   }
   if (pos !== 0) {
     throw new globalThis.Error("Shebangs check must only be done at the start of the file");
   }
-  return byteAt(text, 0) === "#".charCodeAt(0) && byteAt(text, 1) === "!".charCodeAt(0);
+  return utf8.StringByteViewAt(text, view, 0) === "#".charCodeAt(0) && utf8.StringByteViewAt(text, view, 1) === "!".charCodeAt(0);
 }
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::scanShebangTrivia","kind":"func","status":"implemented","sigHash":"28a213d56556961662565da12a7916edcd4b0948db4de4d905b125da462ac792","bodyHash":"c6a44a836eaea90164d2a1a90c89562e49ebc0b7187ddbea8e43e4fc0b8ee98c"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Take one UTF-8 byte view of the text and delegate to scanShebangTriviaInView, the single implementation, which reads every byte through that view; behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func scanShebangTrivia(text string, pos int) int {
@@ -6002,9 +6040,14 @@ export function isShebangTrivia(text: string, pos: int): bool {
  * }
  */
 export function scanShebangTrivia(text: string, pos: int): int {
+  return scanShebangTriviaInView(text, utf8.GetStringByteView(text), pos);
+}
+
+// The single implementation of scanShebangTrivia, over the byte view of `text`.
+function scanShebangTriviaInView(text: string, view: utf8.StringByteView, pos: int): int {
   pos += 2;
-  while (pos < byteLen(text)) {
-    const [ch, size] = decodeRuneInStringAt(text, pos);
+  while (pos < utf8.StringByteViewLen(text, view)) {
+    const [ch, size] = utf8.DecodeRuneInStringViewAt(text, view, pos);
     if (IsLineBreak(ch)) {
       break;
     }
@@ -6089,6 +6132,7 @@ export function GetRangeOfTokenAtPosition(sourceFile: GoPtr<SourceFile>, pos: in
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/scanner/scanner.go::func::GetTokenPosOfNode","kind":"func","status":"implemented","sigHash":"330a29f50e4ee95a9d06155e051769eb55062293a4081c031a75e1bf1255fae4","bodyHash":"13003ccba4e9233d74642a7e76a8fa56a56b9cc7f24ac1e9f0407a02c61461f3"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Delegate to tokenPosOfNode, the single implementation shared with GetTokenPosOfNodeInView. It takes no byte view itself; the trivia skip takes one, or uses the view the caller holds, only when it reads bytes. Behaviour is identical to the TS-Go body."}
  *
  * Go source:
  * func GetTokenPosOfNode(node *ast.Node, sourceFile *ast.SourceFile, includeJSDoc bool) int {
@@ -6108,6 +6152,21 @@ export function GetRangeOfTokenAtPosition(sourceFile: GoPtr<SourceFile>, pos: in
  * }
  */
 export function GetTokenPosOfNode(node: GoPtr<Node>, sourceFile: GoPtr<SourceFile>, includeJSDoc: bool): int {
+  return tokenPosOfNode(node, sourceFile, undefined, includeJSDoc);
+}
+
+// GetTokenPosOfNode for a caller that holds the UTF-8 byte view of the source
+// file's text: the trivia skip reads that view, so repeated requests for one
+// file do not encode its text again.
+export function GetTokenPosOfNodeInView(node: GoPtr<Node>, sourceFile: GoPtr<SourceFile>, view: utf8.StringByteView, includeJSDoc: bool): int {
+  return tokenPosOfNode(node, sourceFile, view, includeJSDoc);
+}
+
+// The single implementation behind both functions above. `heldView` is the
+// caller's view or undefined. Nothing here takes a view: the missing-node
+// return and the JSDoc redirection read no byte, and the trivia skip takes a
+// view only when it reads.
+function tokenPosOfNode(node: GoPtr<Node>, sourceFile: GoPtr<SourceFile>, heldView: utf8.StringByteView | undefined, includeJSDoc: bool): int {
   // With nodes that have no width (i.e. 'Missing' nodes), we actually *don't*
   // want to skip trivia because this will launch us forward to the next token.
   if (NodeIsMissing(node)) {
@@ -6115,12 +6174,12 @@ export function GetTokenPosOfNode(node: GoPtr<Node>, sourceFile: GoPtr<SourceFil
   }
   if (IsJSDocNode(node) || node!.Kind === KindJsxText) {
     // JsxText cannot actually contain comments, even though the scanner will think it sees comments
-    return SkipTriviaEx(SourceFile_Text(sourceFile), Node_Pos(node), { StopAfterLineBreak: false, StopAtComments: true, InJSDoc: false });
+    return skipTriviaInView(SourceFile_Text(sourceFile), heldView, Node_Pos(node), { StopAfterLineBreak: false, StopAtComments: true, InJSDoc: false });
   }
   if (includeJSDoc && Node_JSDoc(node, sourceFile).length > 0) {
-    return GetTokenPosOfNode(Node_JSDoc(node, sourceFile)[0]!, sourceFile, false /*includeJSDoc*/);
+    return tokenPosOfNode(Node_JSDoc(node, sourceFile)[0]!, sourceFile, heldView, false /*includeJSDoc*/);
   }
-  return SkipTriviaEx(SourceFile_Text(sourceFile), Node_Pos(node), {
+  return skipTriviaInView(SourceFile_Text(sourceFile), heldView, Node_Pos(node), {
     StopAfterLineBreak: false,
     StopAtComments: false,
     InJSDoc: (node!.Flags & NodeFlagsJSDoc) !== 0,

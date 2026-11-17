@@ -231,7 +231,7 @@ test("slice identity remains one public checker symbol across generated and sour
     source.ast.is.IsPropertyAccessExpression,
   )[0];
   const propertyTypeSymbol = source.checker.getTypeSymbol(
-    source.checker.getTypeAtLocation(property),
+    source.checker.getTypeAtLocation(property)?.type,
   );
   assert.ok(
     propertyTypeSymbol === importedSymbol,

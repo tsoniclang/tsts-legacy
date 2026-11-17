@@ -215,6 +215,11 @@
       "reason": "Additive compiler extension host public API; target-neutral infrastructure with no upstream Go unit."
     },
     {
+      "match": "packages/tsts/src/internal/compiler/librarybinding.ts",
+      "category": "extension-internal",
+      "reason": "The one selection of a program's library files (the default library directory, or the caller's selected library files) used by the file loader, the library sort and the source import preparation; it owns no upstream Go unit."
+    },
+    {
       "match": "packages/tsts/src/internal/checker/checker/call-evidence.ts",
       "category": "extension-internal",
       "reason": "Additive target-neutral selected-call evidence companion for the TS-Go checker; it owns no upstream Go unit."
@@ -228,6 +233,41 @@
       "match": "packages/tsts/src/internal/checker/checker/selected-call-evidence-transaction.ts",
       "category": "extension-internal",
       "reason": "Additive transactional journal for exact TS-Go overload-selection evidence; it owns no upstream Go unit."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/selected-call-inference-evidence.ts",
+      "category": "extension-internal",
+      "reason": "Observes exact original inference contributions inside the existing checker transaction without owning a Go inference decision."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/backing-constraint-evidence.ts",
+      "category": "extension-internal",
+      "reason": "Retains original checked relation components and exact Diagnostic ownership; only the Host Source owner may discharge a proved backed constraint."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/selected-call-contracts.ts",
+      "category": "extension-internal",
+      "reason": "Defines the neutral original application and constraint fact records, distinct from an applicable instantiated result."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/original-signature-evidence.ts",
+      "category": "extension-internal",
+      "reason": "One pure reader of existing original Signature and parameter declaration fields, with no parameter or return Type resolution."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/literal-creation.ts",
+      "category": "extension-internal",
+      "reason": "R5-22 authenticates the exact fresh native literal output and its completed factory inputs; R5-23 retains its explicit actual native cache-publication owner. Neither adds a registry, ambient state, source replay or permanent semantic cache."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/checker/source-type-answers.ts",
+      "category": "extension-internal",
+      "reason": "The one public source-Type envelope reads only the matching native paired answer/cause. Actual contextual delegation transports that same completed answer without a cache, query replay or diagnostic matching."
+    },
+    {
+      "match": "packages/tsts/src/internal/checker/call-declaration-order.ts",
+      "category": "extension-internal",
+      "reason": "Orders the original signatures of one resolved call by their actual bound declarations (the declaring symbol's Declarations, or the member list of their class, interface or type literal) for selected-call evidence; it reads existing declarations only and owns no upstream Go unit."
     },
     {
       "match": "packages/tsts/src/internal/checker/checker/source-type-identity.ts",

@@ -1,4 +1,7 @@
 import type { bool, int } from "../../../go/scalars.js";
+import type { LiteralConstructionOwner } from "./literal-creation.js";
+import { sourceTypeAnswer } from "./source-type-answers.js";
+import type { SourceTypeAnswerOutput } from "./source-type-answers.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import * as slices from "../../../go/slices.js";
 import { AppendIfUnique, Every, IfElse, LastOrNil, OrElse } from "../../core/core.js";
@@ -507,6 +510,7 @@ export function Checker_areDeclarationFlagsIdentical(receiver: GoPtr<Checker>, l
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkSatisfiesExpression","kind":"method","status":"implemented","sigHash":"698f7d11a65d816ba71672b34da4fef21a1681e3749a6afe9a1939a6bfbb09a0","bodyHash":"851aecb383dd4806760e762a140c1a0c11d846a9f1d9ecedad6fb4191d55dad1"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkSatisfiesExpression(node *ast.Node) *Type {
@@ -521,10 +525,10 @@ export function Checker_areDeclarationFlagsIdentical(receiver: GoPtr<Checker>, l
  * 	return exprType
  * }
  */
-export function Checker_checkSatisfiesExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>): GoPtr<Type> {
+export function Checker_checkSatisfiesExpression(receiver: GoPtr<Checker>, node: GoPtr<Node>, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   const typeNode = Node_Type(node);
   Checker_checkSourceElement(receiver, typeNode);
-  const exprType = Checker_checkExpression(receiver, Node_Expression(node));
+  const exprType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
   const targetType = Checker_getTypeFromTypeNode(receiver, typeNode);
   if (Checker_isErrorType(receiver, targetType)) {
     return targetType;
@@ -945,6 +949,7 @@ export function Checker_isTypeEqualityComparableTo(receiver: GoPtr<Checker>, sou
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkPropertyAssignment","kind":"method","status":"implemented","sigHash":"a3504e96a98cf3397d1be4e128613d4e14706bc5154bd1f364219518c0fc4e8c","bodyHash":"4088ea691e500ff97b4199823bc7973c0871a2f802d81d24478afa18858eea93"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkPropertyAssignment(node *ast.Node, checkMode CheckMode) *Type {
@@ -963,11 +968,11 @@ export function Checker_isTypeEqualityComparableTo(receiver: GoPtr<Checker>, sou
  * 	return initializerType
  * }
  */
-export function Checker_checkPropertyAssignment(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode): GoPtr<Type> {
+export function Checker_checkPropertyAssignment(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
   if (IsComputedPropertyName(Node_Name(node))) {
     Checker_checkComputedPropertyName(receiver, Node_Name(node));
   }
-  const initializerType = Checker_checkExpressionForMutableLocation(receiver, Node_Initializer(node) as unknown as GoPtr<Node>, checkMode);
+  const initializerType = Checker_checkExpressionForMutableLocation(receiver, Node_Initializer(node) as unknown as GoPtr<Node>, checkMode, constructionOwner);
   const typeNode = Node_Type(node);
   if (typeNode !== undefined) {
     const t = Checker_getTypeFromTypeNode(receiver, typeNode);
@@ -1757,6 +1762,7 @@ export function Checker_markExportAssignmentAliasReferenced(receiver: GoPtr<Chec
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getContextualTypeForAssignmentExpression","kind":"method","status":"implemented","sigHash":"6008ce5b08bcc3f3256b840ffb2da40c6d808c728e0e86b54e91e6022ec0ee0d","bodyHash":"f7df81578e0daebc6032371b6f6cb942bca67bc0befb1a423a72a57f25f9f399"}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"R5-21 transports the actual completed input type/cause pair only through its native contextual delegation; no diagnostic query, lookup heuristic, cache or native checking decision is added.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/data.ts::BinaryExpression>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/generated/data.ts::BinaryExpression>,?packages/tsts/src/internal/checker/checker/source-type-answers.ts::SourceTypeAnswerOutput)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) getContextualTypeForAssignmentExpression(binary *ast.BinaryExpression) *Type {
@@ -1836,7 +1842,7 @@ export function Checker_markExportAssignmentAliasReferenced(receiver: GoPtr<Chec
  * 	return c.getTypeOfExpression(left)
  * }
  */
-export function Checker_getContextualTypeForAssignmentExpression(receiver: GoPtr<Checker>, binary: GoPtr<BinaryExpression>): GoPtr<Type> {
+export function Checker_getContextualTypeForAssignmentExpression(receiver: GoPtr<Checker>, binary: GoPtr<BinaryExpression>, output?: SourceTypeAnswerOutput): GoPtr<Type> {
   const left = binary!.Left as GoPtr<Node>;
   const binarySymbol = (binary as unknown as { Symbol?: GoPtr<Symbol> }).Symbol;
   if (IsAccessExpression(left)) {
@@ -1858,7 +1864,9 @@ export function Checker_getContextualTypeForAssignmentExpression(receiver: GoPtr
               if (isTypeUsableAsPropertyName(nameType)) {
                 return Checker_getTypeOfPropertyOfContextualTypeEx(receiver, Checker_getTypeFromTypeNode(receiver, typeNode), getPropertyNameFromType(nameType), nameType);
               }
-              return Checker_getTypeOfExpression(receiver, left);
+              const type = Checker_getTypeOfExpression(receiver, left);
+              if (output !== undefined) output.value = sourceTypeAnswer(receiver, left, type);
+              return type;
             }
           }
           return undefined;
@@ -1909,5 +1917,7 @@ export function Checker_getContextualTypeForAssignmentExpression(receiver: GoPtr
       }
     }
   }
-  return Checker_getTypeOfExpression(receiver, left);
+  const type = Checker_getTypeOfExpression(receiver, left);
+  if (output !== undefined) output.value = sourceTypeAnswer(receiver, left, type);
+  return type;
 }

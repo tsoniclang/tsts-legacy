@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -10,6 +11,13 @@ import {
   testCoreDeclarations,
   testNoLibCompilerOptions,
 } from "./source-provider-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "../services/type-checker.js";
+
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
+}
 
 test("provider modules preserve default, renamed, and namespace import identities", () => {
   const moduleSpecifier = "@test/import-forms.js";
@@ -60,9 +68,9 @@ test("provider modules preserve default, renamed, and namespace import identitie
   assert.equal(constructions.length, 3);
   assert.deepEqual(
     constructions.map((construction) => {
-      const selected = source.checker.getResolvedCallInfo(construction);
+      const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
       return checked.sourceFacts?.getFact(
-        selected?.sourceCallee.selectedDeclaration,
+        selected?.selection.callee.selectedDeclaration,
         providerVirtualDeclarationFactKey,
       )?.exportId;
     }),
@@ -138,7 +146,7 @@ test("provider default imports retain member identity beside same-named module e
     assert.equal(accesses.length, 2);
     assert.deepEqual(
       accesses.map((access) => {
-        const selected = source.checker.getResolvedPropertyAccessInfo(access);
+        const selected = memberAccess(source.checker.getResolvedPropertyAccessInfo(access));
         return checked.sourceFacts?.getFact(
           selected?.selectedWriteDeclaration ?? selected?.selectedReadDeclaration ?? selected?.selectedDeclaration,
           providerVirtualDeclarationFactKey,
@@ -247,7 +255,7 @@ test("source-global provider references bind the active checked globals without 
     calls.map((call) =>
       checked.sourceFacts?.getFact(
         source.checker.getSignatureDeclaration(
-          source.checker.getResolvedCallInfo(call)?.selectedSignature,
+          requireApplicableCallInfo(source.checker.getResolvedCallInfo(call))?.selection.application.instantiatedSignature,
         ),
         providerVirtualDeclarationFactKey,
       )?.signatureId),

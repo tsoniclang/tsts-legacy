@@ -1,5 +1,8 @@
-import type { Checker } from "./state.js";
-import type { SignatureLinks } from "../types.js";
+import type { Checker, InferenceContext } from "./state.js";
+import type { Signature, SignatureLinks, Type } from "../types.js";
+import type { Node } from "../../ast/spine.js";
+import { copySelectedCallInferenceContext, createSelectedCallInferenceJournal } from "./selected-call-inference-evidence.js";
+import type { SelectedCallInferenceJournal, SelectedCallInferenceSignatureObservation } from "./selected-call-inference-evidence.js";
 
 export type SelectedCallEvidenceFrameKind =
   | "signature-resolution"
@@ -16,22 +19,40 @@ interface SignatureLinksSnapshot {
   readonly resolvedSignature: SignatureLinks["resolvedSignature"];
   readonly checkedCallSelectionSeed: SignatureLinks["checkedCallSelectionSeed"];
   readonly resolvedCallSelectionEvidence: SignatureLinks["resolvedCallSelectionEvidence"];
+  readonly resolvedCallEvidenceSignature: SignatureLinks["resolvedCallEvidenceSignature"];
   readonly resolvedCallEvidence: SignatureLinks["resolvedCallEvidence"];
 }
 
 interface SelectedCallEvidenceFrameRecord extends SelectedCallEvidenceFrame {
   settled: boolean;
   readonly snapshots: SignatureLinksSnapshot[];
+  candidate: Signature | undefined;
+  readonly contexts: InferenceContext[];
+  readonly defaults: SelectedDefaultContribution[];
+  readonly inference: SelectedCallInferenceJournal;
+}
+
+interface SelectedDefaultContribution {
+  readonly context: InferenceContext | undefined;
+  readonly parameter: Type;
+  readonly selectedType: Type;
+  readonly defaultTypeNode: Node;
 }
 
 export interface SelectedCallEvidenceTransactionState {
   failed: boolean;
   readonly frames: SelectedCallEvidenceFrameRecord[];
-  snapshotCount: number;
+  entryCount: number;
+  inferenceEntryCount: number;
+  revision: number;
+  lookupRevision: number;
+  lookupInferences: InferenceContext["inferences"] | undefined;
+  lookupJournal: SelectedCallInferenceJournal | undefined;
 }
 
 const frameBudget = 1_024;
 const snapshotBudget = 65_536;
+const inferenceBudget = 65_536;
 
 export function beginSelectedCallEvidenceFrame(
   checker: Checker,
@@ -45,7 +66,12 @@ export function beginSelectedCallEvidenceFrame(
     state = {
       failed: false,
       frames: [],
-      snapshotCount: 0,
+      entryCount: 0,
+      inferenceEntryCount: 0,
+      revision: 0,
+      lookupRevision: -1,
+      lookupInferences: undefined,
+      lookupJournal: undefined,
     };
     checker.selectedCallEvidenceTransactionState = state;
   }
@@ -58,13 +84,28 @@ export function beginSelectedCallEvidenceFrame(
   if (!Number.isSafeInteger(state.frames.length) || state.frames.length >= frameBudget) {
     return failClosed(checker, state, "frame budget exceeded");
   }
+  const transaction = state;
+  const contexts: InferenceContext[] = [];
   const frame: SelectedCallEvidenceFrameRecord = {
     kind,
     depth: state.frames.length,
     settled: false,
     snapshots: [],
+    candidate: undefined,
+    contexts,
+    defaults: [],
+    inference: createSelectedCallInferenceJournal(contexts, () => {
+      if (transaction.failed || checker.selectedCallEvidenceTransactionState !== transaction
+        || transaction.inferenceEntryCount >= inferenceBudget) return false;
+      transaction.inferenceEntryCount++;
+      return true;
+    }, () => {
+      if (transaction.failed || checker.selectedCallEvidenceTransactionState !== transaction) return;
+      removeInferenceEntries(transaction, 1);
+    }),
   };
   state.frames.push(frame);
+  state.revision++;
   return frame;
 }
 
@@ -86,6 +127,13 @@ export function commitSelectedCallEvidenceFrame(
     return;
   }
   mergeSnapshots(state, parent, record);
+  if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at commit");
+  removeInferenceEntries(state, record.defaults.length + record.contexts.length
+    + record.inference.records.length + record.inference.returnContexts.size);
+  record.inference.returnContexts.clear();
+  record.inference.records.length = 0;
+  record.defaults.length = 0;
+  record.contexts.length = 0;
   settleTopFrame(state, record);
 }
 
@@ -99,8 +147,15 @@ export function rollbackSelectedCallEvidenceFrame(
   }
   const record = activeFrame(state, frame);
   restoreSnapshots(record.snapshots);
+  if (record.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at rollback");
   removeSnapshots(state, record.snapshots.length);
+  removeInferenceEntries(state, record.defaults.length + record.contexts.length
+    + record.inference.records.length + record.inference.returnContexts.size);
+  record.inference.returnContexts.clear();
+  record.inference.records.length = 0;
   record.snapshots.length = 0;
+  record.defaults.length = 0;
+  record.contexts.length = 0;
   settleTopFrame(state, record);
   if (state.frames.length === 0) {
     checker.selectedCallEvidenceTransactionState = undefined;
@@ -122,7 +177,7 @@ export function journalSelectedCallEvidence(
   if (frame.snapshots.some((snapshot) => snapshot.links === links)) {
     return;
   }
-  if (!Number.isSafeInteger(state.snapshotCount) || state.snapshotCount >= snapshotBudget) {
+  if (!Number.isSafeInteger(state.entryCount) || state.entryCount >= snapshotBudget) {
     failClosed(checker, state, "SignatureLinks snapshot budget exceeded");
   }
   frame.snapshots.push({
@@ -130,9 +185,188 @@ export function journalSelectedCallEvidence(
     resolvedSignature: links.resolvedSignature,
     checkedCallSelectionSeed: links.checkedCallSelectionSeed,
     resolvedCallSelectionEvidence: links.resolvedCallSelectionEvidence,
+    resolvedCallEvidenceSignature: links.resolvedCallEvidenceSignature,
     resolvedCallEvidence: links.resolvedCallEvidence,
   });
-  state.snapshotCount++;
+  state.entryCount++;
+}
+
+export function bindSelectedCallDefaultOwner(
+  checker: Checker,
+  frame: SelectedCallEvidenceFrame | undefined,
+  candidate: Signature,
+): void {
+  const state = stateForSettlement(checker, frame);
+  if (state === undefined || frame === undefined) return;
+  const record = activeFrame(state, frame);
+  if (record.kind !== "overload-candidate" || record.candidate !== undefined) {
+    failClosed(checker, state, "a selected-default owner is not one exact overload candidate");
+  }
+  record.candidate = candidate;
+}
+
+export function bindSelectedCallDefaultContext(
+  checker: Checker,
+  frame: SelectedCallEvidenceFrame | undefined,
+  context: InferenceContext,
+): void {
+  const state = stateForSettlement(checker, frame);
+  if (state === undefined || frame === undefined) return;
+  retainDefaultContext(checker, state, activeFrame(state, frame), context);
+}
+
+export function bindSelectedCallInferenceContext(checker: Checker, context: InferenceContext): void {
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return;
+  const frame = state.frames.findLast(candidate => candidate.kind === "overload-candidate"
+    && candidate.candidate === context.signature);
+  if (frame !== undefined) retainDefaultContext(checker, state, frame, context);
+}
+
+function retainDefaultContext(
+  checker: Checker,
+  state: SelectedCallEvidenceTransactionState,
+  frame: SelectedCallEvidenceFrameRecord,
+  context: InferenceContext,
+): void {
+  if (frame.kind !== "overload-candidate" || frame.candidate !== context.signature) {
+    failClosed(checker, state, "a selected-default inference context has a different candidate owner");
+  }
+  if (frame.contexts.includes(context)) return;
+  if (!Number.isSafeInteger(state.inferenceEntryCount) || state.inferenceEntryCount >= inferenceBudget) {
+    frame.inference.invalidate();
+    return;
+  }
+  frame.contexts.push(context);
+  state.revision++;
+  state.inferenceEntryCount++;
+}
+
+export function retainSelectedCallDefault(
+  checker: Checker,
+  context: InferenceContext | undefined,
+  parameter: Type,
+  selectedType: Type,
+  defaultTypeNode: Node | undefined,
+): void {
+  const owner = selectedDefaultOwner(checker, context, parameter);
+  if (owner === undefined) return;
+  const { state, frame } = owner;
+  const previous = frame.defaults.findIndex(entry => entry.context === context && entry.parameter === parameter);
+  if (defaultTypeNode === undefined) {
+    if (previous >= 0) {
+      frame.defaults.splice(previous, 1);
+      removeInferenceEntries(state, 1);
+    }
+    return;
+  }
+  const contribution = Object.freeze({ context, parameter, selectedType, defaultTypeNode });
+  if (previous >= 0) {
+    frame.defaults[previous] = contribution;
+    return;
+  }
+  if (!Number.isSafeInteger(state.inferenceEntryCount) || state.inferenceEntryCount >= inferenceBudget) {
+    frame.inference.invalidate();
+    return;
+  }
+  frame.defaults.push(contribution);
+  state.inferenceEntryCount++;
+}
+
+export function selectedCallDefaultNode(
+  checker: Checker,
+  context: InferenceContext | undefined,
+  parameter: Type,
+  selectedType: Type,
+): Node | undefined {
+  const owner = selectedDefaultOwner(checker, context, parameter);
+  if (owner?.frame.inference.complete === false) return undefined;
+  const contribution = owner?.frame.defaults.find(entry => entry.context === context && entry.parameter === parameter);
+  if (contribution?.selectedType !== selectedType || context !== undefined &&
+    context.inferences.find(inference => inference?.typeParameter === parameter)?.inferredType !== selectedType) return undefined;
+  return contribution?.defaultTypeNode;
+}
+
+export function copySelectedCallDefaults(
+  checker: Checker,
+  source: InferenceContext,
+  destination: InferenceContext,
+): void {
+  if (source.signature !== destination.signature) return;
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return;
+  if (state.failed) throw failedStateError();
+  const frame = state.frames.find(candidate => candidate.contexts.includes(source));
+  if (frame === undefined) return;
+  retainDefaultContext(checker, state, frame, destination);
+  copySelectedCallInferenceContext(frame.inference, source, destination);
+  for (const inference of destination.inferences) {
+    const parameter = inference?.typeParameter;
+    const selectedType = inference?.inferredType;
+    if (parameter === undefined || selectedType === undefined) continue;
+    const node = selectedCallDefaultNode(checker, source, parameter, selectedType);
+    if (node !== undefined) retainSelectedCallDefault(checker, destination, parameter, selectedType, node);
+  }
+}
+
+export function selectedCallInferenceJournal(
+  checker: Checker,
+  inferences: InferenceContext["inferences"],
+): SelectedCallInferenceJournal | undefined {
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return undefined;
+  if (state.failed) throw failedStateError();
+  if (state.lookupRevision === state.revision && state.lookupInferences === inferences) return state.lookupJournal;
+  const journal = state.frames.findLast(frame => frame.kind === "overload-candidate"
+    && frame.contexts.some(context => context.inferences === inferences))?.inference;
+  state.lookupRevision = state.revision;
+  state.lookupInferences = inferences;
+  state.lookupJournal = journal;
+  return journal;
+}
+
+export function selectedCallFrameInferenceJournal(
+  checker: Checker,
+  frame: SelectedCallEvidenceFrame | undefined,
+): SelectedCallInferenceJournal | undefined {
+  const state = stateForSettlement(checker, frame);
+  return state === undefined || frame === undefined ? undefined : activeFrame(state, frame).inference;
+}
+
+export function selectedCallInferenceSignatureObservation(
+  checker: Checker,
+  source: Signature,
+  formal: Signature,
+): SelectedCallInferenceSignatureObservation | undefined {
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return undefined;
+  if (state.failed) throw failedStateError();
+  for (let frameIndex = state.frames.length - 1; frameIndex >= 0; frameIndex--) {
+    const journal = state.frames[frameIndex]!.inference;
+    if (!journal.complete) continue;
+    const trace = journal.traces.findLast(candidate => candidate.signatures?.checkedSource === source
+      && candidate.signatures.checkedFormal === formal);
+    if (trace?.signatures === undefined) continue;
+    return { journal, context: trace.context, sourceType: trace.sourceType,
+      formalType: trace.formalType, signatures: trace.signatures };
+  }
+  return undefined;
+}
+
+function selectedDefaultOwner(
+  checker: Checker,
+  context: InferenceContext | undefined,
+  parameter: Type,
+): { readonly state: SelectedCallEvidenceTransactionState; readonly frame: SelectedCallEvidenceFrameRecord } | undefined {
+  const state = checker.selectedCallEvidenceTransactionState;
+  if (state === undefined) return undefined;
+  if (state.failed) throw failedStateError();
+  for (let index = state.frames.length - 1; index >= 0; index--) {
+    const frame = state.frames[index];
+    if (frame?.kind === "overload-candidate" && frame.candidate?.typeParameters.includes(parameter) &&
+      (context === undefined || frame.contexts.includes(context))) return { state, frame };
+  }
+  return undefined;
 }
 
 function stateForSettlement(
@@ -198,20 +432,22 @@ function restoreSnapshots(snapshots: readonly SignatureLinksSnapshot[]): void {
     const currentSelection = snapshot.links.resolvedCallSelectionEvidence;
     const currentSignature = snapshot.links.resolvedSignature;
     if (currentSignature !== snapshot.resolvedSignature) {
-      if (currentSelection?.selectedSignature === currentSignature) {
+      if (currentSelection !== undefined && snapshot.links.resolvedCallEvidenceSignature === currentSignature) {
         if (snapshot.links.resolvedCallEvidence !== undefined
-          && snapshot.links.resolvedCallEvidence.selectedSignature !== currentSignature) {
+          && snapshot.links.resolvedCallEvidence.kind !== currentSelection.kind) {
           throw new Error("Selected-call evidence rollback found final evidence for a different cached signature.");
         }
         continue;
       }
       snapshot.links.checkedCallSelectionSeed = undefined;
       snapshot.links.resolvedCallSelectionEvidence = undefined;
+      snapshot.links.resolvedCallEvidenceSignature = undefined;
       snapshot.links.resolvedCallEvidence = undefined;
       continue;
     }
     snapshot.links.checkedCallSelectionSeed = snapshot.checkedCallSelectionSeed;
     snapshot.links.resolvedCallSelectionEvidence = snapshot.resolvedCallSelectionEvidence;
+    snapshot.links.resolvedCallEvidenceSignature = snapshot.resolvedCallEvidenceSignature;
     snapshot.links.resolvedCallEvidence = snapshot.resolvedCallEvidence;
   }
 }
@@ -221,10 +457,17 @@ function settleRoot(
   state: SelectedCallEvidenceTransactionState,
   frame: SelectedCallEvidenceFrameRecord,
 ): void {
+  if (frame.inference.traces.length !== 0) failClosed(checker, state, "selected inference origin is still active at root settlement");
   removeSnapshots(state, frame.snapshots.length);
+  removeInferenceEntries(state, frame.defaults.length + frame.contexts.length
+    + frame.inference.records.length + frame.inference.returnContexts.size);
+  frame.inference.returnContexts.clear();
+  frame.inference.records.length = 0;
   frame.snapshots.length = 0;
+  frame.defaults.length = 0;
+  frame.contexts.length = 0;
   settleTopFrame(state, frame);
-  if (state.snapshotCount !== 0 || state.frames.length !== 0) {
+  if (state.entryCount !== 0 || state.inferenceEntryCount !== 0 || state.frames.length !== 0) {
     failClosed(checker, state, "root settlement retained transaction state");
   }
   checker.selectedCallEvidenceTransactionState = undefined;
@@ -235,6 +478,7 @@ function settleTopFrame(
   frame: SelectedCallEvidenceFrameRecord,
 ): void {
   const top = state.frames.pop();
+  state.revision++;
   if (top !== frame) {
     throw new Error("Selected-call evidence frame stack changed during settlement.");
   }
@@ -244,11 +488,19 @@ function settleTopFrame(
 function removeSnapshots(state: SelectedCallEvidenceTransactionState, count: number): void {
   if (!Number.isSafeInteger(count)
     || count < 0
-    || !Number.isSafeInteger(state.snapshotCount)
-    || count > state.snapshotCount) {
+    || !Number.isSafeInteger(state.entryCount)
+    || count > state.entryCount) {
     throw new Error("Selected-call evidence snapshot count is inconsistent.");
   }
-  state.snapshotCount -= count;
+  state.entryCount -= count;
+}
+
+function removeInferenceEntries(state: SelectedCallEvidenceTransactionState, count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0
+    || !Number.isSafeInteger(state.inferenceEntryCount) || count > state.inferenceEntryCount) {
+    throw new Error("Selected-call inference contribution count is inconsistent.");
+  }
+  state.inferenceEntryCount -= count;
 }
 
 function failClosed(
@@ -262,11 +514,14 @@ function failClosed(
     if (frame !== undefined) {
       restoreSnapshots(frame.snapshots);
       frame.snapshots.length = 0;
+      frame.defaults.length = 0;
+      frame.contexts.length = 0;
       frame.settled = true;
     }
   }
   state.frames.length = 0;
-  state.snapshotCount = 0;
+  state.entryCount = 0;
+  state.inferenceEntryCount = 0;
   checker.selectedCallEvidenceTransactionState = undefined;
   throw new Error(`Selected-call evidence transaction failed closed: ${reason}.`);
 }

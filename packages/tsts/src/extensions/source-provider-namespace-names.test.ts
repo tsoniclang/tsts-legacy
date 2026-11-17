@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -5,6 +6,13 @@ import { Diagnostic_String } from "../internal/ast/diagnostic.js";
 import { providerVirtualDeclarationFactKey } from "./facts.js";
 import type { ProviderDeclarationModel } from "./index.js";
 import { findNodes, sourceProviderExtension, testCoreDeclarations, testNoLibCompilerOptions } from "./source-provider-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "../services/type-checker.js";
+
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
+}
 
 const moduleSpecifier = "@test/namespace-names.js";
 const model: ProviderDeclarationModel = {
@@ -57,7 +65,7 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   const source = checked.getSourceFileQueries(sourceFile);
   const calls = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression);
   const facts = calls.map(call => checked.sourceFacts?.getFact(
-    source.checker.getSignatureDeclaration(source.checker.getResolvedCallInfo(call)?.selectedSignature),
+    source.checker.getSignatureDeclaration(requireApplicableCallInfo(source.checker.getResolvedCallInfo(call))?.selection.application.instantiatedSignature),
     providerVirtualDeclarationFactKey,
   ));
   assert.deepEqual(facts.map(fact => [fact?.memberId, fact?.signatureId]), [
@@ -66,7 +74,7 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   ]);
   const properties = findNodes(sourceFile, source.ast.children, source.ast.is.IsPropertyAccessExpression);
   const propertyFacts = properties.map(property => checked.sourceFacts?.getFact(
-    source.checker.getResolvedPropertyAccessInfo(property)?.selectedDeclaration, providerVirtualDeclarationFactKey,
+    memberAccess(source.checker.getResolvedPropertyAccessInfo(property))?.selectedDeclaration, providerVirtualDeclarationFactKey,
   ));
   assert.ok(propertyFacts.some(fact => fact?.memberId === "factory::class"));
 });

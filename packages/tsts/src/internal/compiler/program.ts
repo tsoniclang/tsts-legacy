@@ -1,4 +1,4 @@
-import type { bool, int } from "../../go/scalars.js";
+import type { bool, int, uint } from "../../go/scalars.js";
 import type { GoError, GoMap, GoPtr, GoSeq2, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
 import type { Context } from "../../go/context.js";
@@ -99,6 +99,7 @@ import { attachExtensionHostToProgram } from "../../extensions/host.js";
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/program.go::type::ProgramOptions","kind":"type","status":"implemented","sigHash":"9eb7d18f0dae3f15940de7ca327de6159681203c5eb38cedc77879444adaee3f","bodyHash":"fd2579730de2d43c0ed258754b40e4b212195c5b2a367c70b29872aca609e055"}
+ * @tsgo-override {"category":"embedding-host","allow":["signature"],"reason":"One optional field: the program's library files selected by the caller (library file name to file). Absent, the program takes its libraries from the host's default library directory exactly as before.","goSignature":"interface{Config:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/tsoptions/parsedcommandline.ts::ParsedCommandLine>;CreateCheckerPool:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/program.ts::Program>)=>packages/tsts/src/internal/compiler/checkerpool.ts::CheckerPool;Host:packages/tsts/src/internal/compiler/host.ts::CompilerHost;ProjectName:string;SingleThreaded:packages/tsts/src/internal/core/tristate.ts::Tristate;Tracing:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/tracing/tracing.ts::Tracing>;TypingsLocation:string;UseSourceOfProjectReference:packages/tsts/src/go/scalars.ts::bool;canUseProjectReferenceSource?:()=>packages/tsts/src/go/scalars.ts::bool}","tsSignature":"interface{Config:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/tsoptions/parsedcommandline.ts::ParsedCommandLine>;CreateCheckerPool?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/compiler/program.ts::Program>)=>packages/tsts/src/internal/compiler/checkerpool.ts::CheckerPool;Host:packages/tsts/src/internal/compiler/host.ts::CompilerHost;ProjectName?:string;SelectedLibraries?:global::ReadonlyMap<string,string>;SingleThreaded?:packages/tsts/src/internal/core/tristate.ts::Tristate;Tracing?:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/tracing/tracing.ts::Tracing>;TypingsLocation?:string;UseSourceOfProjectReference?:packages/tsts/src/go/scalars.ts::bool}"}
  *
  * Go source:
  * ProgramOptions struct {
@@ -121,6 +122,12 @@ export interface ProgramOptions {
   TypingsLocation?: string;
   ProjectName?: string;
   Tracing?: GoPtr<Tracing_bcfc8412>;
+  /**
+   * The program's library files, selected by the caller: library file name (as GetLibFileName gives it) to the file
+   * of the program that is that library. When given, an empty map included, it is the only source of library files
+   * (librarybinding.ts); when absent, the host's default library directory is.
+   */
+  SelectedLibraries?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -1253,6 +1260,10 @@ export function Program_GetTypeChecker(receiver: GoPtr<Program>, ctx: Context): 
     return checkerPool_getCheckerNonExclusive(receiver!.compilerCheckerPool);
   }
   return receiver!.checkerPool!.GetChecker(ctx, undefined);
+}
+
+export function Program_GetTypeCheckerById(receiver: GoPtr<Program>, ctx: Context, checkerId: uint): [GoPtr<Checker>, () => void] {
+  return receiver!.checkerPool!.GetCheckerById(ctx, checkerId);
 }
 
 /**
@@ -3272,6 +3283,7 @@ export function SortAndDeduplicateDiagnostics(diags: GoSlice<GoPtr<Diagnostic>>)
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/program.go::func::compactAndMergeRelatedInfos","kind":"func","status":"implemented","sigHash":"42709cae8871346e6c6a3377b0e66bcbe09454353ad492549702e97ff9075513","bodyHash":"e765bda8e871e462ee82676791c0e23190a24aa3ca2eb57fefec4b4ae6fb8b40"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"A run of two or more equal diagnostics is always published as a clone carrying runMembers, the added diagnostics it stands for (flattened through earlier published clones), so a cause recorded on any added diagnostic of the run leads to the published one by identity. The Go body publishes the first added diagnostic itself when no member has related information; the published code, range, message and merged related information are unchanged."}
  *
  * Go source:
  * func compactAndMergeRelatedInfos(diagnostics []*ast.Diagnostic) []*ast.Diagnostic {
@@ -3318,10 +3330,37 @@ export function compactAndMergeRelatedInfos(diags: GoSlice<GoPtr<Diagnostic>>): 
       n++;
     }
     if (n > 1) {
-      let relatedInfos: GoPtr<Diagnostic>[] = [];
+      // A run of two or more is always published as a clone that carries the added diagnostics it stands for, flattened:
+      // a member that is itself a published clone contributes its own members, so repeated deduplication loses none.
+      // One pass over the run: related information is appended in run order, and members are kept in first-seen order
+      // with an identity set, so the work is linear in the member references of the run.
+      const relatedInfos: GoPtr<Diagnostic>[] = [];
+      const members: Diagnostic[] = [];
+      const seen = new Set<Diagnostic>();
       for (let k = 0; k < n; k++) {
-        relatedInfos = [...relatedInfos, ...(Diagnostic_RelatedInformation(diags[i + k]) ?? [])];
+        const entry = diags[i + k];
+        if (entry === undefined) {
+          throw new globalThis.Error("compactAndMergeRelatedInfos: a run of equal diagnostics contains an undefined entry");
+        }
+        for (const info of Diagnostic_RelatedInformation(entry) ?? []) {
+          relatedInfos.push(info);
+        }
+        for (const member of entry.runMembers ?? [entry]) {
+          if (member === undefined) {
+            throw new globalThis.Error("compactAndMergeRelatedInfos: a published diagnostic's run members contain an undefined entry");
+          }
+          if (!seen.has(member)) {
+            seen.add(member);
+            members.push(member);
+          }
+        }
       }
+      const clone = Diagnostic_Clone(d);
+      if (clone === undefined) {
+        throw new globalThis.Error("compactAndMergeRelatedInfos: a run of equal diagnostics has no first diagnostic");
+      }
+      clone.runMembers = members;
+      d = clone;
       if (relatedInfos.length > 0) {
         relatedInfos.sort(CompareDiagnostics);
         // compact: remove adjacent equal entries
@@ -3331,7 +3370,7 @@ export function compactAndMergeRelatedInfos(diags: GoSlice<GoPtr<Diagnostic>>): 
             compacted.push(relatedInfos[m]);
           }
         }
-        d = Diagnostic_SetRelatedInfo(Diagnostic_Clone(d), compacted);
+        d = Diagnostic_SetRelatedInfo(d, compacted);
       }
     }
     result.push(d);

@@ -1,4 +1,5 @@
 import type { bool, int } from "../../go/scalars.js";
+import { boundLibraryNames, firstLibraryName } from "./librarybinding.js";
 import type { GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
 import { Pool, Mutex, Once } from "../../go/sync.js";
@@ -149,7 +150,7 @@ export function parseTask_Path(receiver: GoPtr<parseTask>): Path_65a900c3 {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/filesparser.go::method::parseTask.load","kind":"method","status":"implemented","sigHash":"af7c55efe5242848312d3c1b0508d2b9ec9c78063b2547aea4383cb82d2555ac","bodyHash":"07b7219142d8ecc72292b82bd9f7692c5b2b7aee8f66b4283d2100e4795ebb9e"}
- * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"New Hope provider virtual modules are compiler-owned in-memory source files; when no extension host owns the path this remains the direct TS-Go load path."}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"New Hope provider virtual modules are compiler-owned in-memory source files; when no extension host owns the path this remains the direct TS-Go load path. A library directive's file is the program's library binding's (fileLoader.pathForLibFile); a name the caller's selected library files do not bind gets the same unknown-library diagnostic as a name the compiler does not know."}
  *
  * Go source:
  * func (t *parseTask) load(loader *fileLoader) {
@@ -354,8 +355,8 @@ export function parseTask_load(receiver: GoPtr<parseTask>, loader: GoPtr<fileLoa
         diagOnce: new Once(),
       };
       const [name, ok] = GetLibFileName(lib.FileName);
-      if (ok) {
-        const libFile = fileLoader_pathForLibFile(loader, name);
+      const libFile = ok ? fileLoader_pathForLibFile(loader, name) : undefined;
+      if (libFile !== undefined) {
         parseTask_addSubTask(receiver, {
           fileName: libFile!.path,
           increaseDepth: false,
@@ -763,6 +764,7 @@ export function filesParser_start(receiver: GoPtr<filesParser>, loader: GoPtr<fi
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/filesparser.go::method::filesParser.getProcessedFiles","kind":"method","status":"implemented","sigHash":"c2e51238eff6336f328f007677443bb0ad8f7de5dbabc6a436aefff300edc302","bodyHash":"9345aef10513c9a43308890522ecc220cfeb875670275fef029af29efb317200"}
+ * @tsgo-override {"category":"embedding-host","allow":["body"],"reason":"The program's one library binding decides library files: a file the caller's selected library files bind is recorded as a library file however it entered, with the bound name that orders first; the binding is handed out in processedFiles; the loader's root-site library diagnostics start the include processor's list. Ordinary input (directory kind) records library files exactly as the Go body."}
  *
  * Go source:
  * func (w *filesParser) getProcessedFiles(loader *fileLoader) processedFiles {
@@ -1025,6 +1027,8 @@ export function filesParser_getProcessedFiles(receiver: GoPtr<filesParser>, load
     compilerOptionsSyntaxOnce: new Once(),
   };
 
+  inclProcessor.processingDiagnostics = [...loader!.libraryDiagnostics];
+
   let outputFileToProjectReferenceSource: GoMap<Path_65a900c3, string> | undefined = undefined;
   if (!(ProgramOptions_canUseProjectReferenceSource(loader!.opts))) {
     outputFileToProjectReferenceSource = new globalThis.Map<Path_65a900c3, string>();
@@ -1166,9 +1170,14 @@ export function filesParser_getProcessedFiles(receiver: GoPtr<filesParser>, load
         continue;
       }
 
-      if (task!.libFile !== undefined) {
+      // A file bound by the program's selected library files is a library file however it entered (a library
+      // task, a root, a reference); its record carries the bound name that orders first.
+      const boundNames = task!.libFile === undefined ? boundLibraryNames(loader!.libraries, path) : undefined;
+      const libFile = task!.libFile ?? (boundNames === undefined ? undefined
+        : { Name: firstLibraryName(boundNames), path: task!.normalizedFilePath, Replaced: false as bool });
+      if (libFile !== undefined) {
         libFiles.push(file);
-        libFilesMap.set(path, task!.libFile);
+        libFilesMap.set(path, libFile);
       } else {
         files.push(file);
       }
@@ -1237,6 +1246,7 @@ export function filesParser_getProcessedFiles(receiver: GoPtr<filesParser>, load
     importHelpersImportSpecifiers: importHelpersImportSpecifiers !== undefined ? importHelpersImportSpecifiers : new globalThis.Map(),
     sourceFilesFoundSearchingNodeModules: sourceFilesFoundSearchingNodeModules,
     libFiles: libFilesMap,
+    libraries: loader!.libraries,
     missingFiles: missingFiles,
     includeProcessor: inclProcessor,
     outputFileToProjectReferenceSource: outputFileToProjectReferenceSource !== undefined ? outputFileToProjectReferenceSource : new globalThis.Map(),

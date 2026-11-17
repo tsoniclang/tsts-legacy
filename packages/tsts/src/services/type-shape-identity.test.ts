@@ -1,0 +1,223 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
+import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import { Background } from "../go/context.js";
+import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
+import { Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
+import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+
+function identityFixture(checkers = 4) {
+  const checked = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/contracts.ts": `
+        export class Box<Value> { value!: Value; read(): Value { return this.value; } }
+        export class First { private value!: number; }
+        export class Second { private value!: number; }
+        export type Fields<Value> = { readonly [Name in keyof Value]?: Value[Name] };
+        export function local<Value>(input: Value) {
+          return class Entry { readValue(): Value { return input; } };
+        }
+      `,
+      "/src/left.ts": `
+        import { Box, First, Fields, local } from "./contracts.js";
+        export declare const numeric: Box<number>;
+        export declare const first: First;
+        export declare const mapped: Fields<{ count: number; label: string }>;
+        const Entry = local(1);
+        export const entry = new Entry();
+      `,
+      "/src/right.ts": `
+        import { Box, First, Second, Fields, local } from "./contracts.js";
+        export declare const numeric: Box<number>;
+        export declare const textual: Box<string>;
+        export declare const first: First;
+        export declare const second: Second;
+        export declare const mapped: Fields<{ count: number; label: string }>;
+        export declare const differentMapped: Fields<{ count: string; label: string }>;
+        const Entry = local(1);
+        const TextEntry = local("text");
+        export const entry = new Entry();
+        export const textEntry = new TextEntry();
+      `,
+    },
+    compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022", checkers },
+  }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "the exact identity fixture is checked successfully");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the fixture requires no extension diagnostic");
+  const queriesFor = (path: string): SourceFileQueries => {
+    const file = checked.getSourceFile(path);
+    assert.equal(file !== undefined, true, `${path}: original checked source file`);
+    return checked.getSourceFileQueries(file!);
+  };
+  const left = queriesFor("/src/left.ts");
+  const right = queriesFor("/src/right.ts");
+  const typeFor = (queries: SourceFileQueries, name: string): Type => {
+    const declarations = findNodes(queries.sourceFile, queries.ast.children, queries.ast.is.IsVariableDeclaration);
+    const declaration = declarations.find(node => queries.ast.text(queries.ast.name(node)) === name);
+    assert.equal(declaration !== undefined, true, `${name}: original authored variable`);
+    const type = queries.checker.getTypeAtLocation(queries.ast.name(declaration))?.type;
+    assert.equal(type !== undefined, true, `${name}: actual checked type`);
+    return type!;
+  };
+  return { checked, left, right, typeFor };
+}
+
+function assertIdentityInBothOrders(
+  queries: SourceFileQueries,
+  left: Type,
+  right: Type,
+  expected: boolean,
+  label: string,
+): void {
+  assert.equal(queries.typeShape.isTypeIdenticalTo(left, right), expected, `${label}: forward identity`);
+  assert.equal(queries.typeShape.isTypeIdenticalTo(right, left), expected, `${label}: reverse identity`);
+}
+
+test("public error classification uses the actual type owner and preserves the any flag predicate", () => {
+  const foreign = identityFixture(4);
+  const foreignOwner = foreign.typeFor(foreign.left, "numeric").checker;
+  assert.equal(foreignOwner !== undefined, true, "the foreign type has its actual native producer");
+  if (foreignOwner === undefined) throw new Error("Missing native producer");
+  for (const checkers of [1, 4]) {
+    const fixture = identityFixture(checkers);
+    const owner = fixture.typeFor(fixture.left, "numeric").checker;
+    assert.equal(owner !== undefined, true, "the actual checked type retains its native producer");
+    if (owner === undefined) throw new Error("Missing native producer");
+    for (const queries of [fixture.left, fixture.right, foreign.left]) {
+      assert.equal(queries.typeShape.isError(owner.errorType), true, "actual error identity, independent of wrapper owner");
+      assert.equal(queries.typeShape.isAny(owner.errorType), true, "native error retains its actual Any flags");
+      assert.equal(queries.typeShape.isError(owner.anyType), false, "genuine any is not the error sentinel");
+      assert.equal(queries.typeShape.isAny(owner.anyType), true, "genuine any preserves the flag predicate");
+      assert.equal(queries.typeShape.isError(foreignOwner.errorType), true, "foreign input is classified by its own producer");
+      assert.equal(queries.typeShape.isError(foreignOwner.anyType), false, "foreign ordinary any is not an error");
+      assert.equal(queries.typeShape.isError(undefined), false, "the absent Go pointer is not an error");
+    }
+    const [diagnosticOwner, done] = Program_GetTypeCheckerForFileExclusive(fixture.checked.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), fixture.left.sourceFile);
+    try {
+      assert.equal(diagnosticOwner !== undefined, true, "the checked program exposes its actual diagnostic producer");
+      if (diagnosticOwner === undefined) throw new Error("Missing diagnostic producer");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.errorType), true, "diagnostic-owner error identity");
+      assert.equal(fixture.right.typeShape.isError(diagnosticOwner.anyType), false, "diagnostic-owner ordinary any");
+    } finally { done(); }
+  }
+});
+
+test("public identity preserves exact generic instances obtained from different checked files", () => {
+  const { left, right, typeFor } = identityFixture();
+  const numericLeft = typeFor(left, "numeric");
+  const numericRight = typeFor(right, "numeric");
+  assert.equal(numericLeft.checker !== numericRight.checker, true, "the public queries retain their actual native file producers");
+  left.typeShape.getPropertyInfos(numericLeft);
+  right.typeShape.getPropertyInfos(numericRight);
+  assertIdentityInBothOrders(left, numericLeft, numericRight, true, "identical Box<number> instances");
+  assertIdentityInBothOrders(right, numericLeft, typeFor(right, "textual"), false, "Box<number> versus Box<string>");
+});
+
+test("public identity keeps declaration-private identities across checker owners", () => {
+  const { left, right, typeFor } = identityFixture();
+  const first = typeFor(left, "first");
+  assertIdentityInBothOrders(right, first, typeFor(right, "first"), true, "the identical private declaration");
+  assertIdentityInBothOrders(left, first, typeFor(right, "second"), false, "distinct private declarations");
+});
+
+test("public identity preserves mapped optional readonly member instantiations", () => {
+  const { left, right, typeFor } = identityFixture();
+  const mappedLeft = typeFor(left, "mapped");
+  const mappedRight = typeFor(right, "mapped");
+  for (const [queries, type] of [[left, mappedLeft], [right, mappedRight]] as const) {
+    const fields = queries.typeShape.getPropertyInfos(type);
+    assert.equal(fields.length, 2, "the actual mapped member inventory is complete");
+    assert.equal(fields.every(field => field.optional && field.readonly), true, "optional and readonly flags are preserved");
+  }
+  assertIdentityInBothOrders(right, mappedLeft, mappedRight, true, "identical mapped members");
+  assertIdentityInBothOrders(left, mappedLeft, typeFor(right, "differentMapped"), false, "unequal mapped payloads");
+});
+
+test("public identity preserves local-class outer instantiations across imports", () => {
+  const { left, right, typeFor } = identityFixture();
+  const entry = typeFor(left, "entry");
+  assertIdentityInBothOrders(right, entry, typeFor(right, "entry"), true, "the same local class and outer value type");
+  assertIdentityInBothOrders(left, entry, typeFor(right, "textEntry"), false, "different outer value types");
+});
+
+test("public identity rejects separate checked programs with identical file and declaration spellings", () => {
+  const original = identityFixture();
+  const foreign = identityFixture();
+  const originalType = original.typeFor(original.left, "numeric");
+  const foreignType = foreign.typeFor(foreign.left, "numeric");
+  assertIdentityInBothOrders(original.left, originalType, foreignType, false, "different checked programs");
+  assert.equal(original.left.typeShape.isTypeIdenticalTo(foreignType, foreignType), false,
+    "an identical foreign object is not admitted by the original query owner");
+  assert.throws(() => original.checked.getSourceFileQueries(foreign.left.sourceFile),
+    (error: unknown) => error instanceof Error &&
+      error.message === "Source-file queries require an exact source file from the checked program.",
+    "foreign file identity is rejected before creating a query owner");
+  assertIdentityInBothOrders(foreign.right, foreignType, foreign.typeFor(foreign.right, "numeric"), true,
+    "the separate program retains its own coherent identity");
+});
+
+test("public identity is independent of file query and member inspection order", () => {
+  for (const reverse of [false, true]) {
+    const { left, right, typeFor } = identityFixture();
+    const first = reverse ? right : left;
+    const second = reverse ? left : right;
+    const firstType = typeFor(first, "mapped");
+    first.typeShape.getPropertyInfos(firstType);
+    const secondType = typeFor(second, "mapped");
+    second.typeShape.getPropertyInfos(secondType);
+    assert.equal(firstType.checker !== secondType.checker, true, "query order preserves the distinct native file owners");
+    assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
+  }
+});
+
+test("public generic, mapped, private and contextual identity behavior is unchanged with explicit one or four checkers", () => {
+  for (const checkers of [1, 4]) {
+    const { left, right, typeFor } = identityFixture(checkers);
+    for (const reverse of [false, true]) {
+      const first = reverse ? right : left;
+      const second = reverse ? left : right;
+      for (const name of ["numeric", "mapped", "entry", "first"]) {
+        assertIdentityInBothOrders(first, typeFor(first, name), typeFor(second, name), true, name);
+      }
+      assertIdentityInBothOrders(first, typeFor(left, "numeric"), typeFor(right, "textual"), false, "distinct generic arguments");
+      assertIdentityInBothOrders(first, typeFor(left, "first"), typeFor(right, "second"), false, "distinct private declarations");
+      assertIdentityInBothOrders(first, typeFor(left, "mapped"), typeFor(right, "differentMapped"), false, "distinct mapped payloads");
+      assertIdentityInBothOrders(first, typeFor(left, "entry"), typeFor(right, "textEntry"), false, "distinct outer instantiations");
+    }
+  }
+});
+
+test("public identity accepts actual same-program diagnostic producers", () => {
+  const { checked, left, right, typeFor } = identityFixture();
+  const publicType = typeFor(left, "numeric");
+  let exercised = 0;
+  for (const queries of [left, right]) {
+    const [diagnosticChecker, done] = Program_GetTypeCheckerForFileExclusive(checked.program,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), queries.sourceFile);
+    try {
+      assert.equal(diagnosticChecker !== undefined, true, "the original checked file has a native diagnostic checker");
+      if (diagnosticChecker === publicType.checker) continue;
+      const declaration = findNodes(queries.sourceFile, queries.ast.children, queries.ast.is.IsVariableDeclaration)
+        .find(node => queries.ast.text(queries.ast.name(node)) === "numeric");
+      assert.equal(declaration !== undefined, true, "the native query uses the original checked numeric declaration");
+      const diagnosticType = Checker_GetTypeAtLocation(diagnosticChecker, queries.ast.name(declaration));
+      assert.equal(diagnosticType !== undefined, true, "the real native diagnostic query returns its actual type");
+      assert.equal(diagnosticType!.checker === diagnosticChecker, true, "the diagnostic operand retains its native owner");
+      assert.equal(diagnosticType!.checker!.program!.SourceFiles() === publicType.checker!.program!.SourceFiles(), true,
+        "the diagnostic and public operands belong to exactly the same checked program");
+      assertIdentityInBothOrders(left, publicType, diagnosticType!, true, "the actual same-program diagnostic operand");
+      assert.equal(left.typeShape.isTypeIdenticalTo(diagnosticType, diagnosticType), true,
+        "a genuine diagnostic producer retains reflexive identity in its own native relation");
+      assertIdentityInBothOrders(right, publicType, typeFor(right, "numeric"), true,
+        "valid public operands still compare after diagnostic evidence is rejected");
+      exercised += 1;
+    } finally {
+      done();
+    }
+  }
+  assert.equal(exercised > 0, true, "at least one real distinct native diagnostic checker was exercised");
+});

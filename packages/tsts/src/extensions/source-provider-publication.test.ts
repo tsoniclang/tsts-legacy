@@ -373,7 +373,7 @@ test("canonical provider owner files remain hidden from public source traversal"
           const queries = context.source.getSourceFileQueries(sourceFile);
           const statement = queries.ast.as.AsVariableStatement(queries.ast.statements(sourceFile)[1]);
           const variables = queries.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
-          const type = queries.checker.getTypeFromTypeNode(Node_Type(variables?.[0]));
+          const type = queries.checker.getTypeFromTypeNode(Node_Type(variables?.[0]))?.type;
           const identity = context.facts.get(queries.checker.getTypeSymbol(type), providerVirtualDeclarationFactKey);
           assert.ok(identity);
           analyzedDocument = context.factResolver.getVirtualDeclarationDocument(identity.artifactFileName);
@@ -401,7 +401,7 @@ test("canonical provider owner files remain hidden from public source traversal"
   const checker = checked.getSourceFileQueries(sourceFile).checker;
   const statement = checked.ast.as.AsVariableStatement(checked.ast.statements(sourceFile)[1]);
   const variables = checked.ast.as.AsVariableDeclarationList(statement?.DeclarationList)?.Declarations?.Nodes;
-  const type = checker.getTypeFromTypeNode(Node_Type(variables?.[0]));
+  const type = checker.getTypeFromTypeNode(Node_Type(variables?.[0]))?.type;
   const symbol = checker.getTypeSymbol(type);
   const identity = checked.sourceFacts.getFact(symbol, providerVirtualDeclarationFactKey);
   assert.ok(identity);

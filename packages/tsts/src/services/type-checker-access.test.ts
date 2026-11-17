@@ -1,24 +1,295 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Expression, Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { Node_Name } from "../internal/ast/spine.js";
+import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
 import {
   KindClassDeclaration,
+  KindCallExpression,
+  KindComputedPropertyName,
   KindElementAccessExpression,
+  KindForInStatement,
   KindForOfStatement,
+  KindFunctionDeclaration,
   KindGetAccessor,
+  KindMethodDeclaration,
+  KindMappedType,
+  KindPropertyAssignment,
   KindPropertyAccessExpression,
+  KindPropertyDeclaration,
+  KindPropertySignature,
   KindSetAccessor,
+  KindSpreadElement,
+  KindTypeAliasDeclaration,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { TypeFlagsNumber, TypeFlagsString } from "../internal/checker/types.js";
+import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
+import { createTypeShapeQueries } from "./type-shape.js";
 import {
   assertCleanSemanticDiagnostics,
   createProgram,
   findNodesByKind,
   findPropertyAccessByName,
 } from "./type-checker-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "./type-checker.js";
+
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
+}
+
+test("global value lookup retains actual library and alias signature identity through local shadows", () => {
+  const { program, index } = createProgram(`
+    const direct = String(1);
+    const convert = String;
+    const indirect = convert(2);
+    function local(String: (value: number) => string): string { return String(3); }
+    export {};
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const globalString = queries.getGlobalValueSymbol("String");
+  assert.equal(globalString !== undefined, true, "the completed configured library has a global String value");
+  assert.equal(queries.getGlobalValueSymbol("String") === globalString, true, "repeat lookup is the identical checked symbol, not a synthetic symbol store");
+  const calls = findNodesByKind(index, KindCallExpression);
+  assert.equal(calls.length, 3, "direct, aliased and actual local-shadow calls");
+  const callDeclarations = calls.map(call => queries.getSignatureDeclaration(requireApplicableCallInfo(queries.getResolvedCallInfo(call))?.selection.application.instantiatedSignature));
+  const globalType = queries.getTypeOfSymbol(globalString);
+  const declarations = queries.getCallSignaturesOfType(globalType).map(signature => queries.getSignatureDeclaration(signature));
+  assert.equal(callDeclarations[0] !== undefined && declarations.includes(callDeclarations[0]), true, "direct String uses the actual global call signature");
+  assert.equal(callDeclarations[1] === callDeclarations[0], true, "a real alias preserves the selected library declaration");
+  assert.equal(callDeclarations[2] !== undefined && !declarations.includes(callDeclarations[2]), true, "a local String parameter is not the global constructor by spelling");
+  assert.equal(queries.isDefaultLibraryDeclaration(callDeclarations[0]), true, "the actual configured library owns the selected String signature");
+  assert.equal(queries.isDefaultLibraryDeclaration(callDeclarations[2]), false, "a real local shadow is not a default-library declaration");
+  assert.equal(queries.isDefaultLibraryDeclaration(undefined), false, "absence has no manufactured library origin");
+  const foreign = createProgram("const value = String(1);", { noLib: false });
+  assertCleanSemanticDiagnostics(foreign.program, foreign.index);
+  const foreignQueries = createTypeCheckerQueries(foreign.program, { sourceFile: foreign.index });
+  const foreignCall = findNodesByKind(foreign.index, KindCallExpression)[0];
+  const foreignDeclaration = foreignQueries.getSignatureDeclaration(requireApplicableCallInfo(foreignQueries.getResolvedCallInfo(foreignCall))?.selection.application.instantiatedSignature);
+  assert.equal(foreignQueries.isDefaultLibraryDeclaration(foreignDeclaration), true, "the foreign program owns its genuine library declaration");
+  assert.equal(queries.isDefaultLibraryDeclaration(foreignDeclaration), false, "the same library filename never admits a foreign declaration identity");
+  assert.equal(queries.getGlobalValueSymbol("__P01_unknown_global__") === undefined, true, "unknown global value remains absent");
+});
+
+test("global value lookup distinguishes native user globals, module declarations and foreign source identity", () => {
+  for (const initializer of [
+    'function String(value: number): string { return "custom"; }',
+    'var String = (value: number): string => "custom";',
+  ]) {
+    const { program, index } = createProgram(`${initializer}\ninterface OnlyType { readonly value: number; }`);
+    assertCleanSemanticDiagnostics(program, index);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const declarations = findNodesByKind(index, KindFunctionDeclaration).concat(findNodesByKind(index, KindVariableDeclaration));
+    const declaration = declarations.find(node => Node_Text(Node_Name(node)) === "String");
+    assert.equal(declaration !== undefined, true, "the actual native user global declaration exists");
+    assert.equal(queries.getGlobalValueSymbol("String") === queries.getSymbolAtLocation(Node_Name(declaration)), true,
+      "a real native user global is returned as its actual symbol, not labelled as a builtin");
+    assert.equal(queries.isDefaultLibraryDeclaration(declaration), false, "native user globals never acquire a default-library origin");
+    assert.equal(queries.getGlobalValueSymbol("OnlyType") === undefined, true, "a type-only global is not manufactured into a value");
+    const foreign = createProgram(initializer);
+    const foreignQueries = createTypeCheckerQueries(program, { sourceFile: foreign.index });
+    assert.equal(foreignQueries.getGlobalValueSymbol("String") === undefined, true,
+      "a foreign checked source file is refused even when its filename matches");
+    assert.equal(foreignQueries.isDefaultLibraryDeclaration(declaration), false, "a foreign consumer context cannot query library ownership");
+  }
+  const { program, index } = createProgram('function String(value: number): string { return "custom"; } export {};');
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  assert.equal(queries.getGlobalValueSymbol("String") === undefined, true, "a module-local declaration is not a global");
+});
+
+test("awaited queries use the existing checked Promise and thenable semantics without type-name inference", () => {
+  const { program, index } = createProgram(`
+    type Primitive = number;
+    type Nested = Promise<Promise<number>>;
+    type Thenable = { then(resolve: (value: string) => unknown): unknown };
+    type Optional = Promise<number> | undefined;
+    export {};
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
+  for (const [position, expected] of ["number", "number", "string", "number | undefined"].entries()) {
+    const type = queries.getTypeFromTypeNode(Node_Type(aliases[position]))?.type;
+    assert.equal(type !== undefined, true, `awaited input ${position} is an actual checked type`);
+    const awaited = queries.getAwaitedType(type);
+    assert.equal(queries.typeToString(awaited), expected, `awaited input ${position} uses the checker result`);
+    assert.equal(queries.getAwaitedType(type) === awaited, true, `awaited input ${position} retains exact checker result identity`);
+    if (position === 0) assert.equal(awaited === type, true, "an ordinary value remains its identical native type");
+  }
+  assert.equal(queries.getAwaitedType(undefined) === undefined, true, "an absent type has no invented awaited value");
+  const shadow = createProgram("class Promise<Value> { value!: Value; } type Ordinary = Promise<number>; export {};");
+  assertCleanSemanticDiagnostics(shadow.program, shadow.index);
+  const shadowQueries = createTypeCheckerQueries(shadow.program, { sourceFile: shadow.index });
+  const shadowAlias = findNodesByKind(shadow.index, KindTypeAliasDeclaration)[0];
+  const shadowType = shadowQueries.getTypeFromTypeNode(Node_Type(shadowAlias))?.type;
+  assert.equal(shadowType !== undefined && shadowQueries.getAwaitedType(shadowType) === shadowType, true,
+    "a user class called Promise is not unwrapped by its name");
+});
+
+test("awaited queries reject foreign types and admit only the actual same-program or shared extension host", () => {
+  const first = createProgram("type Value = number;");
+  const second = createProgram("type Value = number;");
+  const unrelated = createProgram("type Value = number;");
+  attachExtensionHost(first.program!);
+  attachExtensionHostToProgram(first.program!, second.program!, { bindCompilerProgram: false });
+  attachExtensionHost(unrelated.program!);
+  for (const checked of [first, second, unrelated]) assertCleanSemanticDiagnostics(checked.program, checked.index);
+  const firstQueries = createTypeCheckerQueries(first.program, { sourceFile: first.index });
+  const secondQueries = createTypeCheckerQueries(second.program, { sourceFile: second.index });
+  const unrelatedQueries = createTypeCheckerQueries(unrelated.program, { sourceFile: unrelated.index });
+  const typeOf = (queries: typeof firstQueries, index: typeof first.index) =>
+    queries.getTypeFromTypeNode(Node_Type(findNodesByKind(index, KindTypeAliasDeclaration)[0]))?.type;
+  const firstType = typeOf(firstQueries, first.index);
+  const secondType = typeOf(secondQueries, second.index);
+  const unrelatedType = typeOf(unrelatedQueries, unrelated.index);
+  assert.equal(firstType !== undefined && firstQueries.getAwaitedType(firstType) === firstType, true, "the real source program owns its primitive type");
+  assert.equal(unrelatedType !== undefined && firstQueries.getAwaitedType(unrelatedType) === undefined, true,
+    "a foreign type carrying its own checker is refused before that checker runs");
+  const invalidContext = createTypeCheckerQueries(first.program, { sourceFile: second.index });
+  assert.equal(invalidContext.getAwaitedType(firstType) === undefined, true, "a foreign consumer context cannot accept an otherwise local type");
+  assert.equal(getExtensionHost(first.program!) === getExtensionHost(second.program!), true, "the existing extension API proves a shared actual host");
+  assert.equal(getExtensionHost(first.program!) !== getExtensionHost(unrelated.program!), true, "another extension host is not the same owner");
+  assert.equal(firstType?.checker !== undefined && secondType?.checker !== undefined &&
+    getExtensionHost(firstType.checker.program) !== undefined &&
+    getExtensionHost(firstType.checker.program) === getExtensionHost(secondType.checker.program), true,
+    "the real checker adapters inherited the same host during canonical checker construction");
+  assert.equal(firstQueries.getAwaitedType(secondType) === secondType, true, "a checked type from the same actual extension host retains its own checker and identity");
+  assert.equal(firstQueries.getAwaitedType(unrelatedType) === undefined, true, "an unrelated attached extension host remains foreign");
+  assert.equal(secondQueries.getAwaitedType(firstType) === firstType, true, "the actual shared-host contract is symmetric");
+});
+
+test("effective property names expose one checked string, numeric or unique-symbol identity", () => {
+  const { program, index } = createProgram(`
+    const key = "constant";
+    declare const unique: unique symbol;
+    const value = { plain: 1, ["literal"]: 2, [key]: 3, [0x3635c9adc5dea00000]: 4, [-0]: 5, [unique]: 6 };
+    function dynamic(key: string) { return { [key]: 7 }; }
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 7, "six static properties and one dynamic property");
+  const expected = [["string", "plain"], ["string", "literal"], ["string", "constant"],
+    ["numeric", "1e+21"], ["numeric", "0"], ["unique-symbol", undefined]] as const;
+  for (const [position, [kind, name]] of expected.entries()) {
+    const nameNode = Node_Name(properties[position]);
+    const selected = queries.getEffectivePropertyName(nameNode);
+    assert.equal(selected?.kind, kind, `property ${position} keeps its checked name category`);
+    if (name !== undefined) assert.equal(selected?.name, name, `property ${position} keeps its canonical checked spelling`);
+    else assert.equal(typeof selected?.name, "string", "the unique symbol keeps its actual checked identity, not a string field");
+    assert.equal(selected !== undefined && Object.isFrozen(selected), true, `property ${position} has immutable evidence`);
+    assert.equal(queries.getEffectivePropertyName(nameNode) === selected, true, `property ${position} is computed once at this query boundary`);
+  }
+  assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a broad runtime string has no static name");
+  assert.equal(queries.getEffectivePropertyName(Node_Name(properties[6])) === undefined, true, "a completed absence stays absent");
+  assert.equal(queries.getEffectivePropertyName(undefined) === undefined, true, "an absent node has no fabricated identity");
+});
+
+test("effective numeric property-name types never depend on a property's value type", () => {
+  const { program, index } = createProgram(`
+    const text: { [key: number]: string } = { 9007199254740993: "value" };
+    const numeric: { [key: number]: number } = { 9007199254740993: 7 };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 2, "both actual checked contexts participate");
+  for (const [position, property] of properties.entries()) {
+    const name = Node_Name(property);
+    const selected = queries.getEffectivePropertyName(name);
+    assert.equal(selected?.kind, "numeric", `property ${position} has numeric checked key evidence`);
+    assert.equal((selected?.type.flags ?? 0) & TypeFlagsNumberLiteral, TypeFlagsNumberLiteral,
+      `property ${position} retains its already-computed checked numeric literal type`);
+    assert.equal(queries.getEffectivePropertyName(name)?.type === selected?.type, true,
+      `property ${position} never recomputes its checked key type`);
+  }
+  assert.equal((queries.getTypeAtLocation(Node_Name(properties[0]))?.type?.flags ?? 0) & TypeFlagsString, TypeFlagsString,
+    "the generic location query answers the value-type question and cannot be a key-type substitute");
+});
+
+test("effective names preserve actual bound member identities and completed object-literal names", () => {
+  const { program, index } = createProgram(`
+    class Holder { [+1] = 1; [-0] = 2; }
+    interface Contract { [+1]: number; [-0]: number; }
+    type Shape = { [+1]: number; [-0]: number; };
+    const object = { [-0]: 3 };
+    const { [-0]: value } = object;
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const names = findNodesByKind(index, KindComputedPropertyName);
+  assert.equal(names.length, 8, "all bound, object-literal and binding names are actual checked syntax");
+  for (const [position, expected] of ["+1", "-0", "+1", "-0", "+1", "-0", "0", "0"].entries()) {
+    const selected = queries.getEffectivePropertyName(names[position]);
+    assert.equal(selected?.kind, "numeric", `name ${position} retains its checked numeric literal type`);
+    assert.equal(selected?.name, expected, `name ${position} uses its actual checked identity at the one boundary`);
+    assert.equal(queries.getEffectivePropertyName(names[position]) === selected, true,
+      `name ${position} never reparses a signed token on a consumer path`);
+  }
+});
+
+test("object element evidence selects completed canonical symbols by exact declaration membership", () => {
+  const { program, index } = createProgram(`
+    interface Holder { [0]: number; }
+    const ordinary: Holder = { 0: 7 };
+    const computed: Holder = { [-0]: 7 };
+    const inferred = { [-0]: 7 };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 3, "ordinary, contextual negative zero and inferred negative zero");
+  const infos = properties.map(property => queries.getResolvedObjectLiteralElementInfo(property));
+  for (const [position, property] of properties.entries()) {
+    const info = infos[position];
+    assert.equal(info !== undefined, true, `element ${position} has exact completed evidence`);
+    assert.equal(queries.getSymbolName(info?.sourceElementSymbol), "0", `element ${position} uses the canonical checked name`);
+    assert.equal(queries.getSymbolDeclarations(info?.sourceElementSymbol).includes(property), true,
+      `element ${position} belongs to that exact completed source property`);
+    assert.equal(queries.typeToString(info?.sourceSelectedType), "number", `element ${position} keeps the checked property type`);
+    assert.equal(queries.getResolvedObjectLiteralElementInfo(property) === info, true,
+      `element ${position} is memoized by exact identity`);
+    assert.equal(Object.isFrozen(info), true, `element ${position} publishes immutable evidence`);
+  }
+  assert.equal(infos[0]?.sourceSelectedSymbol === infos[1]?.sourceSelectedSymbol, true,
+    "ordinary and negative zero select the same contextual member");
+  assert.equal(infos[2]?.sourceSelectedDeclaration === properties[2], true,
+    "an inferred negative-zero member selects its exact own declaration");
+});
+
+test("canonical object element symbols preserve generic, mapped, union and indexed contextual types", () => {
+  const { program, index } = createProgram(`
+    function generic<T>(input: T): { value: T } { return { value: input }; }
+    type Mapped = { [Key in "value"]: number };
+    const mapped: Mapped = { value: 1 };
+    const union: { kind: "number"; value: number } | { kind: "string"; value: string } = { kind: "number", value: 1 };
+    interface Callbacks { [name: string]: () => number; }
+    const indexed: Callbacks = { run() { return 2; } };
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const properties = findNodesByKind(index, KindPropertyAssignment);
+  assert.equal(properties.length, 4, "generic, mapped and both discriminated-union members");
+  const expected = ["T", "number", '"number"', "number"];
+  for (const [position, property] of properties.entries()) {
+    const info = queries.getResolvedObjectLiteralElementInfo(property);
+    assert.equal(info !== undefined, true, `context ${position} retains exact evidence`);
+    assert.equal(queries.typeToString(info?.sourceSelectedType), expected[position], `context ${position} keeps the checker-selected type`);
+    assert.equal(queries.getSymbolDeclarations(info?.sourceElementSymbol).includes(property), true,
+      `context ${position} keeps exact source declaration membership`);
+  }
+  const method = findNodesByKind(index, KindMethodDeclaration)[0];
+  const info = queries.getResolvedObjectLiteralElementInfo(method);
+  assert.equal(info !== undefined, true, "an indexed callback has evidence without a named contextual property");
+  assert.equal(info?.sourceSelectedSymbol === undefined, true, "the contextual index is not a fabricated named symbol");
+  assert.equal(info?.sourceSelectedDeclarations.length, 0, "the contextual index has no named declarations");
+  assert.equal(queries.typeToString(info?.sourceSelectedType), "() => number", "the index signature still supplies the checked function type");
+});
 
 test("property selection uses the selected symbol with distinct read and write types", () => {
   const { program, index } = createProgram(`
@@ -41,8 +312,8 @@ test("property selection uses the selected symbol with distinct read and write t
   const readAccess = valueAccesses[0];
   const writeAccess = valueAccesses[1];
   const selectedSymbol = queries.getSymbolAtLocation(Node_Name(readAccess));
-  const readInfo = queries.getResolvedPropertyAccessInfo(readAccess);
-  const writeInfo = queries.getResolvedPropertyAccessInfo(writeAccess);
+  const readInfo = memberAccess(queries.getResolvedPropertyAccessInfo(readAccess));
+  const writeInfo = memberAccess(queries.getResolvedPropertyAccessInfo(writeAccess));
 
   assert.equal(queries.getSymbolName(selectedSymbol), "value");
   assert.equal((queries.getTypeOfSymbol(selectedSymbol)?.flags ?? 0) & TypeFlagsString, TypeFlagsString);
@@ -61,7 +332,7 @@ test("property selection uses the selected symbol with distinct read and write t
   assert.equal(readInfo?.selectedWriteDeclaration, undefined);
   assert.equal(writeInfo?.selectedReadDeclaration, undefined);
   assert.equal(writeInfo?.selectedWriteDeclaration?.Kind, KindSetAccessor);
-  const repeatedRead = queries.getResolvedPropertyAccessInfo(readAccess);
+  const repeatedRead = memberAccess(queries.getResolvedPropertyAccessInfo(readAccess));
   assert.ok(
     repeatedRead === readInfo,
     "Repeated property queries must retain the exact resolved access result.",
@@ -102,15 +373,15 @@ test("receiver evidence identifies the intrinsic global object without spelling 
   assert.equal(properties.length, 4);
   const expected = ["global-object", "global-object", undefined, undefined];
   for (const [index, node] of properties.entries()) {
-    const info = queries.getResolvedPropertyAccessInfo(node);
+    const info = memberAccess(queries.getResolvedPropertyAccessInfo(node));
     assert.equal(info?.receiver.intrinsic, expected[index]);
-    assert.equal(queries.getResolvedPropertyAccessInfo(node), info);
+    assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(node)) === info, "a repeated read returns the cached record");
     assert.ok(Object.isFrozen(info?.receiver));
   }
   const element = findNodesByKind(index, KindElementAccessExpression)[0];
   const info = queries.getResolvedElementAccessInfo(element);
   assert.equal(info?.receiver.intrinsic, "global-object");
-  assert.equal(queries.getResolvedElementAccessInfo(element), info);
+  assert.ok(queries.getResolvedElementAccessInfo(element) === info, "a repeated element read returns the cached record");
 });
 
 test("property access info preserves compound read-write and optional-chain roles", () => {
@@ -128,8 +399,8 @@ test("property access info preserves compound read-write and optional-chain role
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const valueAccess = findPropertyAccessByName(index, "value", () => true);
   const advanceAccess = findPropertyAccessByName(index, "advance", () => true);
-  const valueInfo = queries.getResolvedPropertyAccessInfo(valueAccess);
-  const advanceInfo = queries.getResolvedPropertyAccessInfo(advanceAccess);
+  const valueInfo = memberAccess(queries.getResolvedPropertyAccessInfo(valueAccess));
+  const advanceInfo = memberAccess(queries.getResolvedPropertyAccessInfo(advanceAccess));
 
   assert.equal(valueInfo?.accessMode, "read-write");
   assert.equal((valueInfo?.sourceReadType?.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
@@ -154,8 +425,8 @@ test("property access info distinguishes the exact receiver value from its selec
   const accesses = findNodesByKind(index, KindPropertyAccessExpression)
     .filter((node) => Node_Text(Node_Name(node)) === "value");
   assert.equal(accesses.length, 2);
-  const direct = queries.getResolvedPropertyAccessInfo(accesses[0]);
-  const aliased = queries.getResolvedPropertyAccessInfo(accesses[1]);
+  const direct = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0]));
+  const aliased = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[1]));
 
   assert.equal(direct?.receiver.valueDeclaration?.Kind, KindClassDeclaration);
   assert.equal(aliased?.receiver.valueDeclaration?.Kind, KindVariableDeclaration);
@@ -186,7 +457,7 @@ test("property access info retains both exact accessor declarations for read-wri
   `);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const access = findPropertyAccessByName(index, "value", () => true);
-  const selected = queries.getResolvedPropertyAccessInfo(access);
+  const selected = memberAccess(queries.getResolvedPropertyAccessInfo(access));
 
   assert.equal(selected?.accessMode, "read-write");
   assert.equal(selected?.selectedReadDeclaration?.Kind, KindGetAccessor);
@@ -265,6 +536,48 @@ test("element access info preserves mapped declarations and proven tuple ordinal
     "Repeated tuple-element queries must retain exact checker read-type identity.",
   );
   assert.equal(repeatedTuple?.selectedElementIndex, tuple?.selectedElementIndex);
+});
+
+test("named index access retains the exact index, writability and immutable selection", () => {
+  const { program, index } = createProgram(`
+    type Dictionary<Value> = { [Key in string]: Value };
+    declare const mapped: Dictionary<number>;
+    mapped.answer = 1;
+    mapped.answer++;
+    const value = mapped.answer;
+    declare const indexed: { [key: string]: number; fixed: number };
+    const dynamic = indexed.answer;
+    const fixed = indexed.fixed;
+    declare const readonly: { readonly [key: string]: number };
+    const immutable = readonly.answer;
+    declare const patterned: { [key: \`entry_\${string}\`]: number; [key: string]: string | number };
+    const pattern = patterned.entry_first;
+  `, { noLib: false });
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const accesses = findNodesByKind(index, KindPropertyAccessExpression);
+  const mapped = accesses.slice(0, 3).map(access => memberAccess(queries.getResolvedPropertyAccessInfo(access)));
+  assert.deepEqual(mapped.map(selection => selection?.accessMode), ["write", "read-write", "read"]);
+  for (const selection of mapped) {
+    assert.ok(selection?.selectedIndex);
+    assert.equal(selection.selectedIndex.readonly, false);
+    assert.equal(selection.writable, true);
+    assert.equal(selection.selectedIndex.declaration, undefined);
+    assert.ok(Object.isFrozen(selection) && Object.isFrozen(selection.selectedIndex));
+    assert.ok(Object.isFrozen(selection.selectedIndex.components));
+  }
+  const dynamic = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[3]));
+  assert.ok(dynamic?.selectedIndex?.declaration);
+  assert.equal(dynamic.selectedIndex.readonly, false);
+  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[4]))?.selectedIndex === undefined, "a fixed member selects no index signature");
+  const immutable = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[5]));
+  assert.ok(immutable?.selectedIndex);
+  assert.equal(immutable.selectedIndex.readonly, true);
+  assert.equal(immutable.writable, false);
+  const pattern = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[6]));
+  assert.ok(pattern?.selectedIndex?.valueType);
+  assert.equal(pattern.selectedIndex.valueType.flags & TypeFlagsNumber, TypeFlagsNumber);
+  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0])) === mapped[0], "a repeated read returns the cached record");
+  assertCleanSemanticDiagnostics(program, index);
 });
 
 test("element access exposes no fixed tuple ordinal without one exact checker proof", () => {
@@ -371,6 +684,8 @@ test("iteration info preserves declaration and assignment element selection", ()
 
   const declaration = queries.getResolvedIterationInfo(statements[0]);
   const assignment = queries.getResolvedIterationInfo(statements[1]);
+  assert.ok(declaration?.iterationKind === "for-of" && declaration.subject.node === statements[0]);
+  assert.ok(assignment?.iterationKind === "for-of" && assignment.subject.node === statements[1]);
   assert.equal(declaration?.iterationKind, "for-of");
   assert.equal(assignment?.iterationKind, "for-of");
   assert.equal((declaration?.sourceElementType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
@@ -382,6 +697,7 @@ test("iteration info preserves declaration and assignment element selection", ()
   assert.equal(Object.isFrozen(declaration?.mechanism), true);
   assertCleanSemanticDiagnostics(program, index);
   const repeatedDeclaration = queries.getResolvedIterationInfo(statements[0]);
+  assert.ok(repeatedDeclaration?.iterationKind === "for-of" && repeatedDeclaration.subject.node === statements[0]);
   assert.ok(
     repeatedDeclaration === declaration,
     "Repeated declaration iteration queries must retain the exact resolved iteration result.",
@@ -398,6 +714,7 @@ test("iteration info preserves declaration and assignment element selection", ()
   assert.equal(repeatedDeclaration?.mechanism.kind, declaration?.mechanism.kind);
 
   const repeatedAssignment = queries.getResolvedIterationInfo(statements[1]);
+  assert.ok(repeatedAssignment?.iterationKind === "for-of" && repeatedAssignment.subject.node === statements[1]);
   assert.ok(
     repeatedAssignment === assignment,
     "Repeated assignment iteration queries must retain the exact resolved iteration result.",
@@ -427,8 +744,151 @@ test("iteration info preserves for-await-of element and protocol evidence", () =
   assert.equal(statements.length, 1);
 
   const selection = queries.getResolvedIterationInfo(statements[0]);
+  assert.ok(selection?.iterationKind === "for-await-of" && selection.subject.node === statements[0]);
   assert.equal(selection?.iterationKind, "for-await-of");
   assert.equal((selection?.sourceElementType.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
   assert.equal(selection?.mechanism.kind, "asynchronous-iterator-protocol");
   assertCleanSemanticDiagnostics(program, index);
+});
+
+test("iteration subjects retain for-in, for-of and for-await-of facts without a synthetic loop", () => {
+  const { program, index } = createProgram(`
+    declare const properties: { readonly value: number };
+    declare const values: Iterable<number>;
+    for (const key in properties) { key; }
+    for (const value of values) { value; }
+    async function consume(input: AsyncIterable<number>): Promise<void> {
+      for await (const value of input) { value; }
+    }
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const forIn = findNodesByKind(index, KindForInStatement)[0];
+  const forOf = findNodesByKind(index, KindForOfStatement);
+  const cases = [
+    { node: forIn, subject: "for-in", iteration: "for-in" },
+    { node: forOf[0], subject: "for-of", iteration: "for-of" },
+    { node: forOf[1], subject: "for-of", iteration: "for-await-of" },
+  ] as const;
+  for (const entry of cases) {
+    const result = queries.getResolvedIterationInfo(entry.node);
+    assert.equal(result?.subject.kind, entry.subject, entry.iteration);
+    assert.equal(result?.subject.node === entry.node, true, entry.iteration);
+    assert.equal(result?.iterationKind, entry.iteration, entry.iteration);
+    assert.equal(result?.mechanism !== undefined, true, entry.iteration);
+    assert.equal(Object.isFrozen(result?.subject), true, entry.iteration);
+  }
+});
+
+test("mapped property metadata retains actual mapped owners, checked keys and synthetic property origins", () => {
+  const { program, index } = createProgram(`
+    type int32 = number;
+    type Flags = { [Key in "left" | "right"]: number };
+    type Numeric = { [Key in 1 | 2]: number };
+    declare const first: unique symbol;
+    declare const second: unique symbol;
+    type Symbols = { [Key in typeof first | typeof second]: number };
+    type Data = { x: int32 };
+    class Input { value: int32 = 1; }
+    type Fields = { [Key in keyof Input]: Input[Key] };
+    declare const flags: Flags;
+    declare const numeric: Numeric;
+    declare const symbols: Symbols;
+    declare const record: Record<"a" | "b", int32>;
+    declare const partial: Partial<Data>;
+    declare const immutable: Readonly<Data>;
+    declare const fields: Fields;
+    declare const ordinary: Data;
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const shape = createTypeShapeQueries(program, { sourceFile: index });
+  const variables = findNodesByKind(index, KindVariableDeclaration);
+  const aliases = findNodesByKind(index, KindTypeAliasDeclaration);
+  const variable = (name: string) => variables.find(node => Node_Text(Node_Name(node)) === name);
+  const alias = (name: string) => aliases.find(node => Node_Text(Node_Name(node)) === name);
+  const original = findNodesByKind(Node_Type(alias("Data")), KindPropertySignature)[0];
+  const field = findNodesByKind(index, KindPropertyDeclaration)[0];
+  const cases = [
+    { name: "flags", owner: Node_Type(alias("Flags")), keys: ["left", "right"], origin: undefined },
+    { name: "numeric", owner: Node_Type(alias("Numeric")), keys: [1, 2], origin: undefined },
+    { name: "symbols", owner: Node_Type(alias("Symbols")), keys: undefined, origin: undefined },
+    { name: "record", owner: undefined, keys: ["a", "b"], origin: undefined },
+    { name: "partial", owner: undefined, keys: ["x"], origin: original },
+    { name: "immutable", owner: undefined, keys: ["x"], origin: original },
+    { name: "fields", owner: Node_Type(alias("Fields")), keys: ["value"], origin: field },
+  ];
+  for (const entry of cases) {
+    const type = queries.getTypeAtLocation(variable(entry.name))?.type;
+    const properties = shape.getPropertyInfos(type);
+    const expectedOwner = entry.owner ?? Node_Type(queries.getPrimarySymbolDeclaration(queries.getTypeAliasSymbol(type)));
+    assert.equal(expectedOwner?.Kind, KindMappedType, entry.name);
+    assert.equal(properties.length, entry.keys?.length ?? 2, entry.name);
+    const keys: (string | number)[] = [];
+    const keyTypes = new Set(properties.map(property => property.mapped?.keyType));
+    assert.equal(keyTypes.size, properties.length, entry.name);
+    for (const property of properties) {
+      const mapped = property.mapped;
+      assert.equal(mapped !== undefined && Object.isFrozen(mapped), true, entry.name);
+      assert.equal(mapped?.declaration === expectedOwner, true, entry.name);
+      assert.equal(mapped?.keyType !== undefined, true, entry.name);
+      if (entry.origin !== undefined) {
+        assert.equal(mapped?.syntheticOrigin === queries.getSymbolAtLocation(Node_Name(entry.origin)), true, entry.name);
+        assert.equal(queries.getSymbolDeclarations(mapped?.syntheticOrigin).includes(entry.origin), true, entry.name);
+      } else assert.equal(mapped?.syntheticOrigin === undefined, true, entry.name);
+      if (entry.name === "symbols") {
+        const declaration = queries.getPrimarySymbolDeclaration(queries.getTypeSymbol(mapped?.keyType));
+        assert.equal(declaration !== undefined && [variable("first"), variable("second")].includes(declaration), true, entry.name);
+      } else {
+        const key = shape.getStringLiteralTypeValue(mapped?.keyType) ?? shape.getNumericLiteralTypeValue(mapped?.keyType);
+        assert.equal(typeof key === "string" || typeof key === "number", true, entry.name);
+        if (typeof key === "string" || typeof key === "number") keys.push(key);
+      }
+    }
+    if (entry.keys !== undefined) assert.deepEqual(keys, entry.keys, entry.name);
+    const repeated = shape.getPropertyInfos(type);
+    assert.equal(repeated.every((property, position) => property.mapped?.keyType === properties[position]?.mapped?.keyType &&
+      property.mapped?.syntheticOrigin === properties[position]?.mapped?.syntheticOrigin &&
+      property.mapped?.declaration === properties[position]?.mapped?.declaration), true, entry.name);
+  }
+  assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))?.type).every(property => property.mapped === undefined), true);
+});
+
+test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {
+  const cases = [
+    { name: "array", setup: "declare const source: number[];", expression: "source", element: "number" },
+    { name: "tuple", setup: "declare const source: [number, number, number];", expression: "source", element: "number" },
+    { name: "mixed-tuple", setup: "declare const source: [number, bigint, string];", expression: "source", element: "bigint | number | string" },
+    { name: "string", setup: "declare const source: string;", expression: "source", element: "string" },
+    { name: "iterable", setup: "declare const source: Iterable<number>;", expression: "source", element: "number" },
+    { name: "set", setup: "declare const source: Set<number>;", expression: "source", element: "number" },
+    { name: "map-keys", setup: "declare const source: Map<number, string>;", expression: "source.keys()", element: "number" },
+    { name: "map-values", setup: "declare const source: Map<number, string>;", expression: "source.values()", element: "string" },
+    { name: "map-entries", setup: "declare const source: Map<number, string>;", expression: "source.entries()", element: "[number, string]" },
+    { name: "generator", setup: "function* source(): Generator<number, void, unknown> { yield 1; }", expression: "source()", element: "number" },
+  ] as const;
+  for (const entry of cases) {
+    const { program, index } = createProgram(`
+      ${entry.setup}
+      declare function take(...values: unknown[]): void;
+      const array = [...${entry.expression}];
+      take(...${entry.expression});
+    `, { noLib: false });
+    assertCleanSemanticDiagnostics(program, index);
+    const queries = createTypeCheckerQueries(program, { sourceFile: index });
+    const spreads = findNodesByKind(index, KindSpreadElement);
+    assert.equal(spreads.length, 2, entry.name);
+    for (const [position, spread] of spreads.entries()) {
+      const label = `${entry.name}:${position === 0 ? "array" : "call"}`;
+      const result = queries.getResolvedIterationInfo(spread);
+      assert.equal(result?.subject.kind, "spread", label);
+      assert.equal(result?.subject.node === spread, true, label);
+      assert.equal(result !== undefined && !("iterationKind" in result) && !("mechanism" in result), true, label);
+      assert.equal(result?.sourceIterableType === queries.getTypeAtLocation(Node_Expression(spread))?.type, true, label);
+      assert.equal(result?.sourceElementType === queries.getTypeAtLocation(spread)?.type, true, label);
+      assert.equal(queries.typeToString(result?.sourceElementType).split(" | ").sort().join(" | "), entry.element, label);
+      assert.equal(queries.getResolvedIterationInfo(spread) === result, true, label);
+      assert.equal(Object.isFrozen(result) && Object.isFrozen(result?.subject), true, label);
+    }
+  }
 });

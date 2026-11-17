@@ -5,6 +5,7 @@ export type ExtensionFactSubject = object;
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { SourceFile_FileName, type SourceFile } from "../internal/ast/ast.js";
+import type { Symbol } from "../internal/ast/symbol.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
   createSourceProgramQueries,
@@ -12,7 +13,10 @@ import {
 } from "./source-program.js";
 import type { ArgumentPassingMode } from "./argument-passing.js";
 import { isArgumentPassingMode } from "./argument-passing.js";
+import { isProviderWellKnownSymbolName, type ProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
+export type { ProviderWellKnownSymbolName } from "./provider-well-known-symbols.js";
 import type { ProviderVirtualDeclarationFact, SourcePrimitiveKind } from "./facts.js";
+import { providerVirtualDeclarationFactKey } from "./facts.js";
 import {
   defineExtensionFactKey,
   formatExtensionFactKeyForDisplay,
@@ -56,6 +60,7 @@ import {
   renderProviderFunctionSignatureMarker,
   type ProviderRenderedFunctionSignature,
 } from "./provider-callable-signatures.js";
+import { renderProviderSourcePrimitiveMarker, type ProviderRenderedSourcePrimitive, type ProviderSourcePrimitiveAnnotation } from "./provider-source-primitives.js";
 import {
   assertProviderAncillaryAggregateScalarCodeUnits,
   assertProviderBoundaryString,
@@ -192,6 +197,14 @@ type HostOwnedExtensionDiagnostic = ExtensionDiagnostic;
 
 interface ExtensionOwnerAuthority {
   readonly stack: string[];
+  /**
+   * Provenance of one provider registration call; it grants nothing and is not "who is acting" (that is `stack`).
+   * One writer: ExtensionHost's #registerSourceDeclarationProviderForExtension sets it to the extension id it has
+   * just checked, for the one registry call it makes, and restores what was there. One reader: the provider
+   * registry's registration takes it and clears it as its first act, before it reads anything of the provider.
+   * Null at every other time.
+   */
+  pendingRegistrarExtensionId: string | null;
 }
 
 interface ExtensionFactMutation {
@@ -292,6 +305,7 @@ export interface CompilerExtension {
   readonly identity: CompilerExtensionIdentity;
   readonly dependencies?: ExtensionDependencySpec;
   readonly initialize?: (context: ExtensionInitializeContext) => void;
+  readonly providerExportMaterialized?: (context: ProviderExportMaterializationContext) => void;
   readonly analyzeSource?: (context: SourceAnalysisContext) => void;
 }
 
@@ -336,6 +350,13 @@ export interface SourceAnalysisContext {
   readonly facts: SourceAnalysisFactAccess;
   readonly factResolver: SourceAnalysisFactResolver;
   readonly diagnostics: ExtensionDiagnosticWriter;
+}
+
+export interface ProviderExportMaterializationContext {
+  readonly symbol: Symbol;
+  readonly declaration: ProviderVirtualDeclarationFact;
+  readonly sourcePrimitives: readonly ProviderSourcePrimitiveAnnotation[];
+  readonly facts: Pick<SourceAnalysisFactAccess, "set">;
 }
 
 export interface ExtensionInitializeContext {
@@ -467,21 +488,6 @@ export type ProviderPropertyName =
   | { readonly kind: "number-literal"; readonly value: number }
   | { readonly kind: "well-known-symbol"; readonly name: ProviderWellKnownSymbolName };
 
-export type ProviderWellKnownSymbolName =
-  | "asyncIterator"
-  | "hasInstance"
-  | "isConcatSpreadable"
-  | "iterator"
-  | "match"
-  | "matchAll"
-  | "replace"
-  | "search"
-  | "species"
-  | "split"
-  | "toPrimitive"
-  | "toStringTag"
-  | "unscopables";
-
 export interface ProviderTypeParameterDeclaration {
   readonly name: string;
   readonly constraints?: readonly ProviderTypeExpression[];
@@ -530,6 +536,7 @@ export interface ProviderParameterDeclaration {
 export interface ProviderSignatureDeclaration {
   readonly id: string;
   readonly name?: string;
+  readonly accessibility?: "public" | "protected" | "protected-internal";
   readonly parameters: readonly ProviderParameterDeclaration[];
   readonly returnType?: ProviderTypeExpression;
   readonly typeParameters?: readonly ProviderTypeParameterDeclaration[];
@@ -614,6 +621,11 @@ export interface ProviderVirtualDeclarationDocument {
   readonly moduleSpecifier: string;
   readonly providerModuleId: string;
   readonly provider: ProviderIdentity;
+  /**
+   * The id of the extension whose initializer registered `provider`; null when the embedding host registered it
+   * directly. An extension id may be the empty string: compare with null, never by truthiness.
+   */
+  readonly registrarExtensionId: string | null;
   readonly declarationModel: ProviderDeclarationModel;
   readonly sourceText: string;
   readonly readOnly: true;
@@ -635,6 +647,8 @@ export interface SourceDeclarationProvider {
 
 interface RegisteredSourceDeclarationProvider {
   readonly identity: ProviderIdentity;
+  /** The extension whose initializer made this registration; null for the embedding host. Written once, here. */
+  readonly registrarExtensionId: string | null;
   readonly declarationMaterialization: SourceDeclarationMaterializationMode;
   readonly ownsModule: SourceDeclarationProvider["ownsModule"];
   readonly resolveModule: SourceDeclarationProvider["resolveModule"];
@@ -651,6 +665,7 @@ export interface ExtendedProgram<TProgram extends object = object> {
 
 export const extensionHostSetFact: unique symbol = Symbol("tsts.extensionHost.setFact");
 export const extensionHostRunSourceAnalysis: unique symbol = Symbol("tsts.extensionHost.runSourceAnalysis");
+export const extensionHostProviderExportMaterialized: unique symbol = Symbol("tsts.extensionHost.providerExportMaterialized");
 
 export interface AttachExtensionHostToProgramOptions {
   readonly bindCompilerProgram?: boolean;
@@ -692,7 +707,7 @@ export class ExtensionDiagnosticStore {
         diagnosticRanges: new Map(),
         savepoints: [],
         savepointStates: new WeakMap(),
-        ownerAuthority: { stack: [] },
+        ownerAuthority: { stack: [], pendingRegistrarExtensionId: null },
         rangesSealed: false,
       };
       this.#ownerId = undefined;
@@ -1853,7 +1868,16 @@ export class ProviderRegistry {
     this.#materializationRound = materializationRound;
   }
 
+  /**
+   * The one registration. Who asked is taken first: the id the host left pending for this call (an extension's
+   * checked initializer capability), or null when the embedding host calls directly. It is cleared as it is taken,
+   * so nothing this call runs, a getter of the provider included, and no call nested in it can see it. A provider
+   * object that is registered stays as it was registered: the call returns before any record is made.
+   */
   registerSourceDeclarationProvider(provider: SourceDeclarationProvider): boolean {
+    const authority = getDiagnosticStoreOwnerAuthority(this.#diagnostics);
+    const registrarExtensionId = authority.pendingRegistrarExtensionId;
+    authority.pendingRegistrarExtensionId = null;
     this.#assertHostOwnedRegistration("source declaration provider");
     if (this.#sourceDeclarationProviderRegistrations.has(provider)) {
       return true;
@@ -1862,7 +1886,7 @@ export class ProviderRegistry {
       this.#diagnostics.append(createRegistrationClosedDiagnostic("source declaration provider"));
       return false;
     }
-    const registration = snapshotSourceDeclarationProviderRegistration(provider);
+    const registration = snapshotSourceDeclarationProviderRegistration(provider, registrarExtensionId);
     if (registration.kind === "invalid") {
       this.#diagnostics.append(createHostDiagnostic({
         extensionCode: "INVALID_SOURCE_DECLARATION_PROVIDER",
@@ -2396,6 +2420,7 @@ export class ProviderRegistry {
     const artifactDeclarationModel = freezeProviderDeclarationModel(canonicalizeProviderAbiModel(declarationModel));
     const candidate = Object.freeze({
       providerIdentity: owner.provider.identity,
+      registrarExtensionId: owner.provider.registrarExtensionId,
       resolution,
       materialization: declarationRequest.materialization,
       declarationModel,
@@ -3264,6 +3289,7 @@ export class ProviderRegistry {
         moduleSpecifier: ownerResolution.moduleSpecifier,
         providerModuleId: ownerResolution.providerModuleId,
         provider: plan.candidate.providerIdentity,
+        registrarExtensionId: plan.candidate.registrarExtensionId,
         declarationModel: plan.declarationModel,
         sourceText,
         readOnly: true,
@@ -3430,6 +3456,7 @@ export class ProviderRegistry {
       moduleSpecifier: candidate.resolution.moduleSpecifier,
       providerModuleId: candidate.resolution.providerModuleId,
       provider: candidate.providerIdentity,
+      registrarExtensionId: candidate.registrarExtensionId,
       declarationModel,
       sourceText,
       readOnly: true,
@@ -3708,6 +3735,43 @@ export class ExtensionHost {
     return this.facts[factStoreSetForHost](subject, key, value, evidence);
   }
 
+  [extensionHostProviderExportMaterialized](symbol: Symbol, sourcePrimitives: readonly ProviderSourcePrimitiveAnnotation[]): void {
+    if (this.#semanticFinalizationState !== "open") {
+      throw new Error("Provider exports must materialize before semantic finalization.");
+    }
+    const declaration = this.facts.get(symbol, providerVirtualDeclarationFactKey);
+    if (declaration?.exportId === undefined || declaration.memberId !== undefined) {
+      throw new Error("Provider export materialization requires its published exact export identity.");
+    }
+    for (const extension of this.#extensions) {
+      const materialized = extension.providerExportMaterialized;
+      if (materialized === undefined) continue;
+      const attempt = this.#beginFactAttempt();
+      try {
+        const capabilities = this.#getOwnerCapabilities(extension.identity.id);
+        runWithExtensionOwnerAuthority(this.#ownerAuthority, extension.identity.id, () => {
+          const scope = createExtensionCapabilityScope();
+          try {
+            const facts = createSourceAnalysisFactAccess(capabilities.facts, scope);
+            materialized(Object.freeze({
+              symbol,
+              declaration,
+              sourcePrimitives: Object.freeze(sourcePrimitives.map(annotation => Object.freeze({ ...annotation }))),
+              facts: Object.freeze({ set: facts.set }),
+            }));
+          } finally {
+            revokeExtensionCapabilityScope(scope);
+          }
+        });
+        this.#commitFactAttempt(attempt);
+      } catch (error) {
+        const settledError = this.#rollbackFactAttemptsAfterFailure(error, attempt);
+        this.#failSemanticFinalization();
+        throw settledError;
+      }
+    }
+  }
+
   constructor(program: object, options: ExtensionHostOptions = {}) {
     this.#program = program;
     this.diagnostics = new ExtensionDiagnosticStore();
@@ -3821,10 +3885,15 @@ export class ExtensionHost {
     provider: SourceDeclarationProvider,
   ): boolean {
     this.#assertRegistrationOwner(extensionId, "source declaration provider");
-    return runWithoutExtensionOwnerAuthority(
-      this.#ownerAuthority,
-      () => this.providers.registerSourceDeclarationProvider(provider),
-    );
+    return runWithoutExtensionOwnerAuthority(this.#ownerAuthority, () => {
+      const previous = this.#ownerAuthority.pendingRegistrarExtensionId;
+      this.#ownerAuthority.pendingRegistrarExtensionId = extensionId;
+      try {
+        return this.providers.registerSourceDeclarationProvider(provider);
+      } finally {
+        this.#ownerAuthority.pendingRegistrarExtensionId = previous;
+      }
+    });
   }
 
   #failSemanticFinalization(): void {
@@ -4475,6 +4544,8 @@ function snapshotCompilerExtension(extension: CompilerExtension): CompilerExtens
     identity,
     ...(dependencies === undefined ? {} : { dependencies }),
     ...(extension.initialize === undefined ? {} : { initialize: extension.initialize }),
+    ...(extension.providerExportMaterialized === undefined
+      ? {} : { providerExportMaterialized: extension.providerExportMaterialized }),
     ...(extension.analyzeSource === undefined ? {} : { analyzeSource: extension.analyzeSource }),
   });
 }
@@ -5384,6 +5455,7 @@ type SourceDeclarationProviderRegistrationSnapshot =
 
 function snapshotSourceDeclarationProviderRegistration(
   provider: SourceDeclarationProvider,
+  registrarExtensionId: string | null,
 ): SourceDeclarationProviderRegistrationSnapshot {
   try {
     const identity = snapshotProviderIdentity(provider.identity);
@@ -5407,6 +5479,7 @@ function snapshotSourceDeclarationProviderRegistration(
       kind: "valid",
       provider: Object.freeze({
         identity,
+        registrarExtensionId,
         declarationMaterialization,
         ownsModule: (specifier: string, context: ProviderModuleContext) => ownsModule.call(provider, specifier, context),
         resolveModule: (specifier: string, context: ProviderModuleContext) => resolveModule.call(provider, specifier, context),
@@ -5484,6 +5557,7 @@ type ProviderDeclarationLoadOutcome = Exclude<ProviderDeclarationLoadResult, { r
 
 interface ProviderDeclarationCandidate {
   readonly providerIdentity: ProviderIdentity;
+  readonly registrarExtensionId: string | null;
   readonly resolution: ProviderModuleResolution;
   readonly materialization: ProviderDeclarationMaterialization;
   readonly declarationModel: ProviderDeclarationModel;
@@ -6087,7 +6161,12 @@ function providerVirtualCompilerMetadataEqual(
     && left.directDeclarations.every((declaration, index) =>
       declaration.id === right.directDeclarations[index]?.id
       && declaration.localName === right.directDeclarations[index]?.localName)
-    && providerRenderedFunctionSignaturesEqual(left.renderedFunctionSignatures, right.renderedFunctionSignatures);
+    && providerRenderedFunctionSignaturesEqual(left.renderedFunctionSignatures, right.renderedFunctionSignatures)
+    && left.renderedSourcePrimitives.length === right.renderedSourcePrimitives.length
+    && left.renderedSourcePrimitives.every((primitive, index) =>
+      primitive.marker === right.renderedSourcePrimitives[index]?.marker
+      && primitive.exportId === right.renderedSourcePrimitives[index]?.exportId
+      && primitive.primitive === right.renderedSourcePrimitives[index]?.primitive);
 }
 
 function providerDeclarationMaterializationEquals(
@@ -6128,6 +6207,7 @@ function renderProviderDeclarationModel(model: ProviderDeclarationModel, options
     exactImportsInTypePositions: options.exactImportsInTypePositions === true,
     directDeclarations: new Map(),
     renderedFunctionSignatures: [],
+    renderedSourcePrimitives: [],
   };
   const hasDirectDeclarations = model.exports.some((declaration) =>
     !canonicalLocalNameByExportName.has(getProviderSourceExportName(declaration)));
@@ -6224,6 +6304,7 @@ function snapshotProviderVirtualCompilerMetadata(context: ProviderRenderContext)
     directDeclarations: Object.freeze([...context.directDeclarations].map(([id, localName]) =>
       Object.freeze({ id, localName }))),
     renderedFunctionSignatures: Object.freeze([...context.renderedFunctionSignatures]),
+    renderedSourcePrimitives: Object.freeze([...context.renderedSourcePrimitives]),
   });
 }
 
@@ -6254,6 +6335,7 @@ interface ProviderRenderContext {
   readonly exactImportsInTypePositions: boolean;
   readonly directDeclarations: Map<string, string>;
   readonly renderedFunctionSignatures: ProviderRenderedFunctionSignature[];
+  readonly renderedSourcePrimitives: ProviderRenderedSourcePrimitive[];
   readonly declaration?: ProviderExportDeclaration;
   readonly member?: ProviderMemberDeclaration;
 }
@@ -6315,12 +6397,12 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
   let rendered: string;
   switch (declaration.kind) {
     case "class": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${declarationPrefix}class ${declarationName}${typeParameters}${renderProviderHeritage(declaration.heritage ?? [], "class", declarationContext)} {\n${renderProviderClassMembers(declaration, declarationContext)}\n}`;
       break;
     }
     case "interface": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${typePrefix}interface ${declarationName}${typeParameters}${renderProviderHeritage(declaration.heritage ?? [], "interface", declarationContext)} {\n${renderProviderMembers(declaration.members ?? [], declarationContext)}\n}`;
       break;
     }
@@ -6333,7 +6415,7 @@ function renderProviderExportDeclaration(declaration: ProviderExportDeclaration,
       break;
     }
     case "type": {
-      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext);
+      const typeParameters = renderProviderTypeParameters(declaration.typeParameters ?? [], declarationContext, "type");
       rendered = `${typePrefix}type ${declarationName}${typeParameters} = ${renderProviderTypeExpression(declaration.type!, declarationContext)};`;
       break;
     }
@@ -6540,22 +6622,28 @@ function getProviderPropertyNameText(name: ProviderPropertyName): string {
 
 function renderProviderSignatures(name: string, signatures: readonly ProviderSignatureDeclaration[], context: ProviderRenderContext, constructor = false): readonly string[] {
   return signatures.map((signature) => {
-    const typeParameters = renderProviderTypeParameters(signature.typeParameters ?? [], context);
+    const typeParameters = renderProviderTypeParameters(signature.typeParameters ?? [], context, "signature");
     const parameters = signature.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ");
     const returnType = constructor ? "" : `: ${renderProviderTypeExpression(signature.returnType ?? { kind: "void" }, context)}`;
-    return `${name}${typeParameters}(${parameters})${returnType};`;
+    const accessibility = constructor && (signature.accessibility === "protected" ||
+      signature.accessibility === "protected-internal") ? "protected " : "";
+    return `${accessibility}${name}${typeParameters}(${parameters})${returnType};`;
   });
 }
 
-function renderProviderTypeParameters(typeParameters: readonly ProviderTypeParameterDeclaration[], context: ProviderRenderContext): string {
+function renderProviderTypeParameters(typeParameters: readonly ProviderTypeParameterDeclaration[], context: ProviderRenderContext, scope: "type" | "signature"): string {
   if (typeParameters.length === 0) {
     return "";
   }
   return `<${typeParameters.map((parameter) => {
+    if (scope === "signature" && parameter.variance !== undefined) {
+      throw new Error("Provider signature type parameters cannot declare type variance.");
+    }
+    const variance = parameter.variance === undefined ? "" : parameter.variance === "invariant" ? "in out " : `${parameter.variance} `;
     const constraints = parameter.constraints ?? [];
     const constraintText = constraints.length === 0 ? "" : ` extends ${constraints.map((constraint) => renderProviderTypeExpression(constraint, context)).join(" & ")}`;
     const defaultText = parameter.defaultType === undefined ? "" : ` = ${renderProviderTypeExpression(parameter.defaultType, context)}`;
-    return `${parameter.name}${constraintText}${defaultText}`;
+    return `${variance}${parameter.name}${constraintText}${defaultText}`;
   }).join(", ")}>`;
 }
 
@@ -6599,8 +6687,14 @@ function renderProviderTypeExpressionWorker(type: ProviderTypeExpression, parent
     case "bigint":
     case "object":
       return type.kind;
-    case "source-primitive":
-      return renderSourcePrimitiveType(type.name);
+    case "source-primitive": {
+      if (context.declaration === undefined) {
+        throw new Error("Provider source primitive was rendered without an owning declaration.");
+      }
+      const marker = context.renderedSourcePrimitives.length;
+      context.renderedSourcePrimitives.push(Object.freeze({ marker, exportId: context.declaration.id, primitive: type.name }));
+      return `(${renderProviderSourcePrimitiveMarker(marker)}${renderSourcePrimitiveType(type.name)})`;
+    }
     case "source-global":
       return type.typeArguments === undefined || type.typeArguments.length === 0
         ? `globalThis.${type.name}`
@@ -6630,7 +6724,7 @@ function renderProviderTypeExpressionWorker(type: ProviderTypeExpression, parent
         type,
         marker,
       ));
-      const text = `${renderProviderTypeParameters(type.typeParameters ?? [], context)}(${type.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ")}) => ${renderProviderTypeExpression(type.returnType, context)}`;
+      const text = `${renderProviderTypeParameters(type.typeParameters ?? [], context, "signature")}(${type.parameters.map((parameter) => renderProviderParameter(parameter, context)).join(", ")}) => ${renderProviderTypeExpression(type.returnType, context)}`;
       const marked = `(${renderProviderFunctionSignatureMarker(marker)}${text})`;
       return parentPrecedence > providerTypePrecedenceNone ? `(${marked})` : marked;
     }
@@ -7291,7 +7385,8 @@ function isValidProviderExportDeclaration(value: ProviderExportDeclaration): boo
     && (value.type === undefined || isValidProviderTypeExpression(value.type))
     && (value.typeParameters ?? []).every(isValidProviderTypeParameterDeclaration)
     && (value.heritage ?? []).every(isValidProviderHeritageDeclaration)
-    && (value.signatures ?? []).every(isValidProviderSignatureDeclaration)
+    && (value.signatures ?? []).every(signature =>
+      signature.accessibility === undefined && isValidProviderSignatureDeclaration(signature))
     && (value.kind === "enum"
       ? (value.members ?? []).every(isValidProviderEnumMemberDeclaration)
       : value.kind === "namespace" || value.kind === "function"
@@ -7507,6 +7602,7 @@ function hasRequiredProviderExportShape(value: ProviderExportDeclaration): boole
 function isValidProviderMemberDeclaration(value: ProviderMemberDeclaration): boolean {
   return value.id.length > 0
     && (value.kind === "constructor" || isValidProviderPropertyName(value.name))
+    && (value.kind === "constructor" || (value.signatures ?? []).every(signature => signature.accessibility === undefined))
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderMemberShape(value)
     && (value.type === undefined || isValidProviderTypeExpression(value.type))
@@ -7531,7 +7627,8 @@ function isValidProviderNamespaceMemberDeclaration(value: ProviderMemberDeclarat
     && hasRequiredProviderMemberShape(value)
     && hasNoUnrenderedProviderNamespaceMemberShape(value)
     && (value.type === undefined || isValidProviderTypeExpression(value.type))
-    && (value.signatures ?? []).every(isValidProviderSignatureDeclaration);
+    && (value.signatures ?? []).every(signature =>
+      signature.accessibility === undefined && isValidProviderSignatureDeclaration(signature));
 }
 
 function hasNoUnrenderedProviderMemberShape(value: ProviderMemberDeclaration): boolean {
@@ -7583,6 +7680,8 @@ function hasRequiredProviderMemberShape(value: ProviderMemberDeclaration): boole
 function isValidProviderSignatureDeclaration(value: ProviderSignatureDeclaration): boolean {
   return value.id.length > 0
     && (value.name === undefined || isIdentifierText(value.name))
+    && (value.accessibility === undefined || value.accessibility === "public" ||
+      value.accessibility === "protected" || value.accessibility === "protected-internal")
     && value.parameters.every(isValidProviderParameterDeclaration)
     && (value.returnType === undefined || isValidProviderTypeExpression(value.returnType))
     && (value.typeParameters ?? []).every(isValidProviderTypeParameterDeclaration);
@@ -7976,27 +8075,6 @@ function isValidProviderNamespaceMemberName(name: ProviderPropertyName): boolean
     return isIdentifierText(name);
   }
   return name.kind === "identifier" && isIdentifierText(name.text);
-}
-
-function isProviderWellKnownSymbolName(name: string): name is ProviderWellKnownSymbolName {
-  switch (name) {
-    case "asyncIterator":
-    case "hasInstance":
-    case "isConcatSpreadable":
-    case "iterator":
-    case "match":
-    case "matchAll":
-    case "replace":
-    case "search":
-    case "species":
-    case "split":
-    case "toPrimitive":
-    case "toStringTag":
-    case "unscopables":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function isKnownSourcePrimitive(name: SourcePrimitiveKind): boolean {

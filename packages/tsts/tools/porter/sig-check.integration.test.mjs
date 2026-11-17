@@ -16,6 +16,31 @@ async function tryLoad() {
 
 const ANNO = { tag: "@tsgo-unit", idSeparator: "::", methodNameJoin: "_" };
 
+test("integration: actual UTF-8 source ranges preserve literal and raw signature text", async (t) => {
+  const api = await tryLoad();
+  if (!api) return t.skip("TSTS dist not built/fresh");
+  const source = `// Actual multibyte prefix: é λ 🙂
+/** @tsgo-unit {"id":"m::f.go::func::source","kind":"func"} */
+export function source(input: null | undefined | false | 17 | -2): keyof { item: string } { throw 0; }
+/** @tsgo-unit {"id":"m::f.go::varGroup::first","kind":"varGroup"} */
+export const first: null = null;
+// Second multibyte prefix: 漢字
+/** @tsgo-unit {"id":"m::f.go::varGroup::second","kind":"varGroup"} */
+export const second: 29 = 29;
+`;
+  const units = extractFileDescriptors(api, "pkg/unicode.ts", source, ANNO);
+  assert.equal(units.length, 3);
+  const actual = units[0].descriptor;
+  const ascii = extractFileDescriptors(api, "pkg/unicode.ts", source.replace("é λ 🙂", "ASCII").replace("漢字", "ASCII"), ANNO);
+  assert.equal(canonicalKey(actual.params[0].type), canonicalKey(ascii[0].descriptor.params[0].type));
+  assert.equal(canonicalKey(actual.params[0].type).includes("L:null"), true);
+  assert.equal(canonicalKey(actual.ret), "X:keyof { item: string }");
+  assert.equal(units[1].descriptor.decls[0].name, "first");
+  assert.equal(canonicalKey(units[1].descriptor.decls[0].type), "L:null");
+  assert.equal(units[2].descriptor.decls[0].name, "second");
+  assert.equal(canonicalKey(units[2].descriptor.decls[0].type), canonicalKey(ascii[2].descriptor.decls[0].type));
+});
+
 test("integration: extract a function signature (rest + generics + import-resolved types)", async (t) => {
   const api = await tryLoad();
   if (!api) return t.skip("TSTS dist not built/fresh");

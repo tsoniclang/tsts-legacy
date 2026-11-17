@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -26,34 +27,34 @@ test("checked source exposes exact constructor selection through the direct call
   assert.equal(constructions.length, 1);
   const construction = constructions[0];
   const syntax = source.ast.as.AsNewExpression(construction);
-  const selected = source.checker.getResolvedCallInfo(construction);
+  const selected = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
 
-  assert.equal(selected?.outcome, "applicable");
-  assert.equal(selected?.sourceSelectedSignatureKind, "resolved");
+  assert.equal(selected?.kind, "applicable");
+  assert.equal(selected?.kind, "applicable");
   assert.ok(
-    selected?.sourceCallee.expression === syntax?.Expression,
+    selected?.selection.callee.expression === syntax?.Expression,
     "Constructor evidence must retain the exact authored callee expression.",
   );
-  assert.equal(selected?.sourceSelectedSignatureParameters.length, 1);
-  assert.equal(selected?.sourceSelectedSignatureParameters[0]?.parameterName, "value");
+  assert.equal(selected?.selection.parameters.length, 1);
+  assert.equal(selected?.selection.parameters[0]?.parameterName, "value");
   assert.equal(
-    source.checker.typeToString(selected?.sourceSelectedSignatureParameters[0]?.selectedType),
+    source.checker.typeToString(selected?.selection.parameters[0]?.selectedType),
     "number",
   );
-  assert.equal(selected?.sourceArguments.length, 1);
-  assert.equal(source.checker.typeToString(selected?.sourceResultType), "Box");
-  assert.equal(selected?.sourceReceiver, undefined);
-  const repeated = source.checker.getResolvedCallInfo(construction);
+  assert.equal(selected?.selection.argumentValues.length, 1);
+  assert.equal(source.checker.typeToString(selected?.resultType), "Box");
+  assert.equal(selected?.selection.application.receiver === undefined, true);
+  const repeated = requireApplicableCallInfo(source.checker.getResolvedCallInfo(construction));
   assert.ok(
     repeated === selected,
     "Repeated constructor queries must retain the exact resolved call result.",
   );
   assert.ok(
-    repeated?.selectedSignature === selected?.selectedSignature,
+    repeated?.selection.application.instantiatedSignature === selected?.selection.application.instantiatedSignature,
     "Repeated constructor queries must retain the exact selected signature.",
   );
   assert.ok(
-    repeated?.sourceResultType === selected?.sourceResultType,
+    repeated?.resultType === selected?.resultType,
     "Repeated constructor queries must retain the exact result type.",
   );
 });
@@ -87,17 +88,17 @@ test("checked source exposes operator syntax and checker-owned operand and resul
   assert.equal(postfixes.length, 1);
 
   const binary = source.ast.as.AsBinaryExpression(binaries[0]);
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binary?.Left)), "number");
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binary?.Right)), "1");
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binaries[0])), "number");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binary?.Left)?.type), "number");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binary?.Right)?.type), "1");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(binaries[0])?.type), "number");
 
   const prefix = source.ast.as.AsPrefixUnaryExpression(prefixes[0]);
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(prefix?.Operand)), "boolean");
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(prefixes[0])), "boolean");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(prefix?.Operand)?.type), "boolean");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(prefixes[0])?.type), "boolean");
 
   const postfix = source.ast.as.AsPostfixUnaryExpression(postfixes[0]);
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(postfix?.Operand)), "number");
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(postfixes[0])), "number");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(postfix?.Operand)?.type), "number");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(postfixes[0])?.type), "number");
 });
 
 test("checked source exposes authored assertion syntax and semantic source and target types", () => {
@@ -119,17 +120,17 @@ test("checked source exposes authored assertion syntax and semantic source and t
   const assertion = source.ast.as.AsAsExpression(assertions[0]);
 
   assert.equal(
-    source.checker.typeToString(source.checker.getTypeAtLocation(assertion?.Expression)),
+    source.checker.typeToString(source.checker.getTypeAtLocation(assertion?.Expression)?.type),
     "Animal",
   );
   assert.equal(
-    source.checker.typeToString(source.checker.getTypeFromTypeNode(assertion?.Type)),
+    source.checker.typeToString(source.checker.getTypeFromTypeNode(assertion?.Type)?.type),
     "Dog",
   );
-  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(assertions[0])), "Dog");
+  assert.equal(source.checker.typeToString(source.checker.getTypeAtLocation(assertions[0])?.type), "Dog");
   assert.ok(
-    source.checker.getTypeFromTypeNode(assertion?.Type)
-      === source.checker.getTypeAtLocation(assertions[0]),
+    source.checker.getTypeFromTypeNode(assertion?.Type)?.type
+      === source.checker.getTypeAtLocation(assertions[0])?.type,
     "Assertion target syntax and checked result must retain the same target type.",
   );
 });
@@ -169,10 +170,10 @@ test("type-shape tuple queries are total for primitive and tuple source types", 
   assert.ok(primitive !== undefined);
   assert.ok(tuple !== undefined);
 
-  const primitiveType = source.checker.getTypeAtLocation(primitive);
-  const tupleType = source.checker.getTypeAtLocation(tuple);
+  const primitiveType = source.checker.getTypeAtLocation(primitive)?.type;
+  const tupleType = source.checker.getTypeAtLocation(tuple)?.type;
   assert.equal(source.typeShape.isTuple(primitiveType), false);
-  assert.deepEqual(source.typeShape.getTupleElementTypes(primitiveType), []);
+  assert.equal(source.typeShape.getTupleElementTypes(primitiveType).length === 0, true);
   assert.equal(source.typeShape.isTuple(tupleType), true);
   assert.deepEqual(
     source.typeShape.getTupleElementTypes(tupleType).map((type) => source.checker.typeToString(type)),
@@ -194,7 +195,7 @@ test("type-shape symbol query distinguishes exact symbol-like source types", () 
   const typeOf = (name: string) => {
     const identifier = identifiers.find((node) => source.ast.text(node) === name);
     assert.ok(identifier !== undefined);
-    return source.checker.getTypeAtLocation(identifier);
+    return source.checker.getTypeAtLocation(identifier)?.type;
   };
 
   assert.equal(source.typeShape.isSymbolLike(typeOf("ordinary")), true);
@@ -219,7 +220,7 @@ test("type-shape tuple evidence retains exact authored parameter declarations", 
   assert.ok(arguments_ !== undefined);
 
   const tuple = source.typeShape.getTupleElementInfos(
-    source.checker.getTypeAtLocation(arguments_),
+    source.checker.getTypeAtLocation(arguments_)?.type,
   );
   assert.deepEqual(
     tuple.map((element) => ({
@@ -258,11 +259,11 @@ test("type-shape substitution evidence exposes the exact compiler-owned base typ
   const fallback = identifiers.find((node) => source.ast.text(node) === "fallback");
   assert.ok(fallback !== undefined);
 
-  const substitution = source.checker.getTypeAtLocation(fallback);
+  const substitution = source.checker.getTypeAtLocation(fallback)?.type;
   const baseType = source.typeShape.getSubstitutionBaseType(substitution);
   assert.ok(baseType !== undefined);
   assert.equal(source.typeShape.typeToString(baseType), "T");
-  assert.equal(source.typeShape.getSubstitutionBaseType(baseType), undefined);
+  assert.equal(source.typeShape.getSubstitutionBaseType(baseType) === undefined, true);
 });
 
 test("type-shape signature evidence expands inferred tuple-rest parameters exactly", () => {
@@ -285,7 +286,7 @@ test("type-shape signature evidence expands inferred tuple-rest parameters exact
   const detached = identifiers.find((node) => source.ast.text(node) === "detached");
   assert.ok(detached !== undefined);
   const signatures = source.typeShape.getCallSignatures(
-    source.checker.getTypeAtLocation(detached),
+    source.checker.getTypeAtLocation(detached)?.type,
   );
   assert.equal(signatures.length, 1);
   const parameters = source.typeShape.getSignatureParameterInfos(signatures[0]);
@@ -315,7 +316,7 @@ test("type-shape signature evidence preserves unexpanded array-rest ownership", 
   const rest = identifiers.find((node) => source.ast.text(node) === "rest");
   assert.ok(rest !== undefined);
   const signatures = source.typeShape.getCallSignatures(
-    source.checker.getTypeAtLocation(rest),
+    source.checker.getTypeAtLocation(rest)?.type,
   );
   assert.equal(signatures.length, 1);
   const parameters = source.typeShape.getSignatureParameterInfos(signatures[0]);
@@ -353,7 +354,7 @@ test("type-shape signature evidence preserves checker-selected optionality", () 
     const callable = identifiers.find((node) => source.ast.text(node) === name);
     assert.ok(callable !== undefined);
     const signatures = source.typeShape.getCallSignatures(
-      source.checker.getTypeAtLocation(callable),
+      source.checker.getTypeAtLocation(callable)?.type,
     );
     assert.equal(signatures.length, 1);
     return source.typeShape.getSignatureParameterInfos(signatures[0]).map(
@@ -387,14 +388,14 @@ test("type-shape property information preserves effective mapped modifiers", () 
   assert.ok(normalizedValue !== undefined);
 
   const sourceProperties = source.typeShape.getPropertyInfos(
-    source.checker.getTypeAtLocation(sourceValue),
+    source.checker.getTypeAtLocation(sourceValue)?.type,
   );
   const normalizedProperties = source.typeShape.getPropertyInfos(
-    source.checker.getTypeAtLocation(normalizedValue),
+    source.checker.getTypeAtLocation(normalizedValue)?.type,
   );
   assert.equal(
     source.typeShape.couldContainTypeVariables(
-      source.checker.getTypeAtLocation(openValue),
+      source.checker.getTypeAtLocation(openValue)?.type,
     ),
     true,
   );
@@ -406,7 +407,7 @@ test("type-shape property information preserves effective mapped modifiers", () 
   );
   assert.equal(
     source.typeShape.couldContainTypeVariables(
-      source.checker.getTypeAtLocation(normalizedValue),
+      source.checker.getTypeAtLocation(normalizedValue)?.type,
     ),
     false,
   );
@@ -453,7 +454,7 @@ test("type-shape property information preserves private display names and instan
   assert.ok(box !== undefined);
 
   const properties = source.typeShape.getPropertyInfos(
-    source.checker.getTypeAtLocation(box),
+    source.checker.getTypeAtLocation(box)?.type,
   );
   assert.deepEqual(
     properties.map(({ name, type }) => ({

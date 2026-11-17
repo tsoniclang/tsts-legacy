@@ -4,13 +4,20 @@ import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeAliasApplication, resolveTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { SourceFile_FileName } from "../internal/ast/ast.js";
+import { GetSourceFileOfNode, IsFunctionLike } from "../internal/ast/utilities.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import {
   CheckFlagsOptionalParameter,
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetTypeCheckerForFile } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_SourceFiles } from "../internal/compiler/program.js";
+import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
+import { createTypeNormalization } from "./type-normalization.js";
+import { sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
+import type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import {
@@ -29,15 +36,19 @@ import {
 } from "../internal/checker/exports.js";
 import {
   Checker_getTypeOfSymbol,
+  Checker_getInstantiatedBaseTypes,
 } from "../internal/checker/checker/symbols.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
+import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
   getBigIntLiteralValue,
   getNumberLiteralValue,
+  getStringLiteralValue,
   signatureHasRestParameter,
 } from "../internal/checker/checker/state.js";
 import { PseudoBigInt_String } from "../internal/jsnum/pseudobigint.js";
-import { Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
+import { Checker_getMinArgumentCount, Checker_isTypeIdenticalTo } from "../internal/checker/relater.js";
 import {
   Checker_GetConstantValue,
 } from "../internal/checker/services.js";
@@ -55,14 +66,17 @@ import {
   TypeFlagsBigIntLike,
   TypeFlagsBigIntLiteral,
   TypeFlagsBooleanLike,
+  TypeFlagsBooleanLiteral,
   TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
+  TypeFlagsNonPrimitive,
   TypeFlagsNull,
   TypeFlagsNumberLike,
   TypeFlagsNumberLiteral,
   TypeFlagsObject,
   TypeFlagsStringLike,
+  TypeFlagsStringLiteral,
   TypeFlagsSubstitution,
   TypeFlagsUnion,
   TypeFlagsUnknown,
@@ -73,6 +87,8 @@ import {
   Type_TargetTupleType,
   Type_AsSubstitutionType,
   Type_AsInterfaceType,
+  Type_AsLiteralType,
+  LiteralType_Value,
   InterfaceType_TypeParameters,
   Type_Types,
   Signature_ThisParameter,
@@ -94,6 +110,12 @@ export interface TypeReferenceArgumentInfo {
   readonly scope: "outer" | "local";
 }
 
+export interface TypeMappedPropertyInfo {
+  readonly keyType: GoPtr<Type>;
+  readonly syntheticOrigin: GoPtr<Symbol>;
+  readonly declaration: GoPtr<Node>;
+}
+
 export interface TypePropertyInfo {
   readonly symbol: Symbol;
   readonly rootSymbols: readonly Symbol[];
@@ -101,6 +123,7 @@ export interface TypePropertyInfo {
   readonly type: Type;
   readonly optional: boolean;
   readonly readonly: boolean;
+  readonly mapped?: TypeMappedPropertyInfo;
 }
 
 export interface TypeTupleElementInfo {
@@ -113,6 +136,7 @@ export interface TypeSignatureParameterInfo {
   readonly sourceSymbol: Symbol;
   readonly type: Type;
   readonly parameterKind: "required" | "optional" | "rest";
+  readonly acceptsOmission: boolean;
   readonly declaration?: Node;
 }
 
@@ -122,23 +146,40 @@ export interface TypeSignatureThisParameterInfo {
   readonly declaration?: Node;
 }
 
+export interface TypeSignatureInfo {
+  readonly signature: Signature;
+  readonly parameters: readonly TypeSignatureParameterInfo[];
+  readonly thisParameter?: TypeSignatureThisParameterInfo;
+  readonly returnType: Type | undefined;
+}
+
 export interface CreateTypeShapeQueriesOptions {
   readonly sourceFile: GoPtr<SourceFile>;
   readonly context?: Context;
 }
 
+export interface TypeIntrinsicNullishFlags {
+  readonly null: boolean;
+  readonly undefined: boolean;
+}
+
 export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
-  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<Type>;
+  readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
   readonly getTypeAliasApplication: (type: GoPtr<Type>) => TypeAliasApplicationInfo | undefined;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
+  readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
+  readonly getBooleanLiteralTypeValue: (type: GoPtr<Type>) => boolean | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
+  readonly isError: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
+  readonly isNonPrimitive: (type: GoPtr<Type>) => boolean;
   readonly isVoidLike: (type: GoPtr<Type>) => boolean;
   readonly isNullish: (type: GoPtr<Type>) => boolean;
+  readonly intrinsicNullishFlags: (type: GoPtr<Type>) => TypeIntrinsicNullishFlags;
   readonly isStringLike: (type: GoPtr<Type>) => boolean;
   readonly isNumberLike: (type: GoPtr<Type>) => boolean;
   readonly isBooleanLike: (type: GoPtr<Type>) => boolean;
@@ -158,12 +199,15 @@ export interface TypeShapeQueries {
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
+  readonly getInstantiatedBaseTypes: (type: GoPtr<Type>) => readonly Type[] | undefined;
   readonly getSubstitutionBaseType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTupleElementTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTupleElementInfos: (type: GoPtr<Type>) => readonly TypeTupleElementInfo[];
   readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
+  readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
+  readonly getDeclarationSignatureInfo: (declaration: GoPtr<Node>) => TypeSignatureInfo | undefined;
   readonly getSignatureParameterInfos: (
     signature: GoPtr<Signature>,
   ) => readonly TypeSignatureParameterInfo[];
@@ -176,7 +220,9 @@ export interface TypeShapeQueries {
   readonly selectIndexedAccess: (objectType: GoPtr<Type>, indexType: GoPtr<Type>) => TypeIndexedAccessSelection | undefined;
   readonly getApparentType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getWidenedType: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly getBaseTypeOfLiteralType: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly removeMissingOrUndefined: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly getNonNullableType: (type: GoPtr<Type>) => GoPtr<Type>;
 }
 
 export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: CreateTypeShapeQueriesOptions): TypeShapeQueries {
@@ -185,22 +231,24 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
   }
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
-    getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetTypeFromTypeNode(checker, node)),
+    getTypeFromTypeNode: (node) => withCheckerForNode(program, node, defaultOptions, checker =>
+      sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node))),
     instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
     ),
-    getTypeAliasApplication: (type) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
+    getTypeAliasApplication: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeAliasApplication(checker, type),
     ),
-    getIndexedAccessComponents: (type) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
+    getIndexedAccessComponents: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeIndexedAccessComponents(checker, type),
     ),
-    selectIndexedAccess: (objectType, indexType) => withCheckerForSourceFile(
-      program, defaultOptions.sourceFile, defaultOptions,
-      checker => selectTypeIndexedAccess(checker, objectType, indexType),
+    selectIndexedAccess: (objectType, indexType) => withOwnedChecker(
+      program, defaultOptions.sourceFile, objectType?.checker, defaultOptions.context ?? Background(),
+      checker => checker.program.SourceFiles() === Program_SourceFiles(program)
+        ? selectTypeIndexedAccess(checker, objectType, indexType) : undefined,
     ),
     getConstantValue: (node) => withCheckerForNode(program, node, defaultOptions, (checker) => Checker_GetConstantValue(checker, node)),
     getNumericLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
@@ -208,11 +256,24 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       if (hasFlags(type, TypeFlagsBigIntLiteral)) return BigInt(PseudoBigInt_String(getBigIntLiteralValue(type)));
       return undefined;
     }),
+    getStringLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () =>
+      hasFlags(type, TypeFlagsStringLiteral) ? getStringLiteralValue(type) : undefined),
+    getBooleanLiteralTypeValue: (type) => withCheckerForType(program, type, defaultOptions, () => {
+      if (!hasFlags(type, TypeFlagsBooleanLiteral)) return undefined;
+      const value = LiteralType_Value(Type_AsLiteralType(type));
+      return typeof value === "boolean" ? value : undefined;
+    }),
     isAny: (type) => hasFlags(type, TypeFlagsAny),
+    isError: (type) => type !== undefined && type.checker !== undefined && type === type.checker.errorType,
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
+    isNonPrimitive: (type) => hasFlags(type, TypeFlagsNonPrimitive),
     isVoidLike: (type) => hasFlags(type, TypeFlagsVoidLike) || hasFlags(type, TypeFlagsVoid),
     isNullish: (type) => hasFlags(type, TypeFlagsNull) || hasFlags(type, TypeFlagsUndefined),
+    intrinsicNullishFlags: (type) => Object.freeze({
+      null: hasFlags(type, TypeFlagsNull),
+      undefined: hasFlags(type, TypeFlagsUndefined),
+    }),
     isStringLike: (type) => hasFlags(type, TypeFlagsStringLike),
     isNumberLike: (type) => hasFlags(type, TypeFlagsNumberLike),
     isBooleanLike: (type) => hasFlags(type, TypeFlagsBooleanLike),
@@ -223,11 +284,14 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     isTypeReference: (type) => type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0,
     isTuple: isTupleType,
     isArrayLike: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_IsArrayLikeType(checker, type)) === true,
-    isTypeIdenticalTo: (left, right) => withCheckerForType(
-      program,
-      left,
-      defaultOptions,
-      (checker) => Checker_isTypeIdenticalTo(checker, left, right),
+    isTypeIdenticalTo: (left, right) => withOwnedChecker(
+      program, defaultOptions.sourceFile, left?.checker, defaultOptions.context ?? Background(),
+      checker => {
+        if (left === undefined || right?.checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program) ||
+          right.checker.program!.SourceFiles() !== checker.program!.SourceFiles()) return false;
+        return Checker_isTypeIdenticalTo(checker, left,
+          right.checker === checker ? right : createTypeNormalization(checker).type(right));
+      },
     ) === true,
     couldContainTypeVariables: (type) => withCheckerForType(
       program,
@@ -246,6 +310,19 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       hasFlags(type, TypeFlagsObject) && type !== undefined && (type.objectFlags & ObjectFlagsReference) !== 0
         ? Checker_GetTypeArguments(checker, type)
         : []) ?? [],
+    getInstantiatedBaseTypes(type) {
+      return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+        defaultOptions.context ?? Background(), owner => {
+        const bases = Checker_getInstantiatedBaseTypes(owner, type);
+        if (bases === undefined) return undefined;
+        const selected: Type[] = [];
+        for (const base of bases) {
+          if (base === undefined || base === owner.errorType) return undefined;
+          selected.push(base);
+        }
+        return Object.freeze(selected);
+      });
+    },
     getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
       if (type === undefined || checker === undefined || !hasFlags(type, TypeFlagsObject)) return undefined;
       const target = Type_Target(type) ?? type;
@@ -295,6 +372,22 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     ) ?? [],
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
+    getSignatureInfos: (type, kind) => {
+      if (kind !== "call" && kind !== "construct") throw new Error("Unknown signature kind.");
+      return withCheckerForType(program, type, defaultOptions, checker => Object.freeze(
+        (Checker_GetSignaturesOfType(checker, type, kind === "call" ? SignatureKindCall : SignatureKindConstruct) ?? [])
+          .map(signature => {
+            if (signature === undefined) throw new Error("The checker returned an absent type signature.");
+            return getTypeSignatureInfo(checker, signature);
+          }),
+      )) ?? Object.freeze([]);
+    },
+    getDeclarationSignatureInfo: declaration => !IsFunctionLike(declaration) ? undefined : withCheckerForNode(
+      program, declaration, defaultOptions, checker => {
+        const signature = Checker_getSignatureFromDeclaration(checker, declaration);
+        return signature === undefined ? undefined : getTypeSignatureInfo(checker, signature);
+      },
+    ),
     getSignatureParameterInfos: (signature) => withCheckerForSignature(
       program,
       signature,
@@ -312,7 +405,9 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       (Checker_GetIndexInfosOfType(checker, type) ?? []).map((info) => readTypeIndexInfo(checker, type, info))) ?? [],
     getApparentType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetApparentType(checker, type)),
     getWidenedType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetWidenedType(checker, type)),
+    getBaseTypeOfLiteralType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_getBaseTypeOfLiteralType(checker, type)),
     removeMissingOrUndefined: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_RemoveMissingOrUndefinedType(checker, type)),
+    getNonNullableType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetNonNullableType(checker, type)),
   };
   return Object.freeze(queries);
 }
@@ -366,6 +461,13 @@ function getTypeTupleElementInfos(
   }));
 }
 
+function getTypeSignatureInfo(checker: GoPtr<Checker>, signature: Signature): TypeSignatureInfo {
+  const thisParameter = getTypeSignatureThisParameterInfo(checker, signature);
+  return Object.freeze({ signature, parameters: getTypeSignatureParameterInfos(checker, signature),
+    ...(thisParameter === undefined ? {} : { thisParameter }),
+    returnType: Checker_GetReturnTypeOfSignature(checker, signature) });
+}
+
 function getTypeSignatureParameterInfos(
   checker: GoPtr<Checker>,
   signature: GoPtr<Signature>,
@@ -397,6 +499,7 @@ function getTypeSignatureParameterInfos(
     : getTypeTupleElementInfos(checker, restType);
   const tupleExpanded = restIndex >= 0 && tupleElements.length > 0 &&
     effectiveParameters.length === restIndex + tupleElements.length;
+  const minimumArgumentCount = Checker_getMinArgumentCount(checker, signature);
   return Object.freeze(effectiveParameters.map((parameter, index) => {
     if (parameter === undefined) {
       throw new Error(
@@ -437,6 +540,7 @@ function getTypeSignatureParameterInfos(
       sourceSymbol,
       type,
       parameterKind,
+      acceptsOmission: index >= minimumArgumentCount,
       ...(declaration === undefined ? {} : { declaration }),
     });
   }));
@@ -477,15 +581,15 @@ function withCheckerForNode<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (node === undefined) {
+  const sourceFile = GetSourceFileOfNode(node);
+  if (program === undefined || sourceFile === undefined ||
+    Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
+    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
     return undefined;
   }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
+  const [checker, done] = Program_GetTypeCheckerForFile(program,
+    WithCheckerLifetime(defaultOptions.context ?? Background(), CheckerLifetimeDiagnostics), sourceFile);
+  try { return callback(checker); } finally { done(); }
 }
 
 function withCheckerForType<T>(
@@ -494,18 +598,8 @@ function withCheckerForType<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (program === undefined || type === undefined) {
-    return undefined;
-  }
-  if (type.checker !== undefined) {
-    return callback(type.checker);
-  }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
+  return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
+    defaultOptions.context ?? Background(), callback);
 }
 
 function withCheckerForSignature<T>(
@@ -514,34 +608,6 @@ function withCheckerForSignature<T>(
   defaultOptions: CreateTypeShapeQueriesOptions,
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
-  if (program === undefined || signature === undefined) {
-    return undefined;
-  }
-  return withCheckerForSourceFile(
-    program,
-    defaultOptions.sourceFile,
-    defaultOptions,
-    callback,
-  );
-}
-
-function withCheckerForSourceFile<T>(
-  program: GoPtr<Program>,
-  sourceFile: GoPtr<SourceFile>,
-  defaultOptions: CreateTypeShapeQueriesOptions,
-  callback: (checker: GoPtr<Checker>) => T,
-): T | undefined {
-  if (sourceFile === undefined) {
-    return undefined;
-  }
-  const [checker, done] = Program_GetTypeCheckerForFile(
-    program,
-    defaultOptions.context ?? Background(),
-    sourceFile,
-  );
-  try {
-    return callback(checker);
-  } finally {
-    done();
-  }
+  return signature === undefined ? undefined : withCheckerById(program, defaultOptions.sourceFile,
+    signature.checkerId, defaultOptions.context ?? Background(), callback);
 }

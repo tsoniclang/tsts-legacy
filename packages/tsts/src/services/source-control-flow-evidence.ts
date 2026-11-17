@@ -19,6 +19,7 @@ import {
   IsBlock,
   IsComputedPropertyName,
   IsForOfStatement,
+  IsTypeParameterDeclaration,
   IsVariableDeclaration,
   IsVariableDeclarationList,
   IsYieldExpression,
@@ -35,6 +36,7 @@ import {
 } from "../internal/checker/exports.js";
 import {
   Checker_getIterationTypesOfGeneratorFunctionReturnType,
+  Checker_getSignaturesOfType,
   Checker_getSignatureFromDeclaration,
 } from "../internal/checker/checker/signatures.js";
 import type { Checker } from "../internal/checker/checker/state.js";
@@ -49,6 +51,8 @@ import {
   Checker_checkYieldStarWithExtensionSelection,
   Checker_GetTypeAtLocation,
   Checker_getYieldedTypeOfYieldExpression,
+  Checker_getTypeWithFacts,
+  getKnownIteratorMethodTypeParameterBindings,
 } from "../internal/checker/checker/types.js";
 import {
   Checker_getPropertyOfType,
@@ -61,15 +65,19 @@ import type {
   ExtensionForOfIterationMechanism,
 } from "../internal/checker/checker/iteration-evidence.js";
 import {
+  SignatureKindCall,
   TypeFlagsAny,
   TypeFlagsNever,
   TypeFlagsNull,
   TypeFlagsUndefined,
   TypeFlagsUnion,
+  TypeFlagsTypeParameter,
   Type_Types,
 } from "../internal/checker/types.js";
 import type { Type } from "../internal/checker/types.js";
 import { getPropertyNameFromType } from "../internal/checker/utilities.js";
+import { TypeFactsNEUndefinedOrNull } from "../internal/checker/checker/state.js";
+import { TypeMapper_Map } from "../internal/checker/mapper.js";
 
 export interface ResolvedSourceCallableCompletionInfo {
   readonly declaration: Node;
@@ -95,6 +103,11 @@ export interface ResolvedSourceGeneratorInfo {
   readonly generatorKind: "sync" | "async";
   readonly sourceReturnType: Type;
   readonly iterationTypes: ResolvedSourceIterationTypes;
+  readonly returnTypeBinding?: {
+    readonly declaration: Node;
+    readonly parameterType: Type;
+    readonly argumentType: Type;
+  };
 }
 
 export interface ResolvedSourceIterationTypes {
@@ -222,12 +235,37 @@ export function resolveSourceGeneratorInfo(
   ) {
     return undefined;
   }
+  const returnTypeBinding = resolveGeneratorReturnTypeBinding(checker, sourceReturnType, asynchronous, returnType);
   return Object.freeze({
     declaration,
     generatorKind: asynchronous ? "async" : "sync",
     sourceReturnType,
     iterationTypes: Object.freeze({ yieldType, returnType, nextType }),
+    ...(returnTypeBinding === undefined ? {} : { returnTypeBinding }),
   });
+}
+
+function resolveGeneratorReturnTypeBinding(
+  checker: Checker,
+  sourceReturnType: Type,
+  asynchronous: boolean,
+  returnType: Type,
+): ResolvedSourceGeneratorInfo["returnTypeBinding"] {
+  const method = Checker_getPropertyOfType(checker, sourceReturnType, "return");
+  if (method === undefined) return undefined;
+  const methodType = Checker_getTypeWithFacts(checker, Checker_getTypeOfSymbol(checker, method), TypeFactsNEUndefinedOrNull);
+  if (methodType === undefined) return undefined;
+  const resolver = asynchronous ? checker.asyncIterationTypesResolver : checker.syncIterationTypesResolver;
+  if (resolver === undefined) return undefined;
+  const bindings = getKnownIteratorMethodTypeParameterBindings(methodType, resolver, "return",
+    Checker_getSignaturesOfType(checker, methodType, SignatureKindCall));
+  const parameterType = bindings?.returnParameter;
+  if (parameterType === undefined || (parameterType.flags & TypeFlagsTypeParameter) === 0) return undefined;
+  const argumentType = TypeMapper_Map(bindings!.mapper, parameterType);
+  const declarations = parameterType.symbol?.Declarations?.filter(IsTypeParameterDeclaration) ?? [];
+  if (argumentType === undefined || (resolver.resolveIterationType(argumentType, undefined) ?? argumentType) !== returnType ||
+    declarations.length !== 1) return undefined;
+  return Object.freeze({ declaration: declarations[0]!, parameterType, argumentType });
 }
 
 export function resolveSourceYieldInfo(

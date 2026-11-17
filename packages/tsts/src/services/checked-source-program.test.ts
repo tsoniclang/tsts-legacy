@@ -1,3 +1,4 @@
+import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GoPtr } from "../go/compat.js";
@@ -7,11 +8,120 @@ import {
   defineExtensionFactKey,
   type CompilerExtension,
 } from "../index.js";
+import { createSourceProgramQueries } from "../extensions/source-program.js";
 import {
   findNodes,
+  sourceProviderExtension,
   testCoreDeclarations,
   testNoLibCompilerOptions,
+  testProviderModel,
 } from "../extensions/source-provider-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "./type-checker.js";
+
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
+}
+
+test("original compiler program order remains frozen independently of included source traversal", () => {
+  const checked = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts", "/src/extra.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/dependency.ts": "export const value = 1;",
+      "/src/index.ts": "import { value } from './dependency.js'; export const result = value;",
+      "/src/extra.ts": "export const extra = 2;",
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  }).checkSource();
+  assert.equal(checked.diagnostics.length, 0, "the actual dependency program checks");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the original file-order fixture is valid");
+  assert.deepEqual(checked.programSourceFiles.map(file => checked.ast.getFileName(file)),
+    ["/src/core.d.ts", "/src/dependency.ts", "/src/index.ts", "/src/extra.ts"],
+    "the dependency precedes its importer in the actual original compiler order");
+  assert.equal(Object.isFrozen(checked.programSourceFiles), true, "the one original vector cannot be reordered");
+  const index = checked.getSourceFile("/src/index.ts");
+  assert.equal(index !== undefined, true, "the original included file is retained");
+  const filtered = createSourceProgramQueries(checked.program, { includeSourceFile: file => file === index });
+  assert.equal(filtered.getSourceFiles().length === 1 && filtered.getSourceFiles()[0] === index, true,
+    "the existing inclusion policy controls only public traversal");
+  assert.equal(filtered.programSourceFiles.length === checked.programSourceFiles.length
+    && filtered.programSourceFiles.every((file, position) => file === checked.programSourceFiles[position]), true,
+    "filtering retains every exact original identity and its original order");
+  assert.equal(filtered.containsSourceFile(checked.programSourceFiles[0]), true,
+    "the original excluded library is still owned by this checked program");
+});
+
+test("checked raw program membership retains excluded canonical native owners and refuses foreign identities", () => {
+  const specifier = "@test/raw-program-owner.js";
+  const model = testProviderModel(specifier, "Test.RawProgramOwner", [{ id: "Native", name: "Native", kind: "class",
+    members: [{ id: "Native::field", name: "field", kind: "property", type: { kind: "number" } },
+      { id: "Native::read", name: "read", kind: "method", signatures: [{ id: "Native::read(number)",
+        parameters: [{ name: "value", type: { kind: "number" } }], returnType: { kind: "number" } }] }] }]);
+  const create = () => createCompilerSessionFromFiles({ currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: { "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `import type { Native } from "${specifier}"; export declare const value: Native;` },
+    compilerOptions: testNoLibCompilerOptions,
+    extensionHostOptions: { extensions: [sourceProviderExtension(new Map([[specifier, model]]))] },
+  }).checkSource();
+  const checked = create();
+  assert.equal(checked.diagnostics.length, 0, "the actual native provider program checks");
+  assert.equal(checked.extensionDiagnostics.length, 0, "the provider model is admitted");
+  const index = checked.getSourceFile("/src/index.ts")!;
+  const core = checked.getSourceFile("/src/core.d.ts")!;
+  const queries = checked.getSourceFileQueries(index);
+  const variable = findNodes(index, checked.ast.children, checked.ast.is.IsVariableDeclaration)[0];
+  const type = queries.checker.getTypeFromTypeNode(checked.ast.typeNode(variable))?.type;
+  const symbol = queries.checker.getTypeSymbol(type);
+  const declaration = queries.checker.getPrimarySymbolDeclaration(symbol);
+  const nativeFile = checked.ast.getSourceFile(declaration);
+  assert.equal(nativeFile !== undefined, true, "the real checked native type retains its canonical owner file");
+  assert.equal(checked.sourceFiles.includes(nativeFile), false, "the canonical owner is excluded from public source traversal");
+  assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
+    "filtered source lookup does not expose the canonical native owner");
+  const nativeQueries = checked.getSourceFileQueries(nativeFile);
+  assert.equal(nativeQueries.sourceFile === nativeFile, true, "semantic queries use the actual checked native owner file");
+  assert.equal(checked.getSourceFileQueries(nativeFile) === nativeQueries, true, "the exact native semantic context is cached");
+  assert.equal(nativeQueries.checker.getSymbolAtLocation(checked.ast.name(declaration)) === symbol, true,
+    "the native owner context retains the original bound declaration symbol");
+  const method = findNodes(declaration, checked.ast.children, checked.ast.is.IsMethodDeclaration)[0];
+  assert.ok(method);
+  const signature = nativeQueries.checker.getSignatureFromDeclaration(method);
+  assert.ok(signature);
+  assert.equal(nativeQueries.checker.getSignatureDeclaration(signature) === method, true, "the raw signature retains its native declaration");
+  const parameters = nativeQueries.checker.getSignatureParameters(signature);
+  assert.equal(parameters.length, 1, "the native signature retains its complete checked parameter vector");
+  assert.equal(nativeQueries.checker.getPrimarySymbolDeclaration(parameters[0]) === checked.ast.parameters(method)[0], true,
+    "native parameter symbols retain the original declaration Nodes");
+  assert.equal(checked.getSourceFiles().includes(nativeFile), false, "semantic access never broadens public source traversal");
+  assert.equal(checked.getSourceFile(checked.ast.getFileName(nativeFile)) === undefined, true,
+    "semantic access never broadens filtered source lookup");
+  for (const [label, file] of [["source", index], ["library", core], ["excluded native owner", nativeFile]] as const) {
+    assert.equal(checked.containsSourceFile(file), true, `${label} retains actual raw program identity`);
+    assert.equal(checked.containsSourceFile(file), true, `${label} membership is a stable identity read`);
+  }
+  assert.equal(queries.checker.getSymbolAtLocation(checked.ast.name(declaration)) === symbol, true,
+    "the actual included consumer checker resolves the native declaration without a guessed context");
+  const foreign = create();
+  const foreignIndex = foreign.getSourceFile("/src/index.ts")!;
+  const foreignChecker = foreign.getSourceFileQueries(foreignIndex).checker;
+  const foreignVariable = findNodes(foreignIndex, foreign.ast.children, foreign.ast.is.IsVariableDeclaration)[0];
+  const foreignType = foreignChecker.getTypeFromTypeNode(foreign.ast.typeNode(foreignVariable))?.type;
+  const foreignFile = foreign.ast.getSourceFile(foreignChecker.getPrimarySymbolDeclaration(foreignChecker.getTypeSymbol(foreignType)));
+  assert.equal(foreignFile !== undefined, true, "a second checked program has an actual same-spelled owner file");
+  assert.equal(foreign.ast.getFileName(foreignFile), checked.ast.getFileName(nativeFile), "the canonical owner URI is deliberately identical across programs");
+  assert.equal(foreign.containsSourceFile(foreignFile), true, "the other program owns its own exact file");
+  assert.equal(checked.containsSourceFile(foreignFile), false, "matching file names never admit another program's AST");
+  assert.equal(checked.containsSourceFile(foreignIndex), false, "foreign ordinary source identities are also refused");
+  assert.equal(checked.containsSourceFile(undefined), false, "absence is not program membership");
+  for (const [label, file] of [["native owner", foreignFile], ["ordinary source", foreignIndex], ["absent source", undefined]] as const) {
+    assert.throws(() => checked.getSourceFileQueries(file), /exact source file/u,
+      `${label}: semantic contexts reject foreign or absent identities even after the local cache is populated`);
+  }
+});
 
 test("checked source program exposes one exact AST and direct checker decision surface", () => {
   const session = createCompilerSessionFromFiles({
@@ -61,27 +171,27 @@ test("checked source program exposes one exact AST and direct checker decision s
 
   const explicitCall = calls.find((call) => source.ast.typeArguments(call).length === 1);
   assert.ok(explicitCall !== undefined);
-  const call = source.checker.getResolvedCallInfo(explicitCall);
-  assert.equal(call?.outcome, "applicable");
+  const call = requireApplicableCallInfo(source.checker.getResolvedCallInfo(explicitCall));
+  assert.equal(call?.kind, "applicable");
   assert.ok(call?.call === explicitCall, "Resolved call evidence must retain the exact call node.");
-  assert.equal(call?.sourceSelectedMethodTypeArguments?.length, 1);
-  assert.equal(call?.sourceSelectedMethodTypeArguments?.[0]?.typeParameterName, "T");
+  assert.equal(call?.selection.application.signatureTypeArguments?.length, 1);
+  assert.equal(call?.selection.application.signatureTypeArguments?.[0]?.typeParameter.symbol?.Name, "T");
   assert.ok(
-    call?.sourceSelectedMethodTypeArguments?.[0]?.explicitTypeNode
+    call?.selection.application.signatureTypeArguments?.[0]?.explicitTypeNode
       === source.ast.typeArguments(explicitCall)[0],
     "Explicit method type-argument evidence must retain the exact authored type node.",
   );
-  assert.equal(call?.sourceArguments.length, 1);
-  assert.equal(call?.sourceArgumentBindings.length, 1);
-  assert.equal(call?.sourceSelectedSignatureParameters.length, 1);
+  assert.equal(call?.selection.argumentValues.length, 1);
+  assert.equal(call?.selection.arguments.values.length, 1);
+  assert.equal(call?.selection.parameters.length, 1);
   assert.ok(
-    source.checker.getResolvedCallInfo(explicitCall) === call,
+    requireApplicableCallInfo(source.checker.getResolvedCallInfo(explicitCall)) === call,
     "Repeated direct call queries must retain the exact resolved call result.",
   );
 
   const propertyInfos = properties.map((property) => ({
     property,
-    info: source.checker.getResolvedPropertyAccessInfo(property),
+    info: memberAccess(source.checker.getResolvedPropertyAccessInfo(property)),
   }));
   const ordinaryProperty = propertyInfos.find(({ info }) => info?.optionalChain === false);
   const optionalProperty = propertyInfos.find(({ info }) => info?.optionalChain === true);
@@ -201,7 +311,7 @@ test("checked source facts are immutable consumer capabilities over exact source
       const source = context.source.getSourceFileQueries(sourceFile);
       selectedCall = findNodes(sourceFile, source.ast.children, source.ast.is.IsCallExpression)[0];
       assert.ok(selectedCall !== undefined);
-      assert.equal(source.checker.getResolvedCallInfo(selectedCall)?.outcome, "applicable");
+      assert.equal(requireApplicableCallInfo(source.checker.getResolvedCallInfo(selectedCall))?.kind, "applicable");
       assert.equal(context.facts.set(selectedCall, factKey, "identity(1)"), "inserted");
     },
   };
@@ -265,6 +375,6 @@ test("checked query capabilities preserve checker ownership independently for ev
   assert.notEqual(leftQueries.typeShape, rightQueries.typeShape);
   assert.ok(leftQueries.checker.getSymbolSourceFile(leftSymbol) === leftFile);
   assert.ok(rightQueries.checker.getSymbolSourceFile(rightSymbol) === rightFile);
-  assert.equal(leftQueries.checker.typeToString(leftQueries.checker.getTypeAtLocation(leftName)), '"left"');
-  assert.equal(rightQueries.checker.typeToString(rightQueries.checker.getTypeAtLocation(rightName)), "1");
+  assert.equal(leftQueries.checker.typeToString(leftQueries.checker.getTypeAtLocation(leftName)?.type), '"left"');
+  assert.equal(rightQueries.checker.typeToString(rightQueries.checker.getTypeAtLocation(rightName)?.type), "1");
 });

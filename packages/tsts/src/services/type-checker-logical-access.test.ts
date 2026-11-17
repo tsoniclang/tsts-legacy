@@ -15,6 +15,13 @@ import {
   createProgram,
   findNodesByKind,
 } from "./type-checker-test-support.js";
+import type { ResolvedSourcePropertyAccessInfo } from "./type-checker.js";
+
+// The member arm of a property access's result. Nothing stays nothing; the other arm is not expected in this file.
+function memberAccess(info: ResolvedSourcePropertyAccessInfo | undefined): Extract<ResolvedSourcePropertyAccessInfo, { readonly kind: "member" }> | undefined {
+  if (info === undefined || info.kind === "member") return info;
+  throw new Error("A member access was expected.");
+}
 
 for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
   for (const bracket of [false, true]) {
@@ -38,7 +45,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
       assert.ok(node);
       const query = () => bracket
         ? queries.getResolvedElementAccessInfo(node)
-        : queries.getResolvedPropertyAccessInfo(node);
+        : memberAccess(queries.getResolvedPropertyAccessInfo(node));
       const selected = query();
       assert.ok(selected);
       assert.equal(selected.accessMode, operator === "=" ? "write" : "read-write");
@@ -51,7 +58,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
       assert.equal(query(), selected);
       assert.ok(Object.isFrozen(selected));
       if (!bracket) {
-        const property = queries.getResolvedPropertyAccessInfo(node);
+        const property = memberAccess(queries.getResolvedPropertyAccessInfo(node));
         assert.equal(property?.selectedReadDeclaration?.Kind, operator === "=" ? undefined : KindGetAccessor);
         assert.equal(property?.selectedWriteDeclaration?.Kind, KindSetAccessor);
       }
