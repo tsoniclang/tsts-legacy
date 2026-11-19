@@ -4,6 +4,36 @@ import { createAstReader } from "./ast-reader.js";
 import { createProgram } from "./type-checker-test-support.js";
 import type { Node } from "../internal/ast/ast.js";
 
+test("names real non-node syntax kind fields using the same pinned kind vocabulary", () => {
+  const { index } = createProgram(`/// <reference no-default-lib="true" />
+    // @ts-check
+    interface Parent {}
+    class Child extends Base implements Parent { constructor() { super(); new.target; } }
+    import output from "data" with { type: "json" };
+    export const url = import.meta.url;`, { noLib: true });
+  assert.ok(index);
+  const ast = createAstReader();
+  const names: string[] = [];
+  const pending: Node[] = [index];
+  for (let cursor = 0; cursor < pending.length; cursor += 1) {
+    const node = pending[cursor];
+    if (node === undefined) throw new Error("The native traversal is dense");
+    assert.equal(ast.syntaxKindName(node.Kind), ast.kindName(node));
+    const heritage = ast.as.AsHeritageClause(node);
+    const attributes = ast.as.AsImportAttributes(node);
+    const meta = ast.as.AsMetaProperty(node);
+    if (ast.is.IsHeritageClause(node) && heritage !== undefined) names.push(ast.syntaxKindName(heritage.Token));
+    if (ast.is.IsImportAttributes(node) && attributes !== undefined) names.push(ast.syntaxKindName(attributes.Token));
+    if (ast.is.IsMetaProperty(node) && meta !== undefined) names.push(ast.syntaxKindName(meta.KeywordToken));
+    for (const child of ast.children(node))
+      if (child !== undefined) pending.push(child);
+  }
+  assert.deepEqual(names.sort(), ["KindExtendsKeyword", "KindImplementsKeyword", "KindImportKeyword", "KindNewKeyword", "KindWithKeyword"]);
+  assert.ok(index.Pragmas.some(pragma => pragma.Name === "reference" && ast.syntaxKindName(pragma.Kind) === "KindSingleLineCommentTrivia"));
+  assert.ok(index.CheckJsDirective);
+  assert.equal(ast.syntaxKindName(index.CheckJsDirective.Range.Kind), "KindSingleLineCommentTrivia");
+});
+
 test("module keyword names retain the actual pinned namespace, module, global and dotted syntax", () => {
   const { index } = createProgram(`namespace Outer.Inner { export const x=1; }
     module Legacy {}

@@ -86,6 +86,7 @@ export type AstSourceRange =
 export interface AstReader {
   readonly kind: (node: GoPtr<Node>) => Kind | undefined;
   readonly kindName: (node: GoPtr<Node>) => string;
+  readonly syntaxKindName: (kind: Kind) => string;
   readonly text: (node: GoPtr<Node>) => string;
   readonly name: (node: GoPtr<Node>) => GoPtr<Node>;
   readonly body: (node: GoPtr<Node>) => GoPtr<Node>;
@@ -148,6 +149,7 @@ export function createAstReader(): AstReader {
   const reader: AstReader = {
     kind: (node) => node?.Kind,
     kindName: (node) => node === undefined ? "Undefined" : KindString(node.Kind),
+    syntaxKindName: KindString,
     text: (node) => node === undefined ? "" : Node_Text(node),
     name: (node) => node === undefined ? undefined : Node_Name(node),
     body: (node) => node === undefined ? undefined : Node_Body(node),
