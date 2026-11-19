@@ -99,6 +99,25 @@ test("a wide run keeps every member once and in order", () => {
   assert.ok(run.every(member => member.runMembers === undefined), "no added diagnostic is written");
 });
 
+test("reading a published run borrows the same member list on every read", () => {
+  const first = added(0, "a");
+  const second = added(0, "a");
+  const published = onlyPublished(SortAndDeduplicateDiagnostics([first, second]));
+  const members = getDiagnosticRunMembers(published);
+  assert.equal(members === published.runMembers, true);
+  assert.equal(getDiagnosticRunMembers(published) === members, true);
+  assert.equal(sameMembers(published, [first, second]), true);
+});
+
+test("published run members reject undefined entries and holes", () => {
+  const diagnostic = added(0, "a");
+  diagnostic.runMembers = [undefined];
+  assert.throws(() => getDiagnosticRunMembers(diagnostic), /run members contain an undefined entry/);
+  diagnostic.runMembers = [];
+  diagnostic.runMembers.length = 1;
+  assert.throws(() => getDiagnosticRunMembers(diagnostic), /run members contain an undefined entry/);
+});
+
 test("every raw report of a checked file belongs to exactly one published diagnostic of that file", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",
