@@ -780,6 +780,32 @@ test("iteration subjects retain for-in, for-of and for-await-of facts without a 
   }
 });
 
+test("global property origins belong only to the actual checker-created intrinsic symbols", () => {
+  const { program, index } = createProgram(`
+    export type Environment = typeof globalThis;
+    declare const nativeEnvironment: Environment;
+    declare const lookalikes: { globalThis: string; undefined: boolean };
+  `, { noLib: false });
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const shape = createTypeShapeQueries(program, { sourceFile: index });
+  const variables = findNodesByKind(index, KindVariableDeclaration);
+  const native = shape.getPropertyInfos(queries.getTypeAtLocation(variables[0])?.type);
+  assert.deepEqual(native.filter(property => property.intrinsicOrigin !== undefined)
+    .map(property => [property.name, property.intrinsicOrigin]).sort(), [["globalThis", "global-this"], ["undefined", "undefined"]]);
+  for (const property of native.filter(property => property.intrinsicOrigin !== undefined)) {
+    assert.equal(queries.getSymbolValueDeclaration(property.symbol), undefined);
+    assert.equal(property.rootSymbols.length, 1);
+    assert.equal(property.rootSymbols[0] === property.symbol, true);
+  }
+  const authored = shape.getPropertyInfos(queries.getTypeAtLocation(variables[1])?.type);
+  assert.deepEqual(authored.map(property => property.name).sort(), ["globalThis", "undefined"]);
+  for (const property of authored) {
+    assert.equal(property.intrinsicOrigin, undefined);
+    assert.equal(queries.getSymbolValueDeclaration(property.symbol) !== undefined, true);
+  }
+});
+
 test("mapped property metadata retains actual mapped owners, checked keys and synthetic property origins", () => {
   const { program, index } = createProgram(`
     type int32 = number;
