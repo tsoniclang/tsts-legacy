@@ -24,6 +24,7 @@ export function resolveSourceTypeAnswer(program: Program, options: { readonly co
   const causes = new Set<Diagnostic>();
   let nextSource = answer.typeSource;
   let typeSource: Node | undefined;
+  let indexedRead: ResolvedSourceTypeInfo["indexedRead"];
   const addSource = (source: NonNullable<SourceTypeAnswer["borrowedFrom"]>): void => {
     if ("Kind" in source) pending.push(source);
     else pending.push(source[1], source[0]);
@@ -45,11 +46,12 @@ export function resolveSourceTypeAnswer(program: Program, options: { readonly co
     if (source === nextSource) {
       typeSource = source;
       nextSource = borrowed.typeSource;
+      indexedRead = borrowed.indexedRead;
     }
     for (const cause of borrowed.causes) causes.add(cause);
     if (borrowed.borrowedFrom !== undefined) addSource(borrowed.borrowedFrom);
   }
   return causes.size === 0 && typeSource !== undefined && nextSource === undefined
-    ? { type, causes: [], typeSource }
+    ? { type, causes: [], typeSource, ...(indexedRead === undefined ? {} : { indexedRead }) }
     : { type, causes: [...causes] };
 }

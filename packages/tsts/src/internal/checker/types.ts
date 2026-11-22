@@ -838,7 +838,7 @@ export interface SymbolNodeLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::TypeNodeLinks","kind":"type","status":"implemented","sigHash":"d179da5ea97af8b4e01f810926a7545f82b426592ab5165ddf4d80ecc0cd4e3d","bodyHash":"63f2e3ade12086f877faba2842deb70032ef48351c0a8a14043706ec94966b6a"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the actually emitted original Diagnostic with the same completed native type or expression answer; native name, arity and immutable assignment-failure producers supply it without speculative stores, a type-error scan or a parallel query. Retain both actual source operands of a completed binary error join in that same relation. A bare alias retains its exact borrowed source, or waits on the actual declaration's native link if the type resolution was reentered. Keep actual type grammar reports separately so semantic type initialization cannot erase them. Retain a completed circular declaration's own report as terminal source evidence, independent of its RHS's recovery type.","goSignature":"interface{outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{declarationFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;grammarFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolutionFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;resolvedTypeSource?:packages/tsts/src/internal/ast/spine.ts::Node|packages/tsts/src/internal/checker/types.ts::TypeAliasLinks|raw(readonly [Node, Node])}"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the actually emitted original Diagnostic with the same completed native type or expression answer; native name, arity and immutable assignment-failure producers supply it without speculative stores, a type-error scan or a parallel query. R5-46 also retains the complete ordered original sources of native closed indexed reads here. Retain both actual source operands of a completed binary error join in that same relation. A bare alias retains its exact borrowed source, or waits on the actual declaration's native link if the type resolution was reentered. Keep actual type grammar reports separately so semantic type initialization cannot erase them. Retain a completed circular declaration's own report as terminal source evidence, independent of its RHS's recovery type.","goSignature":"interface{outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{declarationFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;grammarFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolutionFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;resolvedTypeSource?:packages/tsts/src/internal/ast/spine.ts::Node|packages/tsts/src/internal/checker/types.ts::IndexedTypeReadSource|packages/tsts/src/internal/checker/types.ts::TypeAliasLinks|raw(readonly [Node, Node])}"}
  * Go source:
  * TypeNodeLinks struct {
  * 	resolvedType        *Type   // Resolved type associated with node
@@ -851,7 +851,13 @@ export interface TypeNodeLinks {
   declarationFailure?: Diagnostic;
   grammarFailure?: Diagnostic;
   resolutionFailure?: Diagnostic;
-  resolvedTypeSource?: Node | TypeAliasLinks | readonly [Node, Node];
+  resolvedTypeSource?: Node | TypeAliasLinks | readonly [Node, Node] | IndexedTypeReadSource;
+}
+
+export interface IndexedTypeReadSource {
+  readonly kind: "indexed-read";
+  readonly annotation: Node;
+  readonly properties: readonly [Node, Node, ...Node[]];
 }
 
 /**

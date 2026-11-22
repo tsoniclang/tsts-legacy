@@ -2,7 +2,7 @@ import type { Node } from "../../ast/spine.js";
 import type { Diagnostic } from "../../ast/diagnostic.js";
 import type { Symbol } from "../../ast/symbol.js";
 import { CheckModeNormal, type Checker, type CheckMode } from "./state.js";
-import type { Signature, Type, TypeNodeLinks } from "../types.js";
+import type { IndexedTypeReadSource, Signature, Type, TypeNodeLinks } from "../types.js";
 import { SignatureFlagsCallChainFlags } from "../types.js";
 import { Node_Expression, Node_Symbol, Node_Type } from "../../ast/ast.js";
 import { AsTypeOperatorNode } from "../../ast/generated/casts.js";
@@ -17,6 +17,7 @@ export interface ResolvedSourceTypeInfo {
   readonly type: Type;
   readonly causes: readonly Diagnostic[];
   readonly typeSource?: Node;
+  readonly indexedRead?: IndexedTypeReadSource;
 }
 
 type BorrowedTypeSource = Node | readonly [Node, Node];
@@ -78,9 +79,9 @@ export function retainErrorOperandSource(checker: Checker, result: Node | undefi
   links.resolvedTypeSource = source;
 }
 
-function completedTypeSource(retained: TypeNodeLinks): BorrowedTypeSource | undefined {
+function completedTypeSource(retained: TypeNodeLinks): BorrowedTypeSource | IndexedTypeReadSource | undefined {
   const source = retained.resolvedTypeSource;
-  if (source === undefined || "Kind" in source || "length" in source) return source;
+  if (source === undefined || "Kind" in source || "length" in source || "kind" in source) return source;
   if (source.declaredType !== undefined && source.declaredType === retained.resolvedType) return source.declaredSource;
   return undefined;
 }
@@ -156,6 +157,8 @@ function readSourceTypeAnswer(checker: Checker, node: Node, type: Type,
       const source = mayBorrow && retained.resolvedType !== undefined ? completedTypeSource(retained) : undefined;
       const successful = type !== checker.errorType && retained.resolvedType !== checker.errorType && mayBorrow && retained.resolutionFailure === undefined
         && retained.grammarFailure === undefined && retained.declarationFailure === undefined;
+      if (source !== undefined && "kind" in source)
+        return successful && source.annotation === current ? { type, causes: [], indexedRead: source } : withCause(type);
       if (source !== undefined) return successful && "Kind" in source && isCompletedSourceType(checker, source, retained.resolvedType)
         ? { type, causes: [], borrowedFrom: source, typeSource: source }
         : { type, causes: [], borrowedFrom: source };

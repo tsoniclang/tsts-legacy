@@ -72,6 +72,7 @@ import { Memoize, IfElse, Find, Filter, Map, Some, Every, GetSpellingSuggestion,
 import type { LinkStore } from "../../core/linkstore.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
 import { completedRequiredPropertySource, directTypeSource, retainErrorOperandSource } from "./source-type-answers.js";
+import type { IndexedTypeReadSource } from "../types.js";
 import { Node_TypeArgumentList } from "../../ast/ast.js";
 import { IsNonLocalAlias, GetSourceFileOfNode, GetFirstIdentifier, GetNodeId, NodeKindIs, FindAncestor, FindAncestorOrQuit, FindAncestorFalse, FindAncestorTrue, FindAncestorQuit, ToFindAncestorResult, GetNameOfDeclaration, GetContainingClass, GetContainingFunction, IsAmbientModule, IsGlobalScopeAugmentation, IsExternalModuleAugmentation, IsStatic, IsClassLike, IsClassOrInterfaceLike, IsParameterPropertyDeclaration, IsFunctionLike, GetImmediatelyInvokedFunctionExpression, IsExternalOrCommonJSModule, IsBlockOrCatchScoped, HasStaticModifier, IsAliasSymbolDeclaration, HasAccessorModifier, IsQuestionToken, IsPrivateIdentifierClassElementDeclaration, IsFunctionLikeDeclaration, NodeIsMissing, NodeIsSynthesized, GetRootDeclaration, IsValidTypeOnlyAliasUseSite, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, GetEnclosingBlockScopeContainer, IsAccessor, FindAncestorKind, IsEntityName, IsEntityNameExpression, GetHostSignatureFromJSDoc, HasSyntacticModifier, HasModifier, NodeIsPresent, GetDeclarationOfKind, IsBindingPattern, IsVariableDeclarationInitializedToRequire, IsVariableLike, IsTypeDeclaration, GetExternalModuleName, GetImportAttributes, IsExclusivelyTypeOnlyImportOrExport, IsGlobalSourceFile, GetDeclarationContainer, GetAssignmentDeclarationKind, JSDeclarationKindModuleExports, JSDeclarationKindExportsProperty, FindConstructorDeclaration, GetFirstConstructorWithBody, HasAbstractModifier, IsThisInTypeQuery, SkipParentheses, GetSymbolId, GetModuleInstanceState, ModuleInstanceStateNonInstantiated, ModuleInstanceStateInstantiated, NewHasFileName, IsEnumConst, IsComputedNonLiteralName, GetTextOfPropertyName, IsInfinityOrNaNString, HasDynamicName, HasContextSensitiveParameters, IsAssignmentTarget, IsStringLiteralLike, GetReparsedNodeForNode, GetPropertyNameForPropertyNameNode, IsThisIdentifier, IsPartOfTypeQuery, IsPartOfTypeNode, IsPropertyName, CanHaveSymbol, IsExpression, IsExpressionNode, IsAssertionExpression, IsThisParameter, IsInJSFile, IsOptionalChain, IsNodeDescendantOf, GetSourceFileOfModule, IsJsonSourceFile, ModuleExportNameIsDefault, IsRightSideOfQualifiedNameOrPropertyAccess, GetExternalModuleImportEqualsDeclarationExpression, IsExternalModuleImportEqualsDeclaration, IsDeclarationNameOrImportPropertyName, IsLiteralComputedPropertyDeclarationName, IsLiteralImportTypeNode, IsBindableObjectDefinePropertyCall, IsJsxTagName, IsInExpressionContext, IsExpressionWithTypeArgumentsInClassExtendsClause, IsJSDocNameReferenceContext, GetNodeAtPosition, IsForInOrOfStatement, IsLeftHandSideExpression, IsTypeReferenceType, IsDeclarationName, IsAccessExpression, HasAmbientModifier, IsClassElement, IsCatchClauseVariableDeclarationOrBindingElement, IsObjectLiteralOrClassExpressionMethodOrAccessor, IsPlainJSFile, IsImportOrImportEqualsDeclaration, IsInternalModuleImportEqualsDeclaration, IsJsxOpeningLikeElement, GetCombinedNodeFlags, IsCallOrNewExpression } from "../../ast/utilities.js";
 import { GetNewTargetContainer } from "../../ast/utilities.js";
@@ -15665,7 +15666,7 @@ export function Checker_getTypeFromIndexedAccessTypeNode(receiver: GoPtr<Checker
     const objectType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.ObjectType);
     const indexType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.IndexType);
     const potentialAlias = Checker_getAliasForTypeNode(receiver, node);
-    const source: { value: GoPtr<Node> } = { value: undefined };
+    const source: IndexedTypeSourceOutput = { value: undefined };
     links!.resolvedType = indexedAccessTypeEx(receiver, objectType, indexType, AccessFlagsNone, node, potentialAlias, source);
     if (source.value !== undefined) links!.resolvedTypeSource = source.value;
   }
@@ -17514,8 +17515,10 @@ export function Checker_getIndexedAccessTypeEx(receiver: GoPtr<Checker>, objectT
   return indexedAccessTypeEx(receiver, objectType, indexType, accessFlags, accessNode, alias);
 }
 
+type IndexedTypeSourceOutput = { value: GoPtr<Node> | IndexedTypeReadSource };
+
 function indexedAccessTypeEx(receiver: GoPtr<Checker>, objectType: GoPtr<Type>, indexType: GoPtr<Type>, accessFlags: AccessFlags,
-  accessNode: GoPtr<Node>, alias: GoPtr<TypeAlias>, source?: { value: GoPtr<Node> }): GoPtr<Type> {
+  accessNode: GoPtr<Node>, alias: GoPtr<TypeAlias>, source?: IndexedTypeSourceOutput): GoPtr<Type> {
   const result = getIndexedAccessTypeOrUndefinedWithEvidence(receiver, objectType, indexType, accessFlags, accessNode, alias, undefined, source);
   if (result === undefined) {
     return IfElse(accessNode !== undefined, receiver!.errorType, receiver!.unknownType);
@@ -17606,7 +17609,7 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
   accessNode: GoPtr<Node>,
   alias: GoPtr<TypeAlias>,
   selected?: SelectedElementAccessCheck,
-  source?: { value: GoPtr<Node> },
+  source?: IndexedTypeSourceOutput,
 ): GoPtr<Type> {
   if (objectType === receiver!.wildcardType || indexType === receiver!.wildcardType) {
     return receiver!.wildcardType;
@@ -17636,9 +17639,22 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
   const apparentObjectType = Checker_getReducedApparentType(receiver, objectType);
   if ((indexType!.flags & TypeFlagsUnion) !== 0 && (indexType!.flags & TypeFlagsBoolean) === 0) {
     const propTypes: Array<GoPtr<Type>> = [];
+    let propertySource = source;
+    let firstSource: Node | undefined;
+    let properties: [Node, Node, ...Node[]] | undefined;
     let wasMissingProp = false;
     for (const ty of Type_Types(indexType)) {
-      const propType = getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, ty, indexType, accessNode, (accessFlags | IfElse(wasMissingProp, AccessFlagsSuppressNoImplicitAnyError, 0)) as AccessFlags, selected);
+      const propType = getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, ty, indexType, accessNode,
+        (accessFlags | IfElse(wasMissingProp, AccessFlagsSuppressNoImplicitAnyError, 0)) as AccessFlags, selected,
+        propertySource);
+      if (propertySource !== undefined) {
+        const original = propertySource.value;
+        propertySource.value = undefined;
+        if (original === undefined || !("Kind" in original)) propertySource = undefined;
+        else if (properties !== undefined) properties.push(original);
+        else if (firstSource === undefined) firstSource = original;
+        else properties = [firstSource, original];
+      }
       if (propType !== undefined) {
         propTypes.push(propType);
       } else if (accessNode === undefined) {
@@ -17653,9 +17669,15 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
     if ((accessFlags & AccessFlagsWriting) !== 0) {
       return Checker_getIntersectionTypeEx(receiver, propTypes, IntersectionFlagsNone, alias);
     }
-    return Checker_getUnionTypeEx(receiver, propTypes, UnionReductionLiteral, alias, undefined);
+    const result = Checker_getUnionTypeEx(receiver, propTypes, UnionReductionLiteral, alias, undefined);
+    if (propertySource !== undefined && accessNode !== undefined && properties !== undefined
+      && result !== undefined && result !== receiver!.errorType) {
+      propertySource.value = { kind: "indexed-read", annotation: accessNode, properties };
+    }
+    return result;
   }
-  return getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, indexType, indexType, accessNode, (accessFlags | AccessFlagsCacheSymbol | AccessFlagsReportDeprecated) as AccessFlags, selected, source);
+  return getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, indexType, indexType,
+    accessNode, (accessFlags | AccessFlagsCacheSymbol | AccessFlagsReportDeprecated) as AccessFlags, selected, source);
 }
 
 /**
@@ -17890,7 +17912,7 @@ function getPropertyTypeForIndexTypeWithEvidence(
   accessNode: GoPtr<Node>,
   accessFlags: AccessFlags,
   selected?: SelectedElementAccessCheck,
-  source?: { value: GoPtr<Node> },
+  source?: IndexedTypeSourceOutput,
 ): GoPtr<Type> {
   const operation = () => getPropertyTypeForIndexTypeObserved(receiver, originalObjectType, objectType,
     indexType, fullIndexType, accessNode, accessFlags, selected, source);
@@ -17923,7 +17945,7 @@ function getPropertyTypeForIndexTypeObserved(
   accessNode: GoPtr<Node>,
   accessFlags: AccessFlags,
   selected?: SelectedElementAccessCheck,
-  source?: { value: GoPtr<Node> },
+  source?: IndexedTypeSourceOutput,
 ): GoPtr<Type> {
   let accessExpression: GoPtr<Node> = undefined;
   if (accessNode !== undefined && accessNode!.Kind === KindElementAccessExpression) {

@@ -46,17 +46,23 @@ for (const checkers of [1, 4]) test(`completed type answers preserve their exact
   assert.equal(checker.getTypeFromTypeNode(occurrences[0])?.typeSource === first.typeSource, true, "warm reads retain the same source");
 });
 
-for (const checkers of [1, 4]) test(`closed indexed annotations forward only the actual unchanged property with ${checkers} checkers`, () => {
+for (const checkers of [1, 4]) test(`closed indexed annotations retain only their actual required property sources with ${checkers} checkers`, () => {
   const files = {
     "/indexed/core.d.ts": testCoreDeclarations,
     "/indexed/padding.ts": "export type Padding = 1;",
     "/indexed/more.ts": "export type More = 2;",
+    "/indexed/forward.ts": 'import type { Joined } from "./main.js"; export type Alias = Joined; export type Wrap = ((Alias));',
     "/indexed/main.ts": "export type Large = { left: 9007199254740993; right: 9007199254740992 }['left'];"
       + " export type Side = { left: 9007199254740993; right: 9007199254740992 }['right'];"
       + " export type Joined = { left: 9007199254740993; right: 9007199254740992 }['left' | 'right'];"
       + " export type Optional = { left?: 9007199254740993 }['left'];"
       + " export type Tuple = [-0.1][0]; export type Pattern = { [key: string]: -0.1 }['left'];"
-      + " export type Fraction = -0.1; export type Indirect = { value: Fraction }['value'];",
+      + " export type Fraction = -0.1; export type Indirect = { value: Fraction }['value'];"
+      + " export type OtherJoined = { left: 9007199254740992; right: 9007199254740993 }['right' | 'left'];"
+      + " export type Three = { first: 0; second: 1; third: 2 }['third' | 'first' | 'second'];"
+      + " export type Partial = { left: 1; right?: 2 }['left' | 'right'];"
+      + " export type Missing = { left: 1; right: 2 }['left' | 'missing'];"
+      + " export type Open<Keys> = { left: 1; right: 2 }[Keys];",
   };
   const session = createCompilerSessionFromFiles({ currentDirectory: "/indexed", files, rootFiles: Object.keys(files),
     includeBundledLibraries: false, compilerOptions: { ...testNoLibCompilerOptions, strict: true, checkers } });
@@ -64,10 +70,11 @@ for (const checkers of [1, 4]) test(`closed indexed annotations forward only the
   const checked = session.checkSource();
   const file = checked.getSourceFile("/indexed/main.ts");
   assert.ok(file);
-  const { ast, checker } = checked.getSourceFileQueries(file);
+  const { ast, checker, typeShape } = checked.getSourceFileQueries(file);
   const annotations = findNodes(file, ast.children, ast.is.IsTypeAliasDeclaration).map(Node_Type);
-  const [large, side, joined, optional, tuple, pattern, fraction, indirect] = annotations.map(checker.getTypeFromTypeNode);
-  assert.ok(large && side && joined && optional && tuple && pattern && fraction && indirect);
+  const [large, side, joined, optional, tuple, pattern, fraction, indirect, otherJoined, three, partial, missing, open] =
+    annotations.map(checker.getTypeFromTypeNode);
+  assert.ok(large && side && joined && optional && tuple && pattern && fraction && indirect && otherJoined && three && partial && missing && open);
   const property = (annotation: typeof annotations[number], ordinal: number) => {
     const object = ast.as.AsIndexedAccessTypeNode(annotation)?.ObjectType;
     assert.ok(object);
@@ -79,7 +86,49 @@ for (const checkers of [1, 4]) test(`closed indexed annotations forward only the
   assert.equal(large.type === side.type && large.type === joined.type, true, "the native result alone cannot distinguish those sources");
   assert.equal(left !== undefined && large.typeSource === left, true);
   assert.equal(right !== undefined && side.typeSource === right, true);
-  for (const other of [joined, optional, tuple, pattern]) assert.equal(other.typeSource, undefined);
+  assert.equal(otherJoined.type === joined.type, true);
+  for (const other of [joined, otherJoined, three, optional, tuple, pattern]) assert.equal(other.typeSource, undefined);
+  for (const other of [large, side, optional, tuple, pattern, partial, missing, open]) assert.equal(other.indexedRead, undefined);
+  for (const [answer, ordinal, names] of [
+    [joined, 2, ["left", "right"]], [otherJoined, 8, ["left", "right"]], [three, 9, ["first", "second", "third"]],
+  ] as const) {
+    const annotation = annotations[ordinal];
+    const keyNode = ast.as.AsIndexedAccessTypeNode(annotation)?.IndexType;
+    assert.ok(keyNode);
+    const keyType = checker.getTypeFromTypeNode(keyNode)?.type;
+    assert.ok(keyType);
+    const keys = typeShape.getUnionOrIntersectionTypes(keyType).map(typeShape.getStringLiteralTypeValue);
+    const properties = keys.map(key => {
+      const own = names.findIndex(name => name === key);
+      assert.ok(own >= 0);
+      return property(annotation, own);
+    });
+    assert.ok(answer.indexedRead);
+    assert.equal(answer.indexedRead.annotation === annotation, true);
+    assert.equal(answer.indexedRead.properties.length, names.length);
+    assert.equal(answer.indexedRead.properties.every((source, index) => source === properties[index]), true);
+    assert.equal(checker.getTypeFromTypeNode(annotation)?.indexedRead === answer.indexedRead, true);
+  }
+  assert.equal(joined.indexedRead !== otherJoined.indexedRead, true);
+  const forward = checked.getSourceFile("/indexed/forward.ts");
+  assert.ok(forward);
+  const context = WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics);
+  const [originOwner, releaseOrigin] = Program_GetTypeCheckerForFileExclusive(session.program, context, file);
+  try {
+    assert.ok(originOwner);
+    assert.equal(LinkStore_TryGet(originOwner.typeNodeLinks, annotations[2])?.resolvedTypeSource === joined.indexedRead, true);
+  } finally { releaseOrigin(); }
+  const [foreignOwner, releaseForeign] = Program_GetTypeCheckerForFileExclusive(session.program, context, forward);
+  try {
+    assert.ok(foreignOwner);
+    assert.equal(foreignOwner === originOwner, checkers === 1);
+  } finally { releaseForeign(); }
+  const foreignChecker = checked.getSourceFileQueries(forward).checker;
+  for (const node of findNodes(forward, ast.children, ast.is.IsTypeAliasDeclaration)) {
+    const answer = foreignChecker.getTypeFromTypeNode(Node_Type(node));
+    assert.ok(answer);
+    assert.equal(answer.indexedRead === joined.indexedRead && answer.causes.length === 0, true);
+  }
   assert.equal(indirect.typeSource === annotations[6] && indirect.type === fraction.type, true);
 });
 
