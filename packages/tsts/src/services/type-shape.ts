@@ -2,6 +2,8 @@ import type { GoPtr } from "../go/compat.js";
 import { readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
 import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type-indexed-access.js";
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
+import { readTypeKeyOfComponents, readTypeSubstitutionComponents } from "./type-dependent-operands.js";
+import type { TypeKeyOfComponents, TypeSubstitutionComponents } from "./type-dependent-operands.js";
 import { readConditionalApplication, readTypeAliasApplication, resolveTypeAliasApplication,
   type RetainedTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
@@ -85,7 +87,6 @@ import {
   TypeFlagsStringLike,
   TypeFlagsStringLiteral,
   TypeFlagsStructuredOrInstantiable,
-  TypeFlagsSubstitution,
   TypeFlagsUnion,
   TypeFlagsUnknown,
   TypeFlagsVoidLike,
@@ -94,7 +95,6 @@ import {
   Type_Target,
   Type_TargetTupleType,
   Type_AsConditionalType,
-  Type_AsSubstitutionType,
   Type_AsInterfaceType,
   Type_AsLiteralType,
   LiteralType_Value,
@@ -239,7 +239,8 @@ export interface TypeShapeQueries {
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
   readonly getInstantiatedBaseTypes: (type: GoPtr<Type>) => readonly Type[] | undefined;
-  readonly getSubstitutionBaseType: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly getKeyOfComponents: (type: GoPtr<Type>) => TypeKeyOfComponents | undefined;
+  readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
   readonly getTupleInfo: (type: GoPtr<Type>) => TypeTupleInfo | undefined;
   readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -400,9 +401,14 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       }
       return Object.freeze(result);
     }),
-    getSubstitutionBaseType: (type) => hasFlags(type, TypeFlagsSubstitution)
-      ? Type_AsSubstitutionType(type)?.baseType
-      : undefined,
+    getKeyOfComponents: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
+      checker => readTypeKeyOfComponents(checker, type),
+    ),
+    getSubstitutionComponents: (type) => withOwnedChecker(
+      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
+      checker => readTypeSubstitutionComponents(checker, type),
+    ),
     getTupleInfo: (type) => withCheckerForType(
       program,
       type,

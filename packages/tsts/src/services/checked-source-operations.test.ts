@@ -1,7 +1,7 @@
 import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Type_AsConditionalType } from "../internal/checker/types.js";
+import { IndexFlagsNone, Type_AsConditionalType } from "../internal/checker/types.js";
 import {
   createCompilerSessionFromFiles,
   type SourceFileQueries,
@@ -414,7 +414,7 @@ test("type-shape tuple evidence retains exact authored parameter declarations", 
   );
 });
 
-test("type-shape substitution evidence exposes the exact compiler-owned base type", () => {
+test("type-shape substitution evidence exposes the exact compiler-owned base and constraint", () => {
   const source = checkedQueries(`
     type NoInfer<T> = intrinsic;
     function choose<T>(value: T, fallback: NoInfer<T>): T { return value; }
@@ -428,10 +428,36 @@ test("type-shape substitution evidence exposes the exact compiler-owned base typ
   assert.ok(fallback !== undefined);
 
   const substitution = source.checker.getTypeAtLocation(fallback)?.type;
-  const baseType = source.typeShape.getSubstitutionBaseType(substitution);
-  assert.ok(baseType !== undefined);
-  assert.equal(source.typeShape.typeToString(baseType), "T");
-  assert.equal(source.typeShape.getSubstitutionBaseType(baseType) === undefined, true);
+  const components = source.typeShape.getSubstitutionComponents(substitution);
+  assert.ok(components !== undefined);
+  assert.equal(source.typeShape.typeToString(components.base), "T");
+  assert.equal(source.typeShape.typeToString(components.constraint), "unknown");
+  assert.equal(source.typeShape.getSubstitutionComponents(components.base), undefined);
+});
+
+test("type-shape separates the real keyof target from the substituted branch parameter", () => {
+  const text = "type Selected<T, P> = P extends keyof T ? T[P] : never;";
+  const { checker, typeShape, ast, sourceFile } = checkedQueries(text);
+  const [key] = findNodes(sourceFile, ast.children, ast.is.IsTypeOperatorNode);
+  const [access] = findNodes(sourceFile, ast.children, ast.is.IsIndexedAccessTypeNode);
+  const keys = typeShape.getTypeFromTypeNode(key)?.type;
+  const indexed = typeShape.getIndexedAccessComponents(typeShape.getTypeFromTypeNode(access)?.type);
+  assert.ok(keys !== undefined && indexed !== undefined);
+  const target = typeShape.getKeyOfComponents(keys);
+  const narrowed = typeShape.getSubstitutionComponents(indexed.indexType);
+  assert.ok(target !== undefined && narrowed !== undefined);
+  assert.equal(target.target === indexed.objectType, true);
+  assert.equal(target.indexFlags, IndexFlagsNone);
+  assert.equal(narrowed.constraint === keys, true);
+  assert.equal(typeShape.typeToString(narrowed.base), "P");
+  assert.equal(typeShape.getKeyOfComponents(narrowed.base), undefined);
+  assert.equal(typeShape.getSubstitutionComponents(keys), undefined);
+  assert.equal(typeShape.getKeyOfComponents({ ...keys }), undefined);
+  assert.equal(typeShape.getSubstitutionComponents({ ...indexed.indexType }), undefined);
+  const foreign = checkedQueries(text).typeShape;
+  assert.equal(foreign.getKeyOfComponents(keys), undefined);
+  assert.equal(foreign.getSubstitutionComponents(indexed.indexType), undefined);
+  assert.equal(checker.getTypeAtLocation(key)?.type === keys, true);
 });
 
 test("type-shape signature evidence expands inferred tuple-rest parameters exactly", () => {
