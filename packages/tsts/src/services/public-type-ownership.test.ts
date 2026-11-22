@@ -103,7 +103,7 @@ for (const checkers of [1, 4]) for (const custom of [false, true])
       const signature = current.left.checker.getSignatureFromDeclaration(callable);
       assert.equal(signature !== undefined && signature.checkerId === owner.id, true,
         "A node-based signature answer is produced by its actual declaration file checker");
-      assert.equal(current.right.typeShape.getReturnTypeOfSignature(signature)?.checker === owner, true);
+      assert.equal(current.right.typeShape.getReturnTypeOfSignature(signature)?.type.checker === owner, true);
       const parameter = current.right.typeShape.getSignatureParameterInfos(signature)[0];
       assert.equal(parameter?.type.checker === owner, true,
         "A signature consumer reads its parameters in that same signature owner");

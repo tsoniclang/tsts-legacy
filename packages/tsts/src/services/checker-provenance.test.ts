@@ -72,7 +72,7 @@ test("actual signature and transient symbol provenance survives cold query views
     for (const reverse of [false, true]) {
       const queries = createTypeCheckerQueries(current.session.program, { sourceFile: current.readerFile });
       const reads = [
-        () => assert.equal(queries.getReturnTypeOfSignature(signature) === returnType, true, "cold signature return identity"),
+        () => assert.equal(queries.getReturnTypeOfSignature(signature)?.type === returnType, true, "cold signature return identity"),
         () => assert.equal(queries.getInvocationReturnTypeOfSignature(signature) === returnType, true, "cold invocation identity"),
         () => assert.equal(queries.getTypeOfSymbol(parameter) === parameterType, true, "cold instantiated parameter identity"),
         () => assert.equal(queries.getTypeOfSymbol(property) === propertyType, true, "cold instantiated property identity"),

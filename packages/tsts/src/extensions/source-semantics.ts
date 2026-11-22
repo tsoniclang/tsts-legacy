@@ -97,6 +97,7 @@ import type {
 } from "./host.js";
 import { defineExtensionFactKey } from "./fact-key.js";
 import { encodeIdentityTuple } from "./identity-tuple.js";
+import type { SourceProgramQueries } from "./source-program.js";
 
 type SourceSemanticsFactReader = Pick<ExtensionFactReader, "get">;
 type SourceSemanticsFactAccess = Pick<SourceAnalysisFactAccess, "get" | "set">;
@@ -153,8 +154,7 @@ export interface SourceTypeMarkerDeclaration {
 
 type SourceMarkerDeclaration = SourceCallMarkerDeclaration | SourceTypeMarkerDeclaration;
 
-interface SelectedSourcePrimitiveDeclaration {
-  readonly moduleSpecifier: string;
+interface SelectedSourcePrimitiveDeclaration extends SourceSemanticsModuleIdentity {
   readonly exportName: string;
 }
 
@@ -170,7 +170,7 @@ const selectedSourcePrimitiveDeclarationFactKey = defineExtensionFactKey<Selecte
   name: "selectedSourcePrimitiveDeclaration",
   snapshot: (value) => Object.freeze({ ...value }),
   equals: (left, right) =>
-    left.moduleSpecifier === right.moduleSpecifier
+    sameSemanticsModule(left, right)
     && left.exportName === right.exportName,
 });
 
@@ -243,7 +243,7 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
       for (const sourceFile of sourceFiles) {
         recordConfiguredSourceSemanticsDeclarations(
           sourceFile,
-          context.source.getSourceFileQueries(sourceFile).checker,
+          context.source,
           context.facts,
           modules,
         );
@@ -270,13 +270,14 @@ export function createSourceSemanticsExtension(options: SourceSemanticsExtension
 
 function recordConfiguredSourceSemanticsDeclarations(
   sourceFile: SourceFile,
-  checker: TypeCheckerQueries,
+  source: SourceProgramQueries,
   facts: SourceSemanticsFactAccess,
   modules: readonly SourceSemanticsModuleRuntime[],
 ): void {
+  const { checker } = source.getSourceFileQueries(sourceFile);
   for (const statement of Node_Statements(sourceFile) ?? []) {
     if (statement?.Kind === KindImportDeclaration) {
-      const moduleIdentity = getSourceSemanticsModuleIdentity(statement, modules);
+      const moduleIdentity = getSourceSemanticsModuleIdentity(source, checker, facts, Node_ModuleSpecifier(statement), modules);
       if (moduleIdentity !== undefined) {
         recordSourceSemanticsImportClause(
           facts,
@@ -288,7 +289,7 @@ function recordConfiguredSourceSemanticsDeclarations(
       continue;
     }
     if (statement?.Kind === KindExportDeclaration) {
-      const moduleIdentity = getSourceSemanticsModuleIdentity(statement, modules);
+      const moduleIdentity = getSourceSemanticsModuleIdentity(source, checker, facts, Node_ModuleSpecifier(statement), modules);
       if (moduleIdentity !== undefined) {
         recordSourceSemanticsExportClause(
           facts,
@@ -304,14 +305,14 @@ function recordConfiguredSourceSemanticsDeclarations(
     const imported = AsImportTypeNode(node);
     const moduleSpecifier = AsLiteralTypeNode(imported?.Argument)?.Literal;
     if (imported?.IsTypeOf || imported?.Qualifier === undefined || moduleSpecifier?.Kind !== KindStringLiteral) return;
-    const module = modules.find(candidate => candidate.moduleSpecifier === Node_Text(moduleSpecifier));
+    const module = getSourceSemanticsModuleIdentity(source, checker, facts, moduleSpecifier, modules);
     if (module === undefined) return;
     const selected = checker.getSymbolAtLocation(imported.Qualifier);
     if (selected === undefined) return;
     const exported = checker.getExportsOfModule(checker.getModuleSymbolFromSpecifier(moduleSpecifier))
-      .find(candidate => candidate === selected);
+      .find(candidate => candidate.symbol === selected);
     if (exported === undefined) return;
-    const exportName = checker.getSymbolName(exported);
+    const exportName = exported.name;
     if (!module.primitivesByExportName.has(exportName)) return;
     facts.set(selected, selectedSourcePrimitiveDeclarationFactKey,
       createSourcePrimitiveSelection(module, exportName), createPrimitiveEvidence(module, exportName));
@@ -347,9 +348,7 @@ function recordSourceSemanticsDeclarationAliases(
       selectedSourcePrimitiveDeclarationFactKey,
     );
     if (primitive !== undefined) {
-      const moduleIdentity = modules.find(
-        (candidate) => candidate.moduleSpecifier === primitive.moduleSpecifier,
-      );
+      const moduleIdentity = uniqueSemanticsModule(modules, candidate => sameSemanticsModule(candidate, primitive));
       const declaration = moduleIdentity?.primitivesByExportName.get(
         primitive.exportName,
       );
@@ -616,7 +615,7 @@ function recordCanonicalProviderTypeMarker(
 ): void {
   const { facts, symbol, declaration } = context;
   if (declaration.exportName === undefined) return;
-  const module = modules.find(candidate => candidate.moduleSpecifier === declaration.moduleSpecifier);
+  const module = unversionedProviderSemanticsModule(modules, declaration.moduleSpecifier);
   const marker = getModuleMarker(module, "type-marker", declaration.exportName);
   if (marker?.kind !== "type-marker") return;
   const evidence = createMarkerEvidence(marker.exportName);
@@ -1223,9 +1222,7 @@ function resolveMarkerFromCheckedReference(
     if (selectedSymbol === undefined) {
       return undefined;
     }
-    const module = modules.find(
-      (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
-    );
+    const module = semanticsModuleForIdentity(modules, receiverIdentity);
     return getModuleMarker(
       module,
       capability,
@@ -1285,17 +1282,12 @@ function resolveMarkerFromSelectedSubject(
   }
   const providerDeclaration = facts.get(subject, providerVirtualDeclarationFactKey);
   if (providerDeclaration?.exportName !== undefined) {
-    const module = modules.find(
-      (candidate) =>
-        candidate.moduleSpecifier === providerDeclaration.moduleSpecifier,
-    );
+    const module = unversionedProviderSemanticsModule(modules, providerDeclaration.moduleSpecifier);
     return getModuleMarker(module, capability, providerDeclaration.exportName);
   }
   const identity = facts.get(subject, canonicalIdentityFactKey);
   if (identity?.kind === "export" && identity.exportName !== undefined) {
-    const module = modules.find(
-      (candidate) => identity.id === `${candidate.moduleSpecifier}::${identity.exportName}`,
-    );
+    const module = semanticsModuleForIdentity(modules, identity);
     return getModuleMarker(module, capability, identity.exportName);
   }
   return undefined;
@@ -1340,9 +1332,7 @@ function resolveMarkerFromSelectedSymbol(
   if (parentIdentity?.kind !== "module" || symbol === undefined) {
     return undefined;
   }
-  const module = modules.find(
-    (candidate) => candidate.moduleSpecifier === parentIdentity.id,
-  );
+  const module = semanticsModuleForIdentity(modules, parentIdentity);
   return getModuleMarker(module, capability, symbol.Name);
 }
 
@@ -1385,9 +1375,7 @@ function resolvePrimitiveFromCheckedReference(
     if (selectedSymbol === undefined) {
       return undefined;
     }
-    const moduleIdentity = modules.find(
-      (candidate) => candidate.moduleSpecifier === receiverIdentity.id,
-    );
+    const moduleIdentity = semanticsModuleForIdentity(modules, receiverIdentity);
     return resolveConfiguredPrimitive(
       moduleIdentity,
       checker.getSymbolName(selectedSymbol),
@@ -1425,10 +1413,7 @@ function resolvePrimitiveFromSelectedSymbol(
   }
   const providerDeclaration = facts.get(symbol, providerVirtualDeclarationFactKey);
   if (providerDeclaration?.exportName !== undefined) {
-    const moduleIdentity = modules.find(
-      (candidate) =>
-        candidate.moduleSpecifier === providerDeclaration.moduleSpecifier,
-    );
+    const moduleIdentity = unversionedProviderSemanticsModule(modules, providerDeclaration.moduleSpecifier);
     return resolveConfiguredPrimitive(
       moduleIdentity,
       providerDeclaration.exportName,
@@ -1439,10 +1424,7 @@ function resolvePrimitiveFromSelectedSymbol(
   if (identity?.kind !== "export" || identity.exportName === undefined) {
     return undefined;
   }
-  const moduleIdentity = modules.find(
-    (candidate) =>
-      identity.id === `${candidate.moduleSpecifier}::${identity.exportName}`,
-  );
+  const moduleIdentity = semanticsModuleForIdentity(modules, identity);
   return resolveConfiguredPrimitive(
     moduleIdentity,
     identity.exportName,
@@ -1490,9 +1472,7 @@ function resolvePrimitiveSelection(
   symbol?: Symbol,
   identity?: ExtensionCanonicalIdentity,
 ): ResolvedSourcePrimitive {
-  const moduleIdentity = modules.find(
-    (candidate) => candidate.moduleSpecifier === selection.moduleSpecifier,
-  );
+  const moduleIdentity = uniqueSemanticsModule(modules, candidate => sameSemanticsModule(candidate, selection));
   const primitive = moduleIdentity?.primitivesByExportName.get(selection.exportName);
   if (moduleIdentity === undefined || primitive === undefined) {
     throw new Error(
@@ -1542,6 +1522,9 @@ function createSourcePrimitiveSelection(
 ): SelectedSourcePrimitiveDeclaration {
   return {
     moduleSpecifier: moduleIdentity.moduleSpecifier,
+    ...(moduleIdentity.packageName === undefined ? {} : { packageName: moduleIdentity.packageName }),
+    ...(moduleIdentity.packageVersion === undefined ? {} : { packageVersion: moduleIdentity.packageVersion }),
+    subpath: moduleIdentity.subpath ?? moduleIdentity.moduleSpecifier,
     exportName,
   };
 }
@@ -1586,11 +1569,60 @@ function recordNamespaceImportIdentity(
   facts.set(namespaceSymbol, canonicalIdentityFactKey, createModuleIdentity(moduleIdentity, typedImport ? "type" : "namespace", getSymbolFactId(namespaceSymbol)), createModuleEvidence(moduleIdentity));
 }
 
-function getSourceSemanticsModuleIdentity(node: GoPtr<Node>, modules: readonly SourceSemanticsModuleRuntime[]): SourceSemanticsModuleRuntime | undefined {
-  const moduleSpecifier = Node_ModuleSpecifier(node);
-  return moduleSpecifier === undefined
-    ? undefined
-    : modules.find((candidate) => candidate.moduleSpecifier === Node_Text(moduleSpecifier));
+function getSourceSemanticsModuleIdentity(
+  source: SourceProgramQueries,
+  checker: TypeCheckerQueries,
+  facts: SourceSemanticsFactAccess,
+  moduleSpecifier: GoPtr<Node>,
+  modules: readonly SourceSemanticsModuleRuntime[],
+): SourceSemanticsModuleRuntime | undefined {
+  if (moduleSpecifier === undefined || modules.length === 0) return undefined;
+  const provider = facts.get(checker.getSymbolAtLocation(moduleSpecifier), providerVirtualDeclarationFactKey);
+  if (provider !== undefined) return provider.exportId === undefined && provider.exportName === undefined
+    ? unversionedProviderSemanticsModule(modules, provider.moduleSpecifier) : undefined;
+  const name = Node_Text(moduleSpecifier);
+  let checkedPackage: ReturnType<SourceProgramQueries["getCheckedModulePackage"]> | null = null;
+  return uniqueSemanticsModule(modules, candidate => {
+    if (candidate.moduleSpecifier !== name) return false;
+    if (candidate.packageName !== undefined || candidate.packageVersion !== undefined) {
+      if (checkedPackage === null) checkedPackage = source.getCheckedModulePackage(moduleSpecifier);
+      if (checkedPackage === undefined
+        || candidate.packageVersion !== undefined && candidate.packageVersion !== checkedPackage.Version
+        || candidate.packageName !== undefined && candidate.packageName !== checkedPackage.Name) return false;
+    }
+    return true;
+  });
+}
+
+function uniqueSemanticsModule(modules: readonly SourceSemanticsModuleRuntime[], matches: (module: SourceSemanticsModuleRuntime) => boolean):
+  SourceSemanticsModuleRuntime | undefined {
+  let selected: SourceSemanticsModuleRuntime | undefined;
+  for (const candidate of modules) {
+    if (!matches(candidate)) continue;
+    if (selected !== undefined) return undefined;
+    selected = candidate;
+  }
+  return selected;
+}
+
+function sameSemanticsModule(left: SourceSemanticsModuleIdentity, right: SourceSemanticsModuleIdentity): boolean {
+  return left.moduleSpecifier === right.moduleSpecifier && left.packageName === right.packageName
+    && left.packageVersion === right.packageVersion
+    && (left.subpath ?? left.moduleSpecifier) === (right.subpath ?? right.moduleSpecifier);
+}
+
+function semanticsModuleForIdentity(modules: readonly SourceSemanticsModuleRuntime[], identity: ExtensionCanonicalIdentity):
+  SourceSemanticsModuleRuntime | undefined {
+  if (identity.kind !== "module" && identity.kind !== "export") return undefined;
+  return uniqueSemanticsModule(modules, candidate => identity.id === (identity.kind === "module" ? candidate.moduleSpecifier
+    : `${candidate.moduleSpecifier}::${identity.exportName}`)
+    && candidate.packageName === identity.packageName && candidate.packageVersion === identity.packageVersion
+    && (candidate.subpath ?? candidate.moduleSpecifier) === identity.subpath);
+}
+
+function unversionedProviderSemanticsModule(modules: readonly SourceSemanticsModuleRuntime[], specifier: string):
+  SourceSemanticsModuleRuntime | undefined {
+  return uniqueSemanticsModule(modules, candidate => candidate.moduleSpecifier === specifier && candidate.packageVersion === undefined);
 }
 
 function recordSourcePrimitiveImport(

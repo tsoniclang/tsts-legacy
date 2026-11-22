@@ -138,6 +138,13 @@ test("deferred indexed types expose exact components without fabricating concret
   assert.ok(selectedComponents.indexType === components.indexType, "Deferred selection must retain the exact index type");
   assert.ok(source.typeShape.selectIndexedAccess(components.objectType, components.indexType)?.readType === result.readType,
     "Repeated deferred selections must retain the same checker type");
+  assert.equal(result.writeType !== result.readType, true);
+  for (const retained of [result.readType, result.writeType]) {
+    const operands = source.typeShape.getIndexedAccessComponents(retained);
+    assert.equal(retained.alias === undefined, true);
+    assert.equal(operands?.objectType === components.objectType && operands.indexType === components.indexType, true);
+    assert.equal(source.typeShape.getIndexedAccessComponents({ ...retained }) === undefined, true);
+  }
   assert.equal(source.typeShape.getIndexedAccessComponents(alias(source, "NumberValue")), undefined);
 });
 

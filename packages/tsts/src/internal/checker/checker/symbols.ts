@@ -71,6 +71,8 @@ import { InternalSymbolNameComputed, InternalSymbolNameAssignmentDeclaration, In
 import { Memoize, IfElse, Find, Filter, Map, Some, Every, GetSpellingSuggestion, ConcatenateSeq, FindLast, LastOrNil, OrElse, CountWhere, AppendIfUnique, FirstOrNil } from "../../core/core.js";
 import type { LinkStore } from "../../core/linkstore.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
+import { completedRequiredPropertySource, directTypeSource, retainErrorOperandSource } from "./source-type-answers.js";
+import { Node_TypeArgumentList } from "../../ast/ast.js";
 import { IsNonLocalAlias, GetSourceFileOfNode, GetFirstIdentifier, GetNodeId, NodeKindIs, FindAncestor, FindAncestorOrQuit, FindAncestorFalse, FindAncestorTrue, FindAncestorQuit, ToFindAncestorResult, GetNameOfDeclaration, GetContainingClass, GetContainingFunction, IsAmbientModule, IsGlobalScopeAugmentation, IsExternalModuleAugmentation, IsStatic, IsClassLike, IsClassOrInterfaceLike, IsParameterPropertyDeclaration, IsFunctionLike, GetImmediatelyInvokedFunctionExpression, IsExternalOrCommonJSModule, IsBlockOrCatchScoped, HasStaticModifier, IsAliasSymbolDeclaration, HasAccessorModifier, IsQuestionToken, IsPrivateIdentifierClassElementDeclaration, IsFunctionLikeDeclaration, NodeIsMissing, NodeIsSynthesized, GetRootDeclaration, IsValidTypeOnlyAliasUseSite, IsTypeOnlyImportDeclaration, IsTypeOnlyImportOrExportDeclaration, GetEnclosingBlockScopeContainer, IsAccessor, FindAncestorKind, IsEntityName, IsEntityNameExpression, GetHostSignatureFromJSDoc, HasSyntacticModifier, HasModifier, NodeIsPresent, GetDeclarationOfKind, IsBindingPattern, IsVariableDeclarationInitializedToRequire, IsVariableLike, IsTypeDeclaration, GetExternalModuleName, GetImportAttributes, IsExclusivelyTypeOnlyImportOrExport, IsGlobalSourceFile, GetDeclarationContainer, GetAssignmentDeclarationKind, JSDeclarationKindModuleExports, JSDeclarationKindExportsProperty, FindConstructorDeclaration, GetFirstConstructorWithBody, HasAbstractModifier, IsThisInTypeQuery, SkipParentheses, GetSymbolId, GetModuleInstanceState, ModuleInstanceStateNonInstantiated, ModuleInstanceStateInstantiated, NewHasFileName, IsEnumConst, IsComputedNonLiteralName, GetTextOfPropertyName, IsInfinityOrNaNString, HasDynamicName, HasContextSensitiveParameters, IsAssignmentTarget, IsStringLiteralLike, GetReparsedNodeForNode, GetPropertyNameForPropertyNameNode, IsThisIdentifier, IsPartOfTypeQuery, IsPartOfTypeNode, IsPropertyName, CanHaveSymbol, IsExpression, IsExpressionNode, IsAssertionExpression, IsThisParameter, IsInJSFile, IsOptionalChain, IsNodeDescendantOf, GetSourceFileOfModule, IsJsonSourceFile, ModuleExportNameIsDefault, IsRightSideOfQualifiedNameOrPropertyAccess, GetExternalModuleImportEqualsDeclarationExpression, IsExternalModuleImportEqualsDeclaration, IsDeclarationNameOrImportPropertyName, IsLiteralComputedPropertyDeclarationName, IsLiteralImportTypeNode, IsBindableObjectDefinePropertyCall, IsJsxTagName, IsInExpressionContext, IsExpressionWithTypeArgumentsInClassExtendsClause, IsJSDocNameReferenceContext, GetNodeAtPosition, IsForInOrOfStatement, IsLeftHandSideExpression, IsTypeReferenceType, IsDeclarationName, IsAccessExpression, HasAmbientModifier, IsClassElement, IsCatchClauseVariableDeclarationOrBindingElement, IsObjectLiteralOrClassExpressionMethodOrAccessor, IsPlainJSFile, IsImportOrImportEqualsDeclaration, IsInternalModuleImportEqualsDeclaration, IsJsxOpeningLikeElement, GetCombinedNodeFlags, IsCallOrNewExpression } from "../../ast/utilities.js";
 import { GetNewTargetContainer } from "../../ast/utilities.js";
 import { GetExtendsHeritageClauseElement, GetExtendsHeritageClauseElements, GetImplementsHeritageClauseElements, IsPartOfParameterDeclaration } from "../../ast/utilities.js";
@@ -6670,29 +6672,7 @@ export function Checker_checkIdentifier(receiver: GoPtr<Checker>, node: GoPtr<No
   let t = Checker_getNarrowedTypeOfSymbol(receiver, localOrExportSymbol, node);
   const assignmentKind = getAssignmentTargetKind(node);
   if (assignmentKind !== AssignmentKindNone) {
-    let assignmentError: GoPtr<Message>;
-    if ((localOrExportSymbol!.Flags & SymbolFlagsVariable) === 0 &&
-        !(IsInJSFile(node) && (localOrExportSymbol!.Flags & SymbolFlagsValueModule) !== 0)) {
-      if ((localOrExportSymbol!.Flags & SymbolFlagsEnum) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_an_enum;
-      } else if ((localOrExportSymbol!.Flags & SymbolFlagsClass) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_a_class;
-      } else if ((localOrExportSymbol!.Flags & SymbolFlagsModule) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_a_namespace;
-      } else if ((localOrExportSymbol!.Flags & SymbolFlagsFunction) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_a_function;
-      } else if ((localOrExportSymbol!.Flags & SymbolFlagsAlias) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_an_import;
-      } else {
-        assignmentError = Cannot_assign_to_0_because_it_is_not_a_variable;
-      }
-    } else if (Checker_isReadonlySymbol(receiver, localOrExportSymbol)) {
-      if ((localOrExportSymbol!.Flags & SymbolFlagsVariable) !== 0) {
-        assignmentError = Cannot_assign_to_0_because_it_is_a_constant;
-      } else {
-        assignmentError = Cannot_assign_to_0_because_it_is_a_read_only_property;
-      }
-    }
+    const assignmentError = Checker_getIdentifierAssignmentError(receiver, node, localOrExportSymbol!);
     if (assignmentError !== undefined) {
       const retained = LinkStore_TryGet(receiver!.typeNodeLinks, node);
       if (retained !== undefined && retained.resolvedType === receiver!.errorType && retained.resolutionFailure !== undefined) {
@@ -6823,6 +6803,23 @@ export function Checker_isSameScopedBindingElement(receiver: GoPtr<Checker>, nod
     return bindingElement !== undefined && GetRootDeclaration(bindingElement) === GetRootDeclaration(declaration);
   }
   return false;
+}
+
+export function Checker_getIdentifierAssignmentError(receiver: GoPtr<Checker>, node: GoPtr<Node>, symbol: Symbol): GoPtr<Message> {
+  const flags = symbol.Flags;
+  if ((flags & SymbolFlagsVariable) === 0 && !(IsInJSFile(node) && (flags & SymbolFlagsValueModule) !== 0)) {
+    if ((flags & SymbolFlagsEnum) !== 0) return Cannot_assign_to_0_because_it_is_an_enum;
+    if ((flags & SymbolFlagsClass) !== 0) return Cannot_assign_to_0_because_it_is_a_class;
+    if ((flags & SymbolFlagsModule) !== 0) return Cannot_assign_to_0_because_it_is_a_namespace;
+    if ((flags & SymbolFlagsFunction) !== 0) return Cannot_assign_to_0_because_it_is_a_function;
+    if ((flags & SymbolFlagsAlias) !== 0) return Cannot_assign_to_0_because_it_is_an_import;
+    return Cannot_assign_to_0_because_it_is_not_a_variable;
+  }
+  if (Checker_isReadonlySymbol(receiver, symbol)) {
+    return (flags & SymbolFlagsVariable) !== 0
+      ? Cannot_assign_to_0_because_it_is_a_constant : Cannot_assign_to_0_because_it_is_a_read_only_property;
+  }
+  return undefined;
 }
 
 /**
@@ -7374,6 +7371,8 @@ function checkPropertyAccessExpressionOrQualifiedNameWithEvidence(
         Checker_markLinkedReferences(receiver, node, ReferenceHintProperty, undefined, leftType);
       }
       if (Checker_isErrorType(receiver, apparentType)) {
+        if (node!.Kind === KindPropertyAccessExpression && leftType === receiver!.errorType)
+          retainErrorOperandSource(receiver!, node, checkMode, left);
         return receiver!.errorType;
       }
       retainAnyLikePropertyAccessSelection(
@@ -7415,7 +7414,13 @@ function checkPropertyAccessExpressionOrQualifiedNameWithEvidence(
         return receiver!.anyType;
       }
       if (Node_Text(right) !== "" && !Checker_checkAndReportErrorForExtendingInterface(receiver, node)) {
-        Checker_reportNonexistentProperty(receiver, right, IfElse(isThisTypeParameter(leftType), apparentType, leftType), isUncheckedJS);
+        const failure = Checker_reportNonexistentProperty(receiver, right, IfElse(isThisTypeParameter(leftType), apparentType, leftType), isUncheckedJS);
+        if (failure !== undefined && node!.Kind === KindPropertyAccessExpression && checkMode === CheckModeNormal
+          && receiver!.flowLoopStack.length === 0) {
+          const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+          links.resolvedType = receiver!.errorType;
+          links.resolutionFailure = failure;
+        }
       }
       return receiver!.errorType;
     }
@@ -7673,6 +7678,7 @@ export function Checker_checkPrivateIdentifierPropertyAccess(receiver: GoPtr<Che
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.reportNonexistentProperty","kind":"method","status":"implemented","sigHash":"9aec8730ebf63baf20d6c599892368db404e7f9b2ef28b13b82272c1d806a0d7","bodyHash":"5677ccfb03e627239cd2122c19fe0bc5c9587664844674c608306761b1bad64b"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Return the exact originally emitted missing-property error to the native expression owner. Suggestions and suppressed or unreported errors return no cause.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/scalars.ts::bool)=>void","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>,packages/tsts/src/go/scalars.ts::bool)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>"}
  *
  * Go source:
  * func (c *Checker) reportNonexistentProperty(propNode *ast.Node, containingType *Type, isUncheckedJS bool) {
@@ -7738,7 +7744,7 @@ export function Checker_checkPrivateIdentifierPropertyAccess(receiver: GoPtr<Che
  * 	c.addErrorOrSuggestion(!isUncheckedJS || diagnostic.Code() != diagnostics.Property_0_may_not_exist_on_type_1_Did_you_mean_2.Code(), diagnostic)
  * }
  */
-export function Checker_reportNonexistentProperty(receiver: GoPtr<Checker>, propNode: GoPtr<Node>, containingType: GoPtr<Type>, isUncheckedJS: bool): void {
+export function Checker_reportNonexistentProperty(receiver: GoPtr<Checker>, propNode: GoPtr<Node>, containingType: GoPtr<Type>, isUncheckedJS: bool): GoPtr<Diagnostic> {
   const key: NonExistentPropertyKey = { propNode, containingType, isUncheckedJS };
   if (Set_Has(receiver!.nonExistentProperties, key)) {
     return;
@@ -7796,7 +7802,7 @@ export function Checker_reportNonexistentProperty(receiver: GoPtr<Checker>, prop
       }
     }
   }
-  Checker_addErrorOrSuggestion(receiver, (!isUncheckedJS || Diagnostic_Code(diagnostic) !== Property_0_may_not_exist_on_type_1_Did_you_mean_2.code) as bool, diagnostic);
+  return Checker_addErrorOrSuggestion(receiver, (!isUncheckedJS || Diagnostic_Code(diagnostic) !== Property_0_may_not_exist_on_type_1_Did_you_mean_2.code) as bool, diagnostic);
 }
 
 /**
@@ -10044,6 +10050,24 @@ export function Checker_getModuleSpecifierForImportOrExport(receiver: GoPtr<Chec
   throw new globalThis.Error("Unhandled case in getModuleSpecifierForImportOrExport");
 }
 
+export function isSourceModuleBinding(node: Node): boolean {
+  switch (node.Kind) {
+    case KindImportClause: case KindImportEqualsDeclaration: case KindNamespaceImport:
+    case KindImportSpecifier: case KindNamespaceExport: case KindExportSpecifier: return true;
+    default: return false;
+  }
+}
+
+export function retainedAliasFailure(receiver: Checker, declaration: Node, symbol: Symbol, allowExternal: boolean): Diagnostic | undefined {
+  const immediate = LinkStore_TryGet(receiver.aliasSymbolLinks, symbol)?.immediateFailure;
+  if (immediate !== undefined || !isSourceModuleBinding(declaration)) return immediate;
+  const specifier = Checker_getModuleSpecifierForImportOrExport(receiver, declaration);
+  if (specifier !== undefined) return allowExternal ? LinkStore_TryGet(receiver.nodeLinks, specifier)?.externalModuleFailure : undefined;
+  if (!IsExportSpecifier(declaration) || Node_Symbol(declaration) !== symbol) return undefined;
+  const local = Node_PropertyNameOrName(declaration);
+  return local !== undefined && IsIdentifier(local) ? LinkStore_TryGet(receiver.symbolNodeLinks, local)?.resolutionFailure : undefined;
+}
+
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.markSymbolOfAliasDeclarationIfTypeOnly","kind":"method","status":"implemented","sigHash":"4974f8dfc0fb2138a3c8ce4a32b30f8236aa7ebb6cbb137dd095847d2a987522","bodyHash":"b6fad9cce2d3d6d21fba638ea70fd72e6adbfc53a6ab456c7968aa728776bfc9"}
  *
@@ -11510,6 +11534,15 @@ export function Checker_resolveAlias(receiver: GoPtr<Checker>, symbol_: GoPtr<Sy
     if (!Checker_popTypeResolution(receiver)) {
       Checker_error(receiver, node, Circular_definition_of_import_alias_0, Checker_symbolToString(receiver, symbol_));
       links.aliasTarget = receiver!.unknownSymbol;
+    } else if (links.aliasTarget === receiver!.unknownSymbol) {
+      const immediate = links.immediateTarget;
+      if (immediate === undefined || immediate === receiver!.unknownSymbol) {
+        if (symbol_ !== undefined && Node_Symbol(node) === symbol_ && isSourceModuleBinding(node)
+          && retainedAliasFailure(receiver!, node, symbol_, true) !== undefined) links.failedBindingSource = node;
+      } else {
+        const source = LinkStore_TryGet(receiver!.aliasSymbolLinks, immediate)?.failedBindingSource;
+        if (source !== undefined) links.failedBindingSource = source;
+      }
     }
   }
   return links.aliasTarget;
@@ -15566,6 +15599,7 @@ export function Checker_getNameTypeFromMappedType(receiver: GoPtr<Checker>, t: G
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.instantiateTypeAlias","kind":"method","status":"implemented","sigHash":"0d06087c71cf487e09a5703708feeb33f7b4dd10b939396667464cfe5470b85b","bodyHash":"3b40929087aed4e4046336a7e9ee005165d70688c368ccf6f78d774f0ac75e49"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Carry the completed suffix through the same native alias descriptor instantiation and its actual mapper, without evaluating defaults again."}
  *
  * Go source:
  * func (c *Checker) instantiateTypeAlias(alias *TypeAlias, m *TypeMapper) *TypeAlias {
@@ -15579,7 +15613,10 @@ export function Checker_instantiateTypeAlias(receiver: GoPtr<Checker>, alias: Go
   if (alias === undefined) {
     return undefined;
   }
-  return { symbol: alias!.symbol, typeArguments: Checker_instantiateTypes(receiver, alias!.typeArguments, m) };
+  return { symbol: alias.symbol, typeArguments: Checker_instantiateTypes(receiver, alias.typeArguments, m),
+    ...(alias.defaultTypeArguments === undefined ? {} : {
+      defaultTypeArguments: Checker_instantiateTypes(receiver, alias.defaultTypeArguments, m),
+    }) };
 }
 
 /**
@@ -15608,6 +15645,7 @@ export function Checker_instantiateIndexInfos(receiver: GoPtr<Checker>, indexInf
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getTypeFromIndexedAccessTypeNode","kind":"method","status":"implemented","sigHash":"4d0e11a45cb2fac391f8159acb3d3192a41f4cf3be84efeab493f6944c0191e7","bodyHash":"714822fadd7243ebf38c010a6b47bcdb8e2b8a55b79ac0018abfbcd08a49b400"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"The same indexed annotation lookup supplies its actual unchanged property annotation for completed source-answer provenance."}
  *
  * Go source:
  * func (c *Checker) getTypeFromIndexedAccessTypeNode(node *ast.Node) *Type {
@@ -15627,7 +15665,9 @@ export function Checker_getTypeFromIndexedAccessTypeNode(receiver: GoPtr<Checker
     const objectType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.ObjectType);
     const indexType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.IndexType);
     const potentialAlias = Checker_getAliasForTypeNode(receiver, node);
-    links!.resolvedType = Checker_getIndexedAccessTypeEx(receiver, objectType, indexType, AccessFlagsNone, node, potentialAlias);
+    const source: { value: GoPtr<Node> } = { value: undefined };
+    links!.resolvedType = indexedAccessTypeEx(receiver, objectType, indexType, AccessFlagsNone, node, potentialAlias, source);
+    if (source.value !== undefined) links!.resolvedTypeSource = source.value;
   }
   return links!.resolvedType;
 }
@@ -15991,7 +16031,8 @@ export function Checker_getTypeFromTypeAliasReference(receiver: GoPtr<Checker>, 
     return errorType;
   }
   const t = Checker_getDeclaredTypeOfSymbol(receiver, symbol_);
-  const typeParameters = LinkStore_Get(receiver!.typeAliasLinks, symbol_)!.typeParameters ?? [];
+  const declared = LinkStore_Get(receiver!.typeAliasLinks, symbol_)!;
+  const typeParameters = declared.typeParameters ?? [];
   if (typeParameters.length !== 0) {
     const numTypeArguments = typeArguments.length;
     const minTypeArgumentCount = Checker_getMinTypeArgumentCount(receiver, typeParameters);
@@ -16032,6 +16073,14 @@ export function Checker_getTypeFromTypeAliasReference(receiver: GoPtr<Checker>, 
     return Checker_getTypeAliasInstantiation(receiver, symbol_, Checker_getTypeArgumentsFromNode(receiver, node), newAlias);
   }
   if (Checker_checkNoTypeArguments(receiver, node, symbol_)) {
+    if (node?.Kind === KindTypeReference && Node_TypeArgumentList(node) === undefined) {
+      const source = declared.declaredType === t ? declared.declaredSource
+        : declared.declaredType === undefined && t === receiver!.errorType ? declared : undefined;
+      if (source !== undefined) {
+        const occurrence = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+        if (occurrence.declarationFailure === undefined) occurrence.resolvedTypeSource = source;
+      }
+    }
     return t;
   }
   return receiver!.errorType;
@@ -16198,6 +16247,8 @@ export function Checker_getDeclaredTypeOfTypeAlias(receiver: GoPtr<Checker>, sym
     const declaration = Find(symbol_!.Declarations ?? [], IsTypeOrJSTypeAliasDeclaration);
     const typeNode = Node_Type(declaration);
     let t = Checker_getTypeFromTypeNode(receiver, typeNode);
+    let source: Node | undefined;
+    let failure: Diagnostic | undefined;
     if (Checker_popTypeResolution(receiver)) {
       const typeParameters = Checker_getLocalTypeParametersOfClassOrInterfaceOrTypeAlias(receiver, symbol_);
       if (typeParameters.length !== 0) {
@@ -16207,17 +16258,28 @@ export function Checker_getDeclaredTypeOfTypeAlias(receiver: GoPtr<Checker>, sym
       }
       if (t === receiver!.intrinsicMarkerType && symbol_!.Name === "BuiltinIteratorReturn") {
         t = Checker_getBuiltinIteratorReturnType(receiver);
+      } else if (typeParameters.length === 0 && t !== undefined) {
+        source = directTypeSource(receiver!, typeNode, t);
       }
     } else {
       let errorNode = Node_Name(declaration);
       if (errorNode === undefined) {
         errorNode = declaration;
       }
-      Checker_error(receiver, errorNode, Type_alias_0_circularly_references_itself, Checker_symbolToString(receiver, symbol_));
+      failure = Checker_addDiagnostic(receiver,
+        NewDiagnosticForNode(errorNode, Type_alias_0_circularly_references_itself, Checker_symbolToString(receiver, symbol_)));
       t = receiver!.errorType;
     }
     if (links!.declaredType === undefined) {
       links!.declaredType = t;
+      if (failure !== undefined && typeNode !== undefined) {
+        const occurrence = LinkStore_Get(receiver!.typeNodeLinks, typeNode)!;
+        occurrence.declarationFailure = failure;
+        delete occurrence.resolvedTypeSource;
+        if (declaration?.Kind === KindTypeAliasDeclaration && (Node_TypeParameters(declaration)?.length ?? 0) === 0)
+          source = typeNode;
+      }
+      if (source !== undefined) links!.declaredSource = source;
     }
   }
   return links!.declaredType;
@@ -17437,6 +17499,7 @@ export function Checker_getIndexedAccessType(receiver: GoPtr<Checker>, objectTyp
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getIndexedAccessTypeEx","kind":"method","status":"implemented","sigHash":"32894fcb9a096bfc5849f0873f8355423ac6b3f55c00fff04ba665ea565493a6","bodyHash":"8db2a59c3289f53029aa74c5bec1a50bbc57e1bdf16fc35732164148b0f6b55d"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"Shares the unchanged indexed-access result projection with the owning type-node publisher's optional source output."}
  *
  * Go source:
  * func (c *Checker) getIndexedAccessTypeEx(objectType *Type, indexType *Type, accessFlags AccessFlags, accessNode *ast.Node, alias *TypeAlias) *Type {
@@ -17448,7 +17511,12 @@ export function Checker_getIndexedAccessType(receiver: GoPtr<Checker>, objectTyp
  * }
  */
 export function Checker_getIndexedAccessTypeEx(receiver: GoPtr<Checker>, objectType: GoPtr<Type>, indexType: GoPtr<Type>, accessFlags: AccessFlags, accessNode: GoPtr<Node>, alias: GoPtr<TypeAlias>): GoPtr<Type> {
-  const result = Checker_getIndexedAccessTypeOrUndefined(receiver, objectType, indexType, accessFlags, accessNode, alias);
+  return indexedAccessTypeEx(receiver, objectType, indexType, accessFlags, accessNode, alias);
+}
+
+function indexedAccessTypeEx(receiver: GoPtr<Checker>, objectType: GoPtr<Type>, indexType: GoPtr<Type>, accessFlags: AccessFlags,
+  accessNode: GoPtr<Node>, alias: GoPtr<TypeAlias>, source?: { value: GoPtr<Node> }): GoPtr<Type> {
+  const result = getIndexedAccessTypeOrUndefinedWithEvidence(receiver, objectType, indexType, accessFlags, accessNode, alias, undefined, source);
   if (result === undefined) {
     return IfElse(accessNode !== undefined, receiver!.errorType, receiver!.unknownType);
   }
@@ -17538,6 +17606,7 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
   accessNode: GoPtr<Node>,
   alias: GoPtr<TypeAlias>,
   selected?: SelectedElementAccessCheck,
+  source?: { value: GoPtr<Node> },
 ): GoPtr<Type> {
   if (objectType === receiver!.wildcardType || indexType === receiver!.wildcardType) {
     return receiver!.wildcardType;
@@ -17559,6 +17628,7 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
     if (t === undefined) {
       t = Checker_newIndexedAccessType(receiver, objectType, indexType, persistentAccessFlags);
       t!.alias = alias;
+      Type_AsIndexedAccessType(t)!.cacheKey = key;
       receiver!.indexedAccessTypes.set(key, t);
     }
     return t;
@@ -17585,7 +17655,7 @@ function getIndexedAccessTypeOrUndefinedWithEvidence(
     }
     return Checker_getUnionTypeEx(receiver, propTypes, UnionReductionLiteral, alias, undefined);
   }
-  return getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, indexType, indexType, accessNode, (accessFlags | AccessFlagsCacheSymbol | AccessFlagsReportDeprecated) as AccessFlags, selected);
+  return getPropertyTypeForIndexTypeWithEvidence(receiver, objectType, apparentObjectType, indexType, indexType, accessNode, (accessFlags | AccessFlagsCacheSymbol | AccessFlagsReportDeprecated) as AccessFlags, selected, source);
 }
 
 /**
@@ -17820,9 +17890,10 @@ function getPropertyTypeForIndexTypeWithEvidence(
   accessNode: GoPtr<Node>,
   accessFlags: AccessFlags,
   selected?: SelectedElementAccessCheck,
+  source?: { value: GoPtr<Node> },
 ): GoPtr<Type> {
   const operation = () => getPropertyTypeForIndexTypeObserved(receiver, originalObjectType, objectType,
-    indexType, fullIndexType, accessNode, accessFlags, selected);
+    indexType, fullIndexType, accessNode, accessFlags, selected, source);
   if (accessNode === undefined || !IsElementAccessExpression(accessNode) || originalObjectType === undefined || indexType === undefined) {
     return operation();
   }
@@ -17834,6 +17905,15 @@ function getPropertyTypeForIndexTypeWithEvidence(
     index: checkedComponent(argument, indexType) }, operation);
 }
 
+function reportIndexLookupFailure(receiver: GoPtr<Checker>, occurrence: Node, index: GoPtr<Type>, fullIndex: GoPtr<Type>,
+  diagnostic: GoPtr<Diagnostic>): void {
+  const original = Checker_addDiagnostic(receiver, diagnostic);
+  if (original !== undefined && fullIndex === index && !IsTypeAny(index) && IsIndexedAccessTypeNode(occurrence)) {
+    const links = LinkStore_Get(receiver!.typeNodeLinks, occurrence)!;
+    if (links.resolvedType === undefined) links.resolutionFailure = original;
+  }
+}
+
 function getPropertyTypeForIndexTypeObserved(
   receiver: GoPtr<Checker>,
   originalObjectType: GoPtr<Type>,
@@ -17843,6 +17923,7 @@ function getPropertyTypeForIndexTypeObserved(
   accessNode: GoPtr<Node>,
   accessFlags: AccessFlags,
   selected?: SelectedElementAccessCheck,
+  source?: { value: GoPtr<Node> },
 ): GoPtr<Type> {
   let accessExpression: GoPtr<Node> = undefined;
   if (accessNode !== undefined && accessNode!.Kind === KindElementAccessExpression) {
@@ -17900,6 +17981,7 @@ function getPropertyTypeForIndexTypeObserved(
       if (accessNode !== undefined && IsIndexedAccessTypeNode(accessNode) && receiver!.containsMissingType(propType)) {
         return Checker_getUnionType(receiver, [propType, receiver!.undefinedType]);
       }
+      if (source !== undefined && propType !== undefined) source.value = completedRequiredPropertySource(receiver!, prop, propType);
       return propType;
     }
     if (everyType(objectType, isTupleType) && isNumericLiteralName(propName)) {
@@ -17912,12 +17994,16 @@ function getPropertyTypeForIndexTypeObserved(
         const indexNode = getIndexNodeForAccessExpression(accessNode);
         if (isTupleType(objectType)) {
           if (index < 0) {
-            Checker_error(receiver, indexNode, A_tuple_type_cannot_be_indexed_with_a_negative_value);
+            reportIndexLookupFailure(receiver, accessNode, indexType, fullIndexType,
+              NewDiagnosticForNode(indexNode, A_tuple_type_cannot_be_indexed_with_a_negative_value));
             return receiver!.undefinedType;
           }
-          Checker_error(receiver, indexNode, Tuple_type_0_of_length_1_has_no_element_at_index_2, Checker_TypeToString(receiver, objectType), Checker_getTypeReferenceArity(receiver, objectType), propName);
+          reportIndexLookupFailure(receiver, accessNode, indexType, fullIndexType,
+            NewDiagnosticForNode(indexNode, Tuple_type_0_of_length_1_has_no_element_at_index_2,
+              Checker_TypeToString(receiver, objectType), Checker_getTypeReferenceArity(receiver, objectType), propName));
         } else {
-          Checker_error(receiver, indexNode, Property_0_does_not_exist_on_type_1, propName, Checker_TypeToString(receiver, objectType));
+          reportIndexLookupFailure(receiver, accessNode, indexType, fullIndexType,
+            NewDiagnosticForNode(indexNode, Property_0_does_not_exist_on_type_1, propName, Checker_TypeToString(receiver, objectType)));
         }
       }
       if (index >= 0) {
@@ -17948,7 +18034,8 @@ function getPropertyTypeForIndexTypeObserved(
       }
       if (accessNode !== undefined && indexInfo!.keyType === receiver!.stringType && !Checker_isTypeAssignableToKind(receiver, indexType, (TypeFlagsString | TypeFlagsNumber) as TypeFlags)) {
         const indexNode = getIndexNodeForAccessExpression(accessNode);
-        Checker_error(receiver, indexNode, Type_0_cannot_be_used_as_an_index_type, Checker_TypeToString(receiver, indexType));
+        reportIndexLookupFailure(receiver, accessNode, indexType, fullIndexType,
+          NewDiagnosticForNode(indexNode, Type_0_cannot_be_used_as_an_index_type, Checker_TypeToString(receiver, indexType)));
         if ((accessFlags & AccessFlagsIncludeUndefined) !== 0) {
           return Checker_getUnionType(receiver, [indexInfo!.valueType, receiver!.missingType]);
         }
@@ -18036,14 +18123,16 @@ function getPropertyTypeForIndexTypeObserved(
   }
   if (accessNode !== undefined) {
     const indexNode = getIndexNodeForAccessExpression(accessNode);
+    let diagnostic: GoPtr<Diagnostic>;
     if (indexNode!.Kind !== KindBigIntLiteral && (indexType!.flags & (TypeFlagsStringLiteral | TypeFlagsNumberLiteral)) !== 0) {
-      Checker_error(receiver, indexNode, Property_0_does_not_exist_on_type_1, Type_AsLiteralType(indexType)!.value, Checker_TypeToString(receiver, objectType));
+      diagnostic = NewDiagnosticForNode(indexNode, Property_0_does_not_exist_on_type_1, Type_AsLiteralType(indexType)!.value, Checker_TypeToString(receiver, objectType));
     } else if ((indexType!.flags & (TypeFlagsString | TypeFlagsNumber)) !== 0) {
-      Checker_error(receiver, indexNode, Type_0_has_no_matching_index_signature_for_type_1, Checker_TypeToString(receiver, objectType), Checker_TypeToString(receiver, indexType));
+      diagnostic = NewDiagnosticForNode(indexNode, Type_0_has_no_matching_index_signature_for_type_1, Checker_TypeToString(receiver, objectType), Checker_TypeToString(receiver, indexType));
     } else {
       const typeString = indexNode!.Kind === KindBigIntLiteral ? "bigint" : Checker_TypeToString(receiver, indexType);
-      Checker_error(receiver, indexNode, Type_0_cannot_be_used_as_an_index_type, typeString);
+      diagnostic = NewDiagnosticForNode(indexNode, Type_0_cannot_be_used_as_an_index_type, typeString);
     }
+    reportIndexLookupFailure(receiver, accessNode, indexType, fullIndexType, diagnostic);
   }
   if (IsTypeAny(indexType)) {
     return indexType;

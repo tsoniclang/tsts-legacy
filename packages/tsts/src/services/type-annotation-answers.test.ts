@@ -44,6 +44,28 @@ function open(files: Record<string, string>, checkers: number, noCheck = false) 
 }
 
 for (const checkers of [1, 4]) {
+  test(`an out-of-position inference annotation retains its emitted grammar cause with ${checkers} checkers`, () => {
+    const path = "/case/source.mts";
+    const current = open({ [path]: "export declare const invalid: infer Leak;"
+      + "export declare const valid: boolean extends (infer Item) ? Item : never;",
+    "/case/second.mts": "export const item = true;", "/case/third.mts": "export const item = false;",
+    "/case/fourth.mts": "export const item = 1;" }, checkers);
+    const source = current.view(path);
+    const before = current.members();
+    const own = current.annotation(path, "invalid");
+    const answer = source.checker.getTypeFromTypeNode(own);
+    const cause = answer?.causes[0];
+    assert.equal(answer !== undefined && !source.typeShape.isError(answer.type), true);
+    assert.equal(answer?.causes.length, 1);
+    assert.equal(cause?.code, 1338);
+    assert.equal(cause !== undefined && cause.file === source.sourceFile && before.includes(cause), true);
+    assert.equal(source.checker.getTypeFromTypeNode(own)?.causes[0] === cause, true);
+    const pattern = source.ast.as.AsConditionalTypeNode(current.annotation(path, "valid"))?.ExtendsType;
+    const legitimate = pattern === undefined ? undefined : source.checker.getTypeFromTypeNode(pattern);
+    assert.equal(legitimate !== undefined && legitimate.causes.length === 0, true);
+    assert.equal(current.members().length, before.length);
+  });
+
   test(`annotation failures retain the actual name-result and file producer with ${checkers} checkers`, () => {
     const current = open({
       "/case/first.mts": "export let first: Missing; export let second: Missing;",
@@ -57,10 +79,10 @@ for (const checkers of [1, 4]) {
         if (fileName === undefined || variableName === undefined) throw new Error("The authored selection is complete");
         const syntax = current.annotation(fileName, variableName);
         const answer = reader.getTypeFromTypeNode(syntax);
-        assert.equal(answer !== undefined && answer.cause !== undefined, true, "the failed original answer has its cause");
-        if (answer === undefined || answer.cause === undefined) throw new Error("The original failed answer is retained");
+        assert.equal(answer !== undefined && answer.causes[0] !== undefined, true, "the failed original answer has its cause");
+        if (answer === undefined || answer.causes[0] === undefined) throw new Error("The original failed answer is retained");
         const source = current.view(fileName);
-        assert.equal(answer.cause.file === source.sourceFile && before.includes(answer.cause), true,
+        assert.equal(answer.causes[0].file === source.sourceFile && before.includes(answer.causes[0]), true,
           "the cause is the exact file and already-published run member, not a site/code match");
         assert.equal(source.typeShape.isError(answer.type), false, "the per-alias native error is not the singleton errorType");
         assert.equal(answer.type !== answer.type.checker!.unresolvedType, true, "the native unresolved alias is not retagged");
@@ -74,10 +96,10 @@ for (const checkers of [1, 4]) {
       });
     for (const order of [rows, [...rows].reverse()]) for (const row of order) {
       const repeated = reader.getTypeFromTypeNode(row.syntax);
-      assert.equal(repeated?.type === row.answer.type && repeated.cause === row.answer.cause, true,
+      assert.equal(repeated?.type === row.answer.type && repeated.causes[0] === row.answer.causes[0], true,
         "quiet and repeated reads preserve the original type and cause without re-emission");
     }
-    assert.equal(rows[0]!.answer.cause !== rows[1]!.answer.cause && rows[0]!.answer.cause !== rows[2]!.answer.cause, true,
+    assert.equal(rows[0]!.answer.causes[0] !== rows[1]!.answer.causes[0] && rows[0]!.answer.causes[0] !== rows[2]!.answer.causes[0], true,
       "same native alias/name does not merge distinct original failed occurrences");
     const after = current.members();
     assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
@@ -91,11 +113,11 @@ for (const checkers of [1, 4]) {
     const before = current.members();
     for (const name of ["ordinary", "valid"]) {
       const answer = source.checker.getTypeFromTypeNode(current.annotation("/case/use.mts", name));
-      assert.equal(answer !== undefined && answer.cause === undefined && !source.typeShape.isError(answer.type), true,
+      assert.equal(answer !== undefined && answer.causes[0] === undefined && !source.typeShape.isError(answer.type), true,
         "ordinary native any and valid annotations have no invented error cause");
     }
     const ungrounded = source.checker.getTypeFromTypeNode(current.annotation("/case/use.mts", "invalid"));
-    assert.equal(ungrounded !== undefined && source.typeShape.isError(ungrounded.type) && ungrounded.cause === undefined, true,
+    assert.equal(ungrounded !== undefined && source.typeShape.isError(ungrounded.type) && ungrounded.causes[0] === undefined, true,
       "another error producer's missing association remains missing, not borrowed from the global run");
     assert.equal(source.checker.getTypeFromTypeNode(undefined) === undefined, true, "absent input is not an error");
     const foreign = open(files, checkers);
@@ -111,7 +133,7 @@ for (const checkers of [1, 4]) {
     const source = current.view("/case/use.mts");
     const syntax = current.annotation("/case/use.mts", "missing");
     const original = source.checker.getTypeFromTypeNode(syntax);
-    assert.equal(original?.cause !== undefined, true, "the original producing error is retained");
+    assert.equal(original?.causes[0] !== undefined, true, "the original producing error is retained");
     const before = current.members();
     const [owner, release] = Program_GetTypeCheckerForFileExclusive(current.session.program,
       WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), source.sourceFile);
@@ -122,7 +144,7 @@ for (const checkers of [1, 4]) {
       Checker_resolveEntityName(owner, getTypeReferenceName(syntax), SymbolFlagsType, false, false, undefined);
     } finally { owner.serializationLevel = previous; release(); }
     const suppressed = source.checker.getTypeFromTypeNode(syntax);
-    assert.equal(suppressed?.type === original?.type && suppressed?.cause === original?.cause, true,
+    assert.equal(suppressed?.type === original?.type && suppressed?.causes[0] === original?.causes[0], true,
       "a separate name evaluation cannot erase the completed type answer's original cause");
     const after = current.members();
     assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
@@ -147,29 +169,29 @@ for (const checkers of [1, 4]) {
       "nonGenericAlias", "nonGenericClass"].map(name => {
       const syntax = current.annotation("/case/first.mts", name);
       const answer = reader.getTypeFromTypeNode(syntax);
-      assert.equal(answer !== undefined && answer.cause !== undefined && before.includes(answer.cause), true,
+      assert.equal(answer !== undefined && answer.causes[0] !== undefined && before.includes(answer.causes[0]), true,
         `${name}: the actual emitted arity cause is an original published member`);
-      if (answer === undefined || answer.cause === undefined) throw new Error("The authored failed type has its original answer");
-      assert.equal(answer.cause.file === current.view("/case/first.mts").sourceFile, true,
+      if (answer === undefined || answer.causes[0] === undefined) throw new Error("The authored failed type has its original answer");
+      assert.equal(answer.causes[0].file === current.view("/case/first.mts").sourceFile, true,
         "a cross-file query retains the actual producer's file");
       return { syntax, answer };
     });
-    assert.equal(new Set(rows.map(row => row.answer.cause)).size === rows.length, true,
+    assert.equal(new Set(rows.map(row => row.answer.causes[0])).size === rows.length, true,
       "distinct failed type occurrences never borrow a shared error type's cause");
     assert.equal(rows[0]!.answer.type === rows[1]!.answer.type, true,
       "the opposite actually exercises the shared native singleton error type");
     for (const order of [rows, [...rows].reverse()]) for (const row of order) {
       const repeated = reader.getTypeFromTypeNode(row.syntax);
-      assert.equal(repeated?.type === row.answer.type && repeated.cause === row.answer.cause, true,
+      assert.equal(repeated?.type === row.answer.type && repeated.causes[0] === row.answer.causes[0], true,
         "repeated reads retain the one completed type answer without diagnostic emission");
     }
     for (const name of ["validClass", "validInterface", "validAlias"]) {
       const answer = reader.getTypeFromTypeNode(current.annotation("/case/first.mts", name));
-      assert.equal(answer !== undefined && answer.cause === undefined, true, "ordinary generic success has no cause");
+      assert.equal(answer !== undefined && answer.causes[0] === undefined, true, "ordinary generic success has no cause");
     }
     const other = reader.getTypeFromTypeNode(current.annotation("/case/second.mts", "missingOther"));
-    assert.equal(other?.cause !== undefined && before.includes(other.cause) &&
-      rows.every(row => row.answer.cause !== other.cause), true, "the second file retains its own actual original cause");
+    assert.equal(other?.causes[0] !== undefined && before.includes(other.causes[0]) &&
+      rows.every(row => row.answer.causes[0] !== other.causes[0]), true, "the second file retains its own actual original cause");
     const after = current.members();
     assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,
       "all annotation views preserve the exact original published inventory");
@@ -190,7 +212,7 @@ for (const checkers of [1, 4]) {
       produced = Checker_GetTypeFromTypeNode(owner, syntax);
     } finally { owner.serializationLevel = previous; release(); }
     const answer = source.checker.getTypeFromTypeNode(syntax);
-    assert.equal(produced !== undefined && answer?.type === produced && answer.cause === undefined, true,
+    assert.equal(produced !== undefined && answer?.type === produced && answer.causes[0] === undefined, true,
       "the genuine suppressed cache fill returns its native type but no unemitted Diagnostic");
     const after = current.members();
     assert.equal(after.length === before.length && after.every((member, index) => member === before[index]), true,

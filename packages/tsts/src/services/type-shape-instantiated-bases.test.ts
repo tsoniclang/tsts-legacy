@@ -136,7 +136,7 @@ type Receiver = Derived;
   const baseCopy = source.types.getSignatureInfos(source.property(base, "copy"), "call")[0];
   const receiverCopy = source.types.getSignatureInfos(source.property(receiver, "copy"), "call")[0];
   assert.ok(baseCopy !== undefined && receiverCopy !== undefined, "both actual native inherited method signatures exist");
-  assert.equal(baseCopy.returnType === receiverCopy.returnType, true, "native this return specialization remains identical");
+  assert.equal(baseCopy.returnType?.type === receiverCopy.returnType?.type, true, "native this return specialization remains identical");
   assert.equal(source.argumentsOf(base).length, 1, "native this is not reported as an authored local type argument");
 });
 
@@ -162,8 +162,8 @@ type FunctionRecord = Invocable<number>;
   const call = source.types.getSignatureInfos(invocable, "call")[0];
   const construct = source.types.getSignatureInfos(invocable, "construct")[0];
   assert.ok(call !== undefined && construct?.returnType !== undefined, "existing native member resolution keeps both signature kinds");
-  assert.equal(call.parameters[0]?.type === payload && call.returnType === payload, true, "call parameters and return use the same native mapping");
-  assert.equal(source.property(construct.returnType, "value") === payload, true, "construct return uses the same native mapping");
+  assert.equal(call.parameters[0]?.type === payload && call.returnType?.type === payload, true, "call parameters and return use the same native mapping");
+  assert.equal(source.property(construct.returnType.type, "value") === payload, true, "construct return uses the same native mapping");
   assert.equal(source.types.getIndexInfos(invocable)[0]?.valueType === payload, true, "the inherited native index uses the same mapping");
 });
 

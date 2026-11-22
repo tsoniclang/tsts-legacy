@@ -18,7 +18,7 @@ import {
   KindSwitchStatement, KindLabeledStatement, KindBreakStatement, KindContinueStatement, KindVariableDeclaration as KindVariableDeclarationNode, KindVariableDeclarationList, KindRegularExpressionLiteral,
   KindJSTypeAliasDeclaration, KindJSImportDeclaration, KindNamespaceImport, KindNamedImports, KindNamedExports, KindImportSpecifier, KindExportSpecifier, KindJsxSpreadAttribute,
   KindJSDocAugmentsTag, KindMetaProperty, KindTypeLiteral, KindIdentifier, KindPropertyAccessExpression, KindExpressionWithTypeArguments, KindPrivateIdentifier, KindConstructorType, KindAwaitKeyword,
-  KindExtendsKeyword, KindImplementsKeyword, KindObjectLiteralExpression, KindPrefixUnaryExpression,
+  KindExtendsKeyword, KindImplementsKeyword, KindObjectLiteralExpression, KindPrefixUnaryExpression, KindTypeReference,
   KindForInStatement, KindForOfStatement, KindUniqueKeyword, KindTrueKeyword, KindFalseKeyword, KindMinusToken,
   KindDeferKeyword, KindTypeKeyword, KindSpreadAssignment, KindJsxExpression, KindBinaryExpression,
 } from "../ast/generated/kinds.js";
@@ -247,7 +247,7 @@ import { Checker_getSymbolForPrivateIdentifierExpression, Checker_getSymbolOfDec
 import { Checker_getTypeFromTypeNode, Checker_isGenericType } from "./checker/types.js";
 import { Checker_getCombinedNodeFlagsCached, Checker_checkExpressionCached } from "./checker/syntax-checking.js";
 import { Checker_isInParameterInitializerBeforeContainingFunction, Checker_getAccessorThisParameter } from "./checker/signatures.js";
-import { getContainingFunctionOrClassStaticBlock, isOptionalDeclaration, isDeclarationReadonly, isVariableDeclarationInVariableStatement, GetSetAccessorValueParameter } from "./utilities.js";
+import { getContainingFunctionOrClassStaticBlock, isOptionalDeclaration, isDeclarationReadonly, isVariableDeclarationInVariableStatement, GetSetAccessorValueParameter, NewDiagnosticForNode } from "./utilities.js";
 import { isRestParameter, getVerbatimModuleSyntaxErrorMessage } from "./checker/state.js";
 import { Checker_isVarConstLike } from "./checker/support-queries.js";
 import { visibilityToString } from "./relater.js";
@@ -315,13 +315,16 @@ import {
  * }
  */
 export function Checker_grammarErrorOnFirstToken(receiver: GoPtr<Checker>, node: GoPtr<Node>, message: GoPtr<Message>, ...args: Array<unknown>): bool {
+  return grammarNodeDiagnostic(receiver, node, true, message, args) !== null;
+}
+
+function grammarNodeDiagnostic(receiver: GoPtr<Checker>, node: GoPtr<Node>, firstToken: boolean, message: GoPtr<Message>, args: readonly unknown[]): Diagnostic | null | undefined {
   const sourceFile = GetSourceFileOfNode(node);
-  if (!Checker_hasParseDiagnostics(receiver, sourceFile)) {
-    const span = GetRangeOfTokenAtPosition(sourceFile, Node_Pos(node));
-    Checker_addDiagnostic(receiver, NewDiagnostic(sourceFile, span, message, ...args));
-    return true;
-  }
-  return false;
+  if (Checker_hasParseDiagnostics(receiver, sourceFile)) return null;
+  const diagnostic = firstToken
+    ? NewDiagnostic(sourceFile, GetRangeOfTokenAtPosition(sourceFile, Node_Pos(node)), message, ...args)
+    : NewDiagnosticForNode(node, message, ...args);
+  return Checker_addDiagnostic(receiver, diagnostic);
 }
 
 /**
@@ -338,12 +341,13 @@ export function Checker_grammarErrorOnFirstToken(receiver: GoPtr<Checker>, node:
  * }
  */
 export function Checker_grammarErrorAtPos(receiver: GoPtr<Checker>, nodeForSourceFile: GoPtr<Node>, start: int, length: int, message: GoPtr<Message>, ...args: Array<unknown>): bool {
-  const sourceFile = GetSourceFileOfNode(nodeForSourceFile);
-  if (!Checker_hasParseDiagnostics(receiver, sourceFile)) {
-    Checker_addDiagnostic(receiver, NewDiagnostic(sourceFile, NewTextRange(start, start + length), message, ...args));
-    return true;
-  }
-  return false;
+  return grammarRangeDiagnostic(receiver, GetSourceFileOfNode(nodeForSourceFile), start, length, message, args) !== null;
+}
+
+function grammarRangeDiagnostic(receiver: GoPtr<Checker>, sourceFile: GoPtr<SourceFile>, start: int, length: int,
+  message: GoPtr<Message>, args: readonly unknown[]): Diagnostic | null | undefined {
+  if (Checker_hasParseDiagnostics(receiver, sourceFile)) return null;
+  return Checker_addDiagnostic(receiver, NewDiagnostic(sourceFile, NewTextRange(start, start + length), message, ...args));
 }
 
 /**
@@ -360,12 +364,7 @@ export function Checker_grammarErrorAtPos(receiver: GoPtr<Checker>, nodeForSourc
  * }
  */
 export function Checker_grammarErrorOnNode(receiver: GoPtr<Checker>, node: GoPtr<Node>, message: GoPtr<Message>, ...args: Array<unknown>): bool {
-  const sourceFile = GetSourceFileOfNode(node);
-  if (!Checker_hasParseDiagnostics(receiver, sourceFile)) {
-    Checker_error(receiver, node, message, ...args);
-    return true;
-  }
-  return false;
+  return grammarNodeDiagnostic(receiver, node, false, message, args) !== null;
 }
 
 /**
@@ -1661,10 +1660,12 @@ export function Checker_checkGrammarAsyncModifier(receiver: GoPtr<Checker>, node
  * }
  */
 export function Checker_checkGrammarForDisallowedTrailingComma(receiver: GoPtr<Checker>, list: GoPtr<NodeList>, diag: GoPtr<Message>): bool {
-  if (list !== undefined && NodeList_HasTrailingComma(list)) {
-    return Checker_grammarErrorAtPos(receiver, list!.Nodes[0], NodeList_End(list) - ",".length, ",".length, diag);
-  }
-  return false;
+  return trailingCommaDiagnostic(receiver, list, diag) !== null;
+}
+
+function trailingCommaDiagnostic(receiver: GoPtr<Checker>, list: GoPtr<NodeList>, diag: GoPtr<Message>): Diagnostic | null | undefined {
+  if (list === undefined || !NodeList_HasTrailingComma(list)) return null;
+  return grammarRangeDiagnostic(receiver, GetSourceFileOfNode(list.Nodes[0]), NodeList_End(list) - ",".length, ",".length, diag, []);
 }
 
 /**
@@ -2035,13 +2036,18 @@ export function Checker_checkGrammarIndexSignature(receiver: GoPtr<Checker>, nod
  * }
  */
 export function Checker_checkGrammarForAtLeastOneTypeArgument(receiver: GoPtr<Checker>, node: GoPtr<Node>, typeArguments: GoPtr<NodeList>): bool {
+  return emptyTypeArgumentDiagnostic(receiver, node, typeArguments) !== null;
+}
+
+function emptyTypeArgumentDiagnostic(receiver: GoPtr<Checker>, node: GoPtr<Node>,
+  typeArguments: GoPtr<NodeList>): Diagnostic | null | undefined {
   if (typeArguments !== undefined && typeArguments!.Nodes.length === 0) {
     const sourceFile = GetSourceFileOfNode(node);
     const start = NodeList_Pos(typeArguments) - "<".length;
     const end = SkipTrivia(SourceFile_Text(sourceFile), NodeList_End(typeArguments)) + ">".length;
-    return Checker_grammarErrorAtPos(receiver, sourceFile as unknown as GoPtr<Node>, start, end - start, Type_argument_list_cannot_be_empty);
+    return grammarRangeDiagnostic(receiver, sourceFile, start, end - start, Type_argument_list_cannot_be_empty, []);
   }
-  return false;
+  return null;
 }
 
 /**
@@ -2053,7 +2059,9 @@ export function Checker_checkGrammarForAtLeastOneTypeArgument(receiver: GoPtr<Ch
  * }
  */
 export function Checker_checkGrammarTypeArguments(receiver: GoPtr<Checker>, node: GoPtr<Node>, typeArguments: GoPtr<NodeList>): bool {
-  return Checker_checkGrammarForDisallowedTrailingComma(receiver, typeArguments, Trailing_comma_not_allowed) || Checker_checkGrammarForAtLeastOneTypeArgument(receiver, node, typeArguments);
+  const trailing = trailingCommaDiagnostic(receiver, typeArguments, Trailing_comma_not_allowed);
+  const cause = trailing === null ? emptyTypeArgumentDiagnostic(receiver, node, typeArguments) : trailing;
+  return node?.Kind === KindTypeReference ? retainTypeGrammarDiagnostic(receiver, node, cause) : cause !== null;
 }
 
 /**
@@ -3111,43 +3119,53 @@ export function Checker_checkGrammarTypeOperatorNode(receiver: GoPtr<Checker>, n
   if (node!.Operator === KindUniqueKeyword) {
     const innerType = node!.Type as unknown as GoPtr<Node>;
     if (innerType!.Kind !== KindSymbolKeyword) {
-      return Checker_grammarErrorOnNode(receiver, innerType, X_0_expected, TokenToString(KindSymbolKeyword));
+      return Checker_grammarErrorForTypeNode(receiver, asNode, innerType, false, X_0_expected, TokenToString(KindSymbolKeyword));
     }
     const parent = WalkUpParenthesizedTypes(asNode!.Parent);
     switch (parent!.Kind) {
       case KindVariableDeclarationNode: {
         const decl = AsVariableDeclaration(parent);
         if (Node_Name(parent)!.Kind !== KindIdentifier) {
-          return Checker_grammarErrorOnNode(receiver, asNode, X_unique_symbol_types_may_not_be_used_on_a_variable_declaration_with_a_binding_name);
+          return Checker_grammarErrorForTypeNode(receiver, asNode, asNode, false, X_unique_symbol_types_may_not_be_used_on_a_variable_declaration_with_a_binding_name);
         }
         if (!isVariableDeclarationInVariableStatement(parent)) {
-          return Checker_grammarErrorOnNode(receiver, asNode, X_unique_symbol_types_are_only_allowed_on_variables_in_a_variable_statement);
+          return Checker_grammarErrorForTypeNode(receiver, asNode, asNode, false, X_unique_symbol_types_are_only_allowed_on_variables_in_a_variable_statement);
         }
         if ((decl!.Parent!.Flags & NodeFlagsConst) === 0) {
-          return Checker_grammarErrorOnNode(receiver, Node_Name(parent), A_variable_whose_type_is_a_unique_symbol_type_must_be_const);
+          return Checker_grammarErrorForTypeNode(receiver, asNode, Node_Name(parent), false, A_variable_whose_type_is_a_unique_symbol_type_must_be_const);
         }
         break;
       }
       case KindPropertyDeclaration:
         if (!IsStatic(parent) || !hasReadonlyModifier(parent)) {
-          return Checker_grammarErrorOnNode(receiver, Node_Name(parent), A_property_of_a_class_whose_type_is_a_unique_symbol_type_must_be_both_static_and_readonly);
+          return Checker_grammarErrorForTypeNode(receiver, asNode, Node_Name(parent), false, A_property_of_a_class_whose_type_is_a_unique_symbol_type_must_be_both_static_and_readonly);
         }
         break;
       case KindPropertySignature:
         if (!HasSyntacticModifier(parent, ModifierFlagsReadonly)) {
-          return Checker_grammarErrorOnNode(receiver, Node_Name(parent), A_property_of_an_interface_or_type_literal_whose_type_is_a_unique_symbol_type_must_be_readonly);
+          return Checker_grammarErrorForTypeNode(receiver, asNode, Node_Name(parent), false, A_property_of_an_interface_or_type_literal_whose_type_is_a_unique_symbol_type_must_be_readonly);
         }
         break;
       default:
-        return Checker_grammarErrorOnNode(receiver, asNode, X_unique_symbol_types_are_not_allowed_here);
+        return Checker_grammarErrorForTypeNode(receiver, asNode, asNode, false, X_unique_symbol_types_are_not_allowed_here);
     }
   } else if (node!.Operator === KindReadonlyKeyword) {
     const innerType = node!.Type as unknown as GoPtr<Node>;
     if (innerType!.Kind !== KindArrayType && innerType!.Kind !== KindTupleType) {
-      return Checker_grammarErrorOnFirstToken(receiver, asNode, X_readonly_type_modifier_is_only_permitted_on_array_and_tuple_literal_types, TokenToString(KindSymbolKeyword));
+      return Checker_grammarErrorForTypeNode(receiver, asNode, asNode, true, X_readonly_type_modifier_is_only_permitted_on_array_and_tuple_literal_types, TokenToString(KindSymbolKeyword));
     }
   }
   return false;
+}
+
+export function Checker_grammarErrorForTypeNode(receiver: GoPtr<Checker>, typeNode: GoPtr<Node>, location: GoPtr<Node>, firstToken: boolean,
+  message: GoPtr<Message>, ...args: Array<unknown>): bool {
+  return retainTypeGrammarDiagnostic(receiver, typeNode, grammarNodeDiagnostic(receiver, location, firstToken, message, args));
+}
+
+function retainTypeGrammarDiagnostic(receiver: GoPtr<Checker>, typeNode: GoPtr<Node>, cause: Diagnostic | null | undefined): bool {
+  if (cause !== null && cause !== undefined) LinkStore_Get(receiver!.typeNodeLinks, typeNode!)!.grammarFailure = cause;
+  return cause !== null;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
 import { LiteralConstructionOwner } from "./literal-creation.js";
 import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
+import { retainErrorOperandSource } from "./source-type-answers.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
@@ -3151,6 +3152,7 @@ function Checker_checkBinaryLikeExpressionWithTypes(receiver: GoPtr<Checker>, le
 
 function checkBinaryLikeExpressionTypeRelation(receiver: GoPtr<Checker>, left: GoPtr<Node>, operatorToken: GoPtr<Node>, right: GoPtr<Node>, checkMode: CheckMode, errorNode: GoPtr<Node>, initialLeftType: GoPtr<Type>, initialRightType: GoPtr<Type>): GoPtr<Type> {
   const operator = operatorToken!.Kind;
+  const binary = errorNode?.Kind === KindBinaryExpression ? errorNode : undefined;
   let leftType = initialLeftType;
   let rightType = initialRightType;
   if (IsLogicalOrCoalescingBinaryOperator(operator)) {
@@ -3279,6 +3281,9 @@ function checkBinaryLikeExpressionTypeRelation(receiver: GoPtr<Checker>, left: G
       } else if (IsTypeAny(leftType) || IsTypeAny(rightType)) {
         if (Checker_isErrorType(receiver, leftType) || Checker_isErrorType(receiver, rightType)) {
           resultType = receiver!.errorType;
+          retainErrorOperandSource(receiver!, binary, checkMode,
+            leftType === receiver!.errorType && leftType === initialLeftType ? left : undefined,
+            rightType === receiver!.errorType && rightType === initialRightType ? right : undefined);
         } else {
           resultType = receiver!.anyType;
         }
@@ -3343,45 +3348,50 @@ function checkBinaryLikeExpressionTypeRelation(receiver: GoPtr<Checker>, left: G
     case KindAmpersandAmpersandToken:
     case KindAmpersandAmpersandEqualsToken: {
       let resultType = leftType;
+      let leftSource = leftType === receiver!.errorType ? left : undefined;
+      let rightSource: GoPtr<Node>;
       if (Checker_hasTypeFacts(receiver, leftType, TypeFactsTruthy)) {
         let t = leftType;
         if (!receiver!.strictNullChecks) {
           t = Checker_getBaseTypeOfLiteralType(receiver, rightType);
         }
-        resultType = Checker_getUnionType(receiver, [Checker_extractDefinitelyFalsyTypes(receiver, t), rightType]);
+        const falsyLeft = Checker_extractDefinitelyFalsyTypes(receiver, t);
+        resultType = Checker_getUnionType(receiver, [falsyLeft, rightType]);
+        leftSource = receiver!.strictNullChecks && falsyLeft === leftType ? leftSource : undefined;
+        if (rightType === receiver!.errorType) rightSource = right;
       }
       if (operator === KindAmpersandAmpersandEqualsToken) {
         Checker_checkAssignmentOperator(receiver, left, operator, right, leftType, rightType);
       }
+      if (resultType === receiver!.errorType) retainErrorOperandSource(receiver!, binary, checkMode, leftSource, rightSource);
       return resultType;
     }
     case KindBarBarToken:
-    case KindBarBarEqualsToken: {
-      let resultType = leftType;
-      if (Checker_hasTypeFacts(receiver, leftType, TypeFactsFalsy)) {
-        resultType = Checker_getUnionTypeEx(receiver, [Checker_GetNonNullableType(receiver, Checker_removeDefinitelyFalsyTypes(receiver, leftType)), rightType], UnionReductionSubtype, undefined, undefined);
-      }
-      if (operator === KindBarBarEqualsToken) {
-        Checker_checkAssignmentOperator(receiver, left, operator, right, leftType, rightType);
-      }
-      return resultType;
-    }
+    case KindBarBarEqualsToken:
     case KindQuestionQuestionToken:
     case KindQuestionQuestionEqualsToken: {
       if (operator === KindQuestionQuestionToken) {
         Checker_checkNullishCoalesceOperands(receiver, left, right);
       }
+      const coalescing = operator === KindQuestionQuestionToken || operator === KindQuestionQuestionEqualsToken;
       let resultType = leftType;
-      if (Checker_hasTypeFacts(receiver, leftType, TypeFactsEQUndefinedOrNull)) {
-        resultType = Checker_getUnionTypeEx(receiver, [Checker_GetNonNullableType(receiver, leftType), rightType], UnionReductionSubtype, undefined, undefined);
+      let leftInput = leftType;
+      let rightSource: GoPtr<Node>;
+      if (Checker_hasTypeFacts(receiver, leftType, coalescing ? TypeFactsEQUndefinedOrNull : TypeFactsFalsy)) {
+        leftInput = Checker_GetNonNullableType(receiver, coalescing ? leftType : Checker_removeDefinitelyFalsyTypes(receiver, leftType));
+        resultType = Checker_getUnionTypeEx(receiver, [leftInput, rightType], UnionReductionSubtype, undefined, undefined);
+        if (rightType === receiver!.errorType) rightSource = right;
       }
-      if (operator === KindQuestionQuestionEqualsToken) {
+      if (operator === KindBarBarEqualsToken || operator === KindQuestionQuestionEqualsToken) {
         Checker_checkAssignmentOperator(receiver, left, operator, right, leftType, rightType);
       }
+      if (resultType === receiver!.errorType)
+        retainErrorOperandSource(receiver!, binary, checkMode, leftInput === receiver!.errorType && leftInput === leftType ? left : undefined, rightSource);
       return resultType;
     }
     case KindEqualsToken:
       Checker_checkAssignmentOperator(receiver, left, operator, right, leftType, rightType);
+      if (rightType === receiver!.errorType) retainErrorOperandSource(receiver!, binary, checkMode, right);
       return rightType;
     case KindCommaToken:
       if (!Tristate_IsTrue(receiver!.compilerOptions!.AllowUnreachableCode!) && Checker_isSideEffectFree(receiver, left) && !Checker_isIndirectCall(receiver, left!.Parent)) {
@@ -3397,6 +3407,7 @@ function checkBinaryLikeExpressionTypeRelation(receiver: GoPtr<Checker>, left: G
           Checker_error(receiver, left, Left_side_of_comma_operator_is_unused_and_has_no_side_effects);
         }
       }
+      if (rightType === receiver!.errorType) retainErrorOperandSource(receiver!, binary, checkMode, right);
       return rightType;
   }
   throw new globalThis.Error("Unhandled case in checkBinaryLikeExpression");

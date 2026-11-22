@@ -72,6 +72,7 @@ import { Node_QuestionDotToken, Node_TypeArgumentList, SourceFile_Text } from ".
 import { CheckFlagsIndexSymbol, CheckFlagsLate, CheckFlagsNone, CheckFlagsOptionalParameter, CheckFlagsRestParameter, CheckFlagsDeferredType } from "../../ast/checkflags.js";
 import type { LinkStore } from "../../core/linkstore.js";
 import { LinkStore_Get } from "../../core/linkstore.js";
+import { retainErrorOperandSource } from "./source-type-answers.js";
 import { Tristate_IsTrue } from "../../core/tristate.js";
 import { Checker_checkComputedPropertyName, Checker_checkDeclarationInitializer, Checker_checkPropertyDeclaration, Checker_checkTypeNameIsReserved, Checker_checkVariableLikeDeclaration, Checker_classDeclarationExtendsNull, Checker_cloneSymbol, Checker_createCombinedSymbolFromTypes, Checker_createSymbolWithType, Checker_getAliasForTypeNode, Checker_getAwaitedTypeNoAlias, Checker_getClassElementPropertyKeyType, Checker_getClassOrInterfaceDeclarationsOfSymbol, Checker_getDeclarationOfAliasSymbol, Checker_getDeclaredTypeOfSymbol, Checker_getEffectiveDeclarationFlags, Checker_getIndexInfoOfType, Checker_getIndexInfosOfType, Checker_getIndexSymbol, Checker_getIndexTypeOfType, Checker_getLiteralTypeFromProperty, Checker_getLiteralTypeFromPropertyName, Checker_getMembersOfSymbol, Checker_getMergedSymbol, Checker_getParentOfSymbol, Checker_getPropertyOfObjectType, Checker_getPropertyOfType, Checker_getResolvedSymbol, Checker_getResolvedSymbolOrNil, Checker_getSymbolFromTypeReference, Checker_getSymbolOfDeclaration, Checker_getSymbolOfNode, Checker_getTypeOfPrototypeProperty, Checker_getTypeOfPropertyOfType, Checker_getTypeOfSymbol, Checker_getTypeOfEnumMember, Checker_getTypeWithSyntheticDefaultImportType, Checker_getUniqAssociatedNamesFromTupleType, Checker_getWidenedTypeForVariableLikeDeclaration, Checker_widenTypeForVariableLikeDeclaration, Checker_hasBindableName, Checker_instantiateSymbol, Checker_instantiateSymbols, Checker_isArrayOrTupleSymbol, Checker_isAutoTypedProperty, Checker_isGenericIndexType, Checker_isReadonlyArraySymbol, Checker_isSpreadableProperty, Checker_getSpreadSymbol, Checker_newIndexInfo, Checker_newSymbol, Checker_newSymbolEx, Checker_newClassMemberDecoratorContextTypeForNode, Checker_newTypedPropertyDescriptorType, Checker_registerForUnusedIdentifiersCheck, Checker_reportUnusedImports, Checker_reportUnusedLocal, Checker_reportUnusedVariableDeclarations, Checker_resolveEntityName, Checker_resolveExternalModuleName, Checker_resolveExternalModuleSymbol, Checker_resolveStructuredTypeMembers, Checker_getIndexedAccessTypeEx, Checker_setStructuredTypeMembers } from "./symbols.js";
 import { Checker_getESSymbolLikeTypeForNode } from "./symbols.js";
@@ -2847,7 +2848,9 @@ function Checker_resolveCallExpressionWithEvidence(
     return Checker_resolveUntypedCall(receiver, node, constructionOwner);
   }
   let callChainFlags: SignatureFlags;
-  let funcType = Checker_checkExpression(receiver, Node_Expression(node), constructionOwner);
+  const callee = Node_Expression(node)!;
+  const calleeType = Checker_checkExpression(receiver, callee, constructionOwner);
+  let funcType = calleeType;
   const selectedOutput = output;
   if (IsOptionalChain(node)) {
     const nonOptionalType = Checker_getOptionalExpressionType(receiver, funcType, Node_Expression(node));
@@ -2872,7 +2875,10 @@ function Checker_resolveCallExpressionWithEvidence(
   }
   const apparentType = Checker_getApparentType(receiver, funcType);
   if (Checker_isErrorType(receiver, apparentType)) {
-    return Checker_resolveErrorCall(receiver, node, constructionOwner);
+    const recovery = Checker_resolveErrorCall(receiver, node, constructionOwner);
+    if (calleeType === receiver!.errorType && !IsOptionalChain(node))
+      retainErrorOperandSource(receiver!, node, checkMode, callee);
+    return recovery;
   }
   const callSignatures = Checker_getSignaturesOfType(receiver, apparentType, SignatureKindCall);
   const numConstructSignatures = Checker_getSignaturesOfType(receiver, apparentType, SignatureKindConstruct).length;
@@ -2885,6 +2891,7 @@ function Checker_resolveCallExpressionWithEvidence(
       : Checker_resolveUntypedCallWithEvidence(receiver, node, funcType, selectedOutput, constructionOwner);
   }
   if (callSignatures.length === 0) {
+    let original: GoPtr<Diagnostic>;
     if (numConstructSignatures !== 0) {
       Checker_error(receiver, node, Value_of_type_0_is_not_callable_Did_you_mean_to_include_new, Checker_TypeToString(receiver, funcType));
     } else {
@@ -2896,9 +2903,16 @@ function Checker_resolveCallExpressionWithEvidence(
           relatedInformation = NewDiagnosticForNode(Node_Expression(node), Are_you_missing_a_semicolon);
         }
       }
-      Checker_invocationError(receiver, Node_Expression(node), apparentType, SignatureKindCall, relatedInformation);
+      original = Checker_invocationError(receiver, Node_Expression(node), apparentType, SignatureKindCall, relatedInformation);
     }
-    return Checker_resolveErrorCall(receiver, node, constructionOwner);
+    const recovery = Checker_resolveErrorCall(receiver, node, constructionOwner);
+    if (original !== undefined && recovery === receiver!.unknownSignature && !IsOptionalChain(node)
+      && checkMode === CheckModeNormal && receiver!.flowLoopStack.length === 0) {
+      const links = LinkStore_Get(receiver!.typeNodeLinks, node)!;
+      links.resolvedType = receiver!.errorType;
+      links.resolutionFailure = original;
+    }
+    return recovery;
   }
   if ((checkMode & CheckModeSkipGenericFunctions) !== 0 && (Node_TypeArguments(node) ?? []).length === 0 && core.Some(callSignatures, (signature) => Checker_isGenericFunctionReturningFunction(receiver, signature))) {
     Checker_skippedGenericFunction(receiver, node, checkMode);

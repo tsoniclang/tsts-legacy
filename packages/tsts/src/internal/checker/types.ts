@@ -357,6 +357,7 @@ export interface SymbolReferenceLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::ValueSymbolLinks","kind":"type","status":"implemented","sigHash":"cd1e1ae881d5f54928b2653f4bba62a9f0d9eecb49c78e255ab2d6843c67046f","bodyHash":"1cf25825d8f5476f6c3afb929a9010811f5e2f37accf06563d8795360c5bc461"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-29 retains the actual origin of a completed contextual binding property in its native checker-owned answer.","goSignature":"interface{containingType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;functionOrConstructorChecked:packages/tsts/src/go/scalars.ts::bool;mapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>;nameType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;target:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;writeType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{bindingPattern?:{element:packages/tsts/src/internal/ast/spine.ts::Node;keyType:packages/tsts/src/internal/checker/types.ts::Type};containingType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;functionOrConstructorChecked:packages/tsts/src/go/scalars.ts::bool;mapper:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/mapper.ts::TypeMapper>;nameType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;target:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;writeType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}"}
  *
  * Go source:
  * ValueSymbolLinks struct {
@@ -371,6 +372,7 @@ export interface SymbolReferenceLinks {
  */
 export interface ValueSymbolLinks {
   resolvedType: GoPtr<Type>;
+  bindingPattern?: { readonly element: Node; readonly keyType: Type };
   writeType: GoPtr<Type>;
   target: GoPtr<Symbol_62f2f8bf>;
   mapper: GoPtr<TypeMapper>;
@@ -411,7 +413,7 @@ export interface DeferredSymbolLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::AliasSymbolLinks","kind":"type","status":"implemented","sigHash":"2382f765aa7550658e62ca026e5ae05e6b85aeb5330acd2f4d3843d948d97bb6","bodyHash":"c72aaf0fa7b15e17301de8ca8c1983331d7378eca2abda2d5d2508a2e3eaad2e"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain the actual original failed immediate-alias Diagnostic alongside its existing native answer, and preserve the original creator mark on synthetic default members without inferring either relation from diagnostic sites or symbol names.","goSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}","tsSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;immediateFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;syntheticDefault?:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain the actual original failed immediate-alias Diagnostic alongside its existing native answer and the genuine terminal binding source of a completed failed resolution, and preserve the original creator mark on synthetic default members without inferring either relation from diagnostic sites or symbol names.","goSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}","tsSignature":"interface{aliasTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;failedBindingSource?:packages/tsts/src/internal/ast/spine.ts::Node;immediateFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;immediateTarget:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;referenced:packages/tsts/src/go/scalars.ts::bool;syntheticDefault?:packages/tsts/src/go/scalars.ts::bool;typeOnlyDeclaration:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>}"}
  *
  * Go source:
  * AliasSymbolLinks struct {
@@ -424,6 +426,7 @@ export interface DeferredSymbolLinks {
 export interface AliasSymbolLinks {
   immediateTarget: GoPtr<Symbol_62f2f8bf>;
   immediateFailure?: Diagnostic;
+  failedBindingSource?: Node;
   aliasTarget: GoPtr<Symbol_62f2f8bf>;
   referenced: bool;
   typeOnlyDeclaration: GoPtr<Node>;
@@ -491,6 +494,7 @@ export interface ExportTypeLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::TypeAliasLinks","kind":"type","status":"implemented","sigHash":"ab4b0620979030f322a011e203c8bc0ebf5a9258ffb933f2ed37b7c5245216e0","bodyHash":"80469d6a75a0cbcdf7e82cee18f5ce3ba53fa313fc7d139a2c3d19014feac264"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain the actual completed non-generic alias RHS or the exact terminal circular declaration source for a failed result, never a provisional resolution or diagnostic search.","goSignature":"interface{declaredType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;instantiations:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/checker/checker/state.ts::CacheHashKey,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;isConstructorDeclaredProperty:packages/tsts/src/go/scalars.ts::bool;typeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}","tsSignature":"interface{declaredSource?:packages/tsts/src/internal/ast/spine.ts::Node;declaredType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;instantiations:packages/tsts/src/go/compat.ts::GoMap<packages/tsts/src/internal/checker/checker/state.ts::CacheHashKey,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;isConstructorDeclaredProperty:packages/tsts/src/go/scalars.ts::bool;typeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}"}
  *
  * Go source:
  * TypeAliasLinks struct {
@@ -502,6 +506,7 @@ export interface ExportTypeLinks {
  */
 export interface TypeAliasLinks {
   declaredType: GoPtr<Type>;
+  declaredSource?: Node;
   typeParameters: GoSlice<GoPtr<Type>>;
   instantiations: GoMap<CacheHashKey, GoPtr<Type>>;
   isConstructorDeclaredProperty: bool;
@@ -833,7 +838,7 @@ export interface SymbolNodeLinks {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::TypeNodeLinks","kind":"type","status":"implemented","sigHash":"d179da5ea97af8b4e01f810926a7545f82b426592ab5165ddf4d80ecc0cd4e3d","bodyHash":"63f2e3ade12086f877faba2842deb70032ef48351c0a8a14043706ec94966b6a"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the actually emitted original Diagnostic with the same completed native type or expression answer; native name, arity and immutable assignment-failure producers supply it without speculative stores, a type-error scan or a parallel query.","goSignature":"interface{outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolutionFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the actually emitted original Diagnostic with the same completed native type or expression answer; native name, arity and immutable assignment-failure producers supply it without speculative stores, a type-error scan or a parallel query. Retain both actual source operands of a completed binary error join in that same relation. A bare alias retains its exact borrowed source, or waits on the actual declaration's native link if the type resolution was reentered. Keep actual type grammar reports separately so semantic type initialization cannot erase them. Retain a completed circular declaration's own report as terminal source evidence, independent of its RHS's recovery type.","goSignature":"interface{outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{declarationFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;grammarFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;outerTypeParameters:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;resolutionFailure?:packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic;resolvedType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;resolvedTypeSource?:packages/tsts/src/internal/ast/spine.ts::Node|packages/tsts/src/internal/checker/types.ts::TypeAliasLinks|raw(readonly [Node, Node])}"}
  * Go source:
  * TypeNodeLinks struct {
  * 	resolvedType        *Type   // Resolved type associated with node
@@ -843,7 +848,10 @@ export interface SymbolNodeLinks {
 export interface TypeNodeLinks {
   resolvedType: GoPtr<Type>;
   outerTypeParameters: GoSlice<GoPtr<Type>>;
+  declarationFailure?: Diagnostic;
+  grammarFailure?: Diagnostic;
   resolutionFailure?: Diagnostic;
+  resolvedTypeSource?: Node | TypeAliasLinks | readonly [Node, Node];
 }
 
 /**
@@ -1603,6 +1611,7 @@ export const ObjectFlagsIsConstrainedTypeVariable: int = 1 << 27;
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::TypeAlias","kind":"type","status":"implemented","sigHash":"ac31cd554edf60bdb87690df0da0f914d5ea5d6200e1d23f439d5e995fe23407","bodyHash":"6b302ee2ca3d3aa440faae4a150d6dd86dd562e71461887666ecb08303a0d335"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Retain only the effective default suffix of the same completed alias application without altering its native written arguments or identity.","goSignature":"interface{Symbol?:()=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;ToTypeReferenceNode?:(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/nodebuilderimpl.ts::NodeBuilderImpl>)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>;TypeArguments?:()=>packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;symbol:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;typeArguments:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}","tsSignature":"interface{defaultTypeArguments?:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>;symbol:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/symbol.ts::Symbol>;typeArguments:packages/tsts/src/go/compat.ts::GoSlice<packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>>}"}
  *
  * Go source:
  * TypeAlias struct {
@@ -1613,6 +1622,7 @@ export const ObjectFlagsIsConstrainedTypeVariable: int = 1 << 27;
 export interface TypeAlias {
   "symbol": GoPtr<Symbol_62f2f8bf>;
   typeArguments: GoSlice<GoPtr<Type>>;
+  defaultTypeArguments?: GoSlice<GoPtr<Type>>;
 }
 
 /**
@@ -3128,6 +3138,7 @@ export function IndexType_Target(receiver: GoPtr<IndexType>): GoPtr<Type> {
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/types.go::type::IndexedAccessType","kind":"type","status":"implemented","sigHash":"20f66ba167735dddb85b1796950cfbcb3ff1fb0114c33c7940edb005d0e2bbdb","bodyHash":"39fce82cce215bc332cbe5e44bd41f82d9cba41b0bf24ee36ab7eb109e26aa9d"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-37 retains the single exact indexed publication key without changing semantic access flags or cache ownership.","goSignature":"interface{AsConstrainedType?:()=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::ConstrainedType>;IndexType?:()=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;ObjectType?:()=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;__tsgoEmbedded0?:packages/tsts/src/internal/checker/types.ts::ConstrainedType;accessFlags:packages/tsts/src/internal/checker/types.ts::AccessFlags;indexType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;objectType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}","tsSignature":"interface{__tsgoEmbedded0?:packages/tsts/src/internal/checker/types.ts::ConstrainedType;accessFlags:packages/tsts/src/internal/checker/types.ts::AccessFlags;cacheKey?:packages/tsts/src/internal/checker/checker/state.ts::CacheHashKey;indexType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>;objectType:packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>}"}
  *
  * Go source:
  * IndexedAccessType struct {
@@ -3142,6 +3153,7 @@ export interface IndexedAccessType {
   objectType: GoPtr<Type>;
   indexType: GoPtr<Type>;
   accessFlags: AccessFlags;
+  cacheKey?: CacheHashKey;
 }
 
 /**

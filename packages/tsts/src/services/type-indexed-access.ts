@@ -1,6 +1,6 @@
 import type { GoPtr } from "../go/compat.js";
 import type { Checker } from "../internal/checker/checker/state.js";
-import type { Type } from "../internal/checker/types.js";
+import type { IndexedAccessType, Type } from "../internal/checker/types.js";
 import {
   AccessFlagsNone, AccessFlagsWriting, TypeFlagsIndexedAccess, TypeFlagsNever, TypeFlagsUnion,
   Type_AsIndexedAccessType, Type_Types,
@@ -38,12 +38,23 @@ export type TypeIndexedAccessSelection = TypeIndexedAccessComponents & {
 );
 
 export function readTypeIndexedAccessComponents(query: GoPtr<Checker>, type: GoPtr<Type>): TypeIndexedAccessComponents | undefined {
+  const indexed = readOwnedIndexedAccess(query, type);
+  if (indexed === undefined) return undefined;
+  return Object.freeze({ objectType: indexed.objectType, indexType: indexed.indexType });
+}
+
+export function readOwnedIndexedAccess(
+  query: GoPtr<Checker>, type: GoPtr<Type>,
+): (IndexedAccessType & TypeIndexedAccessComponents) | undefined {
   if (query === undefined || type?.checker === undefined || !ownsChecker(query, type.checker) ||
     (type.flags & TypeFlagsIndexedAccess) === 0) return undefined;
   const indexed = Type_AsIndexedAccessType(type);
   const objectType = indexed?.objectType;
   const indexType = indexed?.indexType;
-  return objectType === undefined || indexType === undefined ? undefined : Object.freeze({objectType, indexType});
+  if (indexed === undefined || objectType?.checker !== type.checker || indexType?.checker !== type.checker) return undefined;
+  if (indexed.cacheKey === undefined || type.checker.indexedAccessTypes.get(indexed.cacheKey) !== type)
+    return undefined;
+  return indexed as IndexedAccessType & TypeIndexedAccessComponents;
 }
 
 export function selectTypeIndexedAccess(

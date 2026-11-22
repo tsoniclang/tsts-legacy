@@ -142,6 +142,7 @@ export type {
   ResolvedSourceElementAccessInfo,
   ResolvedSourceFlowCondition,
   ResolvedSourceFlowConditionInfo,
+  ResolvedSourceIntrinsicValueInfo,
   ResolvedSourceIterationInfo,
   ResolvedSourceGeneratorInfo,
   ResolvedSourceObjectLiteralElementInfo,
@@ -151,6 +152,8 @@ export type {
   ResolvedSourceResourceManagementInfo,
   ResolvedSourceStorageInfo,
   ResolvedSourceTypeInfo,
+  ResolvedModuleExport,
+  ResolvedSourceModuleLink,
   ResolvedSourceWellKnownSymbolInfo,
   ResolvedSourceYieldInfo,
   TypeCheckerQueries,
@@ -168,6 +171,8 @@ export type {
 export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "./services/compiler-session.js";
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
 export type {
+  TypeConditionalComponents,
+  TypeConditionalBranch,
   TypeIndexInfo,
   TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
@@ -178,8 +183,9 @@ export type {
   TypeSignatureThisParameterInfo,
   TypeShapeQueries,
   TypeTupleElementInfo,
+  TypeTupleInfo,
 } from "./services/type-shape.js";
-export type { TypeAliasApplicationInfo, TypeAliasConditionalStep } from "./services/type-applications.js";
+export type { RetainedTypeAliasApplication, TypeAliasApplicationInfo, TypeAliasConditionalStep } from "./services/type-applications.js";
 export type { TypeIndexedAccessComponents, TypeIndexedAccessMember, TypeIndexedAccessSelection } from "./services/type-indexed-access.js";
 export type { Node, SourceFile } from "./internal/ast/ast.js";
 export type { Diagnostic } from "./internal/ast/diagnostic.js";
@@ -256,7 +262,7 @@ export type {
   ResolvedOriginalSignatureEvidence,
 } from "./internal/checker/types.js";
 export { readOriginalSignature } from "./internal/checker/original-signature-evidence.js";
-export { ContextFlagsSkipBindingPatterns, TypeFlagsUniqueESSymbol } from "./internal/checker/types.js";
+export { ContextFlagsSkipBindingPatterns, TypeFlagsConditional, TypeFlagsIndexedAccess, TypeFlagsUniqueESSymbol } from "./internal/checker/types.js";
 export { prepareSourceImports } from "./services/source-import-preparation.js";
 export type {
   SourceImportPreparationInput,

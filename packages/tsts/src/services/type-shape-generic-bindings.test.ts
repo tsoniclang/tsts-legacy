@@ -59,7 +59,8 @@ const tuple: [number, string] = [1, "one"];
   assert.ok(tuple !== undefined);
   const tupleType = source.checker.getTypeAtLocation(source.ast.name(tuple))?.type;
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(tupleType), undefined);
-  assert.equal(source.typeShape.getTupleElementTypes(tupleType).length, 2);
+  assert.equal(source.typeShape.getTupleInfo(tupleType)?.elements.length, 2);
+  assert.equal(source.typeShape.getTypeReferenceTarget(tupleType) !== undefined, true);
 });
 
 test("type-reference argument queries reject non-reference kinds without object-only access", () => {
@@ -95,6 +96,7 @@ function identity<T>(parameter: T): T { return parameter; }
     const type = source.checker.getTypeAtLocation(source.ast.name(variable))?.type;
     assert.ok(type !== undefined);
     assert.equal(source.typeShape.getTypeReferenceArgumentInfos(type), undefined);
+    assert.equal(source.typeShape.getTypeReferenceTarget(type), undefined);
   }
   const parameters = findNodes(file, source.ast.children, source.ast.is.IsParameterDeclaration);
   const parameter = parameters.find(node => source.ast.text(source.ast.name(node)) === "parameter");
@@ -102,4 +104,5 @@ function identity<T>(parameter: T): T { return parameter; }
   const parameterType = source.checker.getTypeAtLocation(source.ast.name(parameter))?.type;
   assert.ok(parameterType !== undefined);
   assert.equal(source.typeShape.getTypeReferenceArgumentInfos(parameterType), undefined);
+  assert.equal(source.typeShape.getTypeReferenceTarget(parameterType), undefined);
 });

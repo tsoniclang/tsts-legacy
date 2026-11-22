@@ -2,7 +2,7 @@ import type { bool, byte, int } from "../../../go/scalars.js";
 import type { LiteralSpreadSite, LiteralPartialSite } from "../types.js";
 import { LiteralCreation } from "./literal-creation.js";
 import type { LiteralConstructionOwner } from "./literal-creation.js";
-import { sourceTypeAnswer } from "./source-type-answers.js";
+import { retainErrorOperandSource, sourceTypeAnswer } from "./source-type-answers.js";
 import type { SourceTypeAnswerOutput } from "./source-type-answers.js";
 import type { GoMap, GoPtr, GoSeq, GoSlice } from "../../../go/compat.js";
 import { NewGoStructMap } from "../../../go/compat.js";
@@ -100,7 +100,7 @@ import { Checker_reportTypeNotIterableError, Checker_addDeferredDiagnostic, Chec
 import { Checker_getPropertyNameForKnownSymbolName, Checker_getTypeOfInitializer, Checker_includeUndefinedInIndexSignature, Checker_isConstantReference } from "../flow.js";
 import { Checker_checkSourceElement, Checker_checkSourceElements, Checker_error, Checker_errorOrSuggestion, keyBuilder_writeByte, keyBuilder_writeInt, Checker_findMixins } from "./support.js";
 import { Checker_TypeToString, Checker_TypeToStringEx, Checker_symbolToString } from "../printer.js";
-import { Checker_checkGrammarForGenerator, Checker_checkGrammarFunctionLikeDeclaration, Checker_checkGrammarObjectLiteralExpression, Checker_checkGrammarTypeOperatorNode, Checker_checkGrammarRegularExpressionLiteral, Checker_grammarErrorOnNode, Checker_checkGrammarTaggedTemplateChain, Checker_checkGrammarTypeArguments, Checker_checkGrammarMethod, Checker_grammarErrorAtPos, Checker_checkGrammarMappedType } from "../grammarchecks.js";
+import { Checker_checkGrammarForGenerator, Checker_checkGrammarFunctionLikeDeclaration, Checker_checkGrammarObjectLiteralExpression, Checker_checkGrammarTypeOperatorNode, Checker_checkGrammarRegularExpressionLiteral, Checker_grammarErrorForTypeNode, Checker_grammarErrorOnNode, Checker_checkGrammarTaggedTemplateChain, Checker_checkGrammarTypeArguments, Checker_checkGrammarMethod, Checker_grammarErrorAtPos, Checker_checkGrammarMappedType } from "../grammarchecks.js";
 import type { LinkStore } from "../../core/linkstore.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
 import { Checker_isYieldIteratorResult, Checker_isReturnIteratorResult, Checker_errorAndMaybeSuggestAwait, Checker_checkExpressionEx, Checker_checkExpression, Checker_checkExpressionForMutableLocation, Checker_checkExpressionCached, Checker_checkExpressionCachedEx, Checker_checkNodeDeferred, Checker_checkReturnExpression, Checker_getCombinedNodeFlagsCached, Checker_getContextNode, Checker_functionHasImplicitReturn, Checker_findContextualNode } from "./syntax-checking.js";
@@ -449,18 +449,18 @@ export function Checker_checkTupleType(receiver: GoPtr<Checker>, node: GoPtr<Nod
     }
     if ((flags & ElementFlagsRest) !== 0) {
       if (seenRestElement) {
-        Checker_grammarErrorOnNode(receiver, e, diagnosticsMessages.A_rest_element_cannot_follow_another_rest_element);
+        Checker_grammarErrorForTypeNode(receiver, node, e, false, diagnosticsMessages.A_rest_element_cannot_follow_another_rest_element);
         break;
       }
       seenRestElement = true;
     } else if ((flags & ElementFlagsOptionalFlag) !== 0) {
       if (seenRestElement) {
-        Checker_grammarErrorOnNode(receiver, e, diagnosticsMessages.An_optional_element_cannot_follow_a_rest_element);
+        Checker_grammarErrorForTypeNode(receiver, node, e, false, diagnosticsMessages.An_optional_element_cannot_follow_a_rest_element);
         break;
       }
       seenOptionalElement = true;
     } else if ((flags & ElementFlagsRequired) !== 0 && seenOptionalElement) {
-      Checker_grammarErrorOnNode(receiver, e, diagnosticsMessages.A_required_element_cannot_follow_an_optional_element);
+      Checker_grammarErrorForTypeNode(receiver, node, e, false, diagnosticsMessages.A_required_element_cannot_follow_an_optional_element);
       break;
     }
   }
@@ -3205,7 +3205,11 @@ export function Checker_checkConditionalExpression(receiver: GoPtr<Checker>, nod
   Checker_checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType(receiver, cond!.Condition, t, cond!.WhenTrue);
   const type1 = Checker_checkExpressionEx(receiver, cond!.WhenTrue, checkMode, constructionOwner);
   const type2 = Checker_checkExpressionEx(receiver, cond!.WhenFalse, checkMode, constructionOwner);
-  return Checker_getUnionTypeEx(receiver, [type1, type2], UnionReductionSubtype, undefined, undefined);
+  const result = Checker_getUnionTypeEx(receiver, [type1, type2], UnionReductionSubtype, undefined, undefined);
+  if (result === receiver!.errorType)
+    retainErrorOperandSource(receiver!, node, checkMode, type1 === result ? cond!.WhenTrue : undefined,
+      type2 === result ? cond!.WhenFalse : undefined);
+  return result;
 }
 
 /**
@@ -5270,6 +5274,7 @@ export function Checker_getTypeFromBindingPattern(receiver: GoPtr<Checker>, patt
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.getTypeFromObjectBindingPattern","kind":"method","status":"implemented","sigHash":"65d50e43e8789b02c71fe04b3d2f247329d171d38300c8a63e187953e69c12e1","bodyHash":"ddf110f859754a750d7cc60954bdf88ef735156ca55becc00d799dbf290345e7"}
+ * @tsgo-override {"category":"extension-host","allow":["body"],"reason":"R5-29 retains the actual binding element and native key in the completed synthetic member links, without modifying type selection, cache lifetime or declarations."}
  *
  * Go source:
  * func (c *Checker) getTypeFromObjectBindingPattern(pattern *ast.Node, includePatternInType bool, reportErrors bool) *Type {
@@ -5325,7 +5330,10 @@ export function Checker_getTypeFromObjectBindingPattern(receiver: GoPtr<Checker>
     const text = getPropertyNameFromType(exprType);
     const flags = (SymbolFlagsProperty | (Node_Initializer(e) !== undefined ? SymbolFlagsOptional : 0)) as SymbolFlags;
     const symbol = Checker_newSymbol(receiver, flags, text);
-    LinkStore_Get(receiver!.valueSymbolLinks, symbol)!.resolvedType = Checker_getTypeFromBindingElement(receiver, e, includePatternInType, reportErrors);
+    const links = LinkStore_Get(receiver!.valueSymbolLinks, symbol)!;
+    links.resolvedType = Checker_getTypeFromBindingElement(receiver, e, includePatternInType, reportErrors);
+    if (e !== undefined && exprType !== undefined && links.resolvedType !== undefined)
+      links.bindingPattern = Object.freeze({ element: e, keyType: exprType });
     members.set(symbol!.Name, symbol);
   }
   const indexInfos = stringIndexInfo !== undefined ? [stringIndexInfo] : [];

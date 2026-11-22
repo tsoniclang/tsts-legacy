@@ -35,11 +35,11 @@ test("type-derived signature queries retain their checker owner across imports a
   const transported = bridge.typeShape.getSignatureInfos(callback, "call");
   assert.equal(transported.length, 1);
   assert.equal(transported[0]!.signature, original[0]!.signature);
-  assert.equal(transported[0]!.returnType, original[0]!.returnType);
+  assert.equal(transported[0]!.returnType?.type, original[0]!.returnType?.type);
   assert.deepEqual(transported[0]!.parameters.map(parameter => parameter.parameterKind), ["required", "optional", "optional"]);
   assert.deepEqual(transported[0]!.parameters.map(parameter => parameter.acceptsOmission), [false, true, true]);
   assert.equal(bridge.typeShape.isNumberLike(transported[0]!.parameters[0]!.type), true);
-  assert.equal(bridge.typeShape.isNumberLike(transported[0]!.returnType), true);
+  assert.equal(bridge.typeShape.isNumberLike(transported[0]!.returnType?.type), true);
   assert.ok(transported[0]!.thisParameter);
   assert.equal(Object.isFrozen(transported), true);
   assert.equal(Object.isFrozen(transported[0]), true);

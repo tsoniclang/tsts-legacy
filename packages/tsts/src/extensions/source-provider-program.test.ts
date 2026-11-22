@@ -558,7 +558,7 @@ test("source-file queries retain checker ownership for instantiated provider sig
   const parameter = source.checker.getSignatureParameters(signature)[0];
 
   assert.equal(source.checker.typeToString(source.checker.getTypeOfSymbol(parameter)), "number[]");
-  assert.equal(source.checker.typeToString(source.checker.getReturnTypeOfSignature(signature)), "number");
+  assert.equal(source.checker.typeToString(source.checker.getReturnTypeOfSignature(signature)?.type), "number");
 });
 
 function providerSession(model: ProviderDeclarationModel, source: string) {

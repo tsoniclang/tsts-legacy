@@ -5,8 +5,10 @@ export type ExtensionFactSubject = object;
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import { SourceFile_FileName, type SourceFile } from "../internal/ast/ast.js";
+import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Program } from "../internal/compiler/program.js";
+import { createCheckerDiagnosticPublication } from "../services/diagnostic-run-members.js";
 import {
   createSourceProgramQueries,
   type SourceProgramQueries,
@@ -3722,7 +3724,10 @@ export class ExtensionHost {
   readonly #mutationAttemptStack: HostMutationAttempt[] = [];
   readonly #ownerAuthority: ExtensionOwnerAuthority;
   #program: object;
-  #compilerContext: SourceProgramQueries | undefined;
+  #compilerContext: {
+    readonly queries: SourceProgramQueries;
+    readonly publication: ReturnType<typeof createCheckerDiagnosticPublication>;
+  } | undefined;
   #sourceAnalysisState: "pending" | "running" | "completed" | "failed" = "pending";
   #semanticFinalizationState: "open" | "finalized" | "failed" = "open";
 
@@ -4212,17 +4217,27 @@ export class ExtensionHost {
   }
 
   getCompilerQueryContext(context?: Context): SourceProgramQueries {
-    if (this.#compilerContext !== undefined) {
-      return this.#compilerContext;
-    }
+    return this.#sourceQueries(context).queries;
+  }
+
+  publishCheckedSource(diagnostics: readonly GoPtr<Diagnostic>[], context?: Context) {
+    if (!this.finalized) throw new Error("Checker diagnostics require finalized source semantics.");
+    const { queries, publication } = this.#sourceQueries(context);
+    return { source: queries, diagnostics: publication.publish(diagnostics) };
+  }
+
+  #sourceQueries(context: Context | undefined) {
+    if (this.#compilerContext !== undefined) return this.#compilerContext;
     const program = this.#program as GoPtr<Program>;
-    this.#compilerContext = createSourceProgramQueries(program, {
+    const publication = createCheckerDiagnosticPublication();
+    const queries = createSourceProgramQueries(program, {
       ...(context === undefined ? {} : { context }),
+      admitsCheckerDiagnostic: publication.admits,
       includeSourceFile: (sourceFile) =>
         getProviderVirtualArtifactForCompiler(this.providers, SourceFile_FileName(sourceFile))?.kind
         !== "canonical-export-owner",
     });
-    return this.#compilerContext;
+    return this.#compilerContext = { queries, publication };
   }
 
   #getOwnerCapabilities(extensionId: string): {

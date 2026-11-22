@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { SymbolFlagsAlias, createCompilerSessionFromFiles, getDiagnosticRunMembers } from "../index.js";
 import type { Node, Symbol, TypeCheckerQueries } from "../index.js";
+import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import { Background } from "../go/context.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
@@ -10,7 +11,7 @@ import { Checker_getTargetOfAliasDeclaration } from "../internal/checker/checker
 import { maxSerializationLevel } from "../internal/checker/checker.js";
 import { Checker_resolveExternalModule } from "../internal/checker/checker/modules.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_PropertyNameOrName, Node_Text } from "../internal/ast/ast.js";
 import { Cannot_find_module_0_or_its_corresponding_type_declarations } from "../internal/diagnostics/generated/messages.js";
 
 const compilerOptions = { module: "nodenext", moduleResolution: "nodenext", strict: true, target: "es2024" };
@@ -141,6 +142,58 @@ for (const count of [1, 4]) test(`failed module alias answers retain the emitted
   assert.equal(absentAfter.length === absentRoots.length && absentAfter.every((root, index) => root === absentRoots[index]), true,
     "a no-check view does not create diagnostics that its original producer never emitted");
   assert.equal(rows[0]?.checker.getAliasStep(symbol) === undefined, true, "a foreign Program cannot supply a module cause");
+});
+
+for (const count of [1, 4]) test(`direct local exports retain the actual name-resolution error with ${count} checkers`, () => {
+  const program = open({
+    "/case/unbound.mts": "export { missing }; export { absent as exposed };",
+    "/case/suppressed.mts": "// @ts-expect-error\nexport { missing };",
+    "/case/healthy.mts": "const local = true; export { local as exposed };",
+    "/case/filtered-module.mts": "// @ts-expect-error\nimport { missing } from './absent.mjs';",
+  }, { checkers: count });
+  const native = program.session.program;
+  assert.equal(native?.compilerCheckerPool?.checkers.length, count);
+  if (native === undefined) throw new Error("The original name-resolution link requires its actual native Program.");
+  const read = (file: string, kind: string, text: string) => {
+    const { sourceFile, checker } = program.queries(file);
+    const occurrence = program.only(sourceFile, kind, text);
+    const symbol = checker.getSymbolAtLocation(program.nameOf(occurrence));
+    assert.ok(symbol);
+    return { sourceFile, checker, occurrence, symbol };
+  };
+  const before = program.session.getDiagnostics("all");
+  const origins = before.flatMap(root => {
+    assert.ok(root);
+    return getDiagnosticRunMembers(root);
+  });
+  for (const text of ["missing", "absent as exposed"]) {
+    const { sourceFile, checker, occurrence, symbol } = read("/case/unbound.mts", "ExportSpecifier", text);
+    const local = Node_PropertyNameOrName(occurrence);
+    assert.ok(local);
+    const [owner, release] = Program_GetTypeCheckerForFileExclusive(native,
+      WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), sourceFile);
+    const cause = owner === undefined ? undefined : LinkStore_TryGet(owner.symbolNodeLinks, local)?.resolutionFailure;
+    release();
+    assert.equal(cause !== undefined && cause.code === 2304 && origins.includes(cause), true);
+    const answer = checker.getAliasStep(symbol);
+    assert.equal(answer?.kind === "unresolved" && answer.cause === cause, true);
+    const repeated = checker.getAliasStep(symbol);
+    assert.equal(repeated?.kind === "unresolved" && repeated.cause === cause, true);
+    assert.equal(checker.getAliasStep({ ...symbol }) === undefined, true, "a copied symbol cannot borrow the authored name error");
+  }
+  for (const [file, kind] of [["/case/suppressed.mts", "ExportSpecifier"], ["/case/filtered-module.mts", "ImportSpecifier"]]) {
+    assert.ok(file && kind);
+    const { checker, symbol } = read(file, kind, "missing");
+    assert.equal(checker.getAliasStep(symbol) === undefined, true, "a directive-filtered report is not a published cause");
+  }
+  const healthy = read("/case/healthy.mts", "ExportSpecifier", "local as exposed");
+  assert.equal(healthy.checker.getAliasStep(healthy.symbol)?.kind, "symbol");
+  const after = program.session.getDiagnostics("all").flatMap(root => {
+    assert.ok(root);
+    return getDiagnosticRunMembers(root);
+  });
+  assert.deepEqual(after.map(diagnostic => diagnostic.code), origins.map(diagnostic => diagnostic.code));
+  assert.equal(after.every((original, index) => original === origins[index]), true, "the actual diagnostic run members are unchanged");
 });
 
 for (const count of [1, 4]) test(`failed implicit-any module answers retain only the original error with ${count} checkers`, () => {
@@ -280,19 +333,21 @@ for (const count of [1, 4]) test(`failed immediate alias answers retain only the
   if (nativeProgram === undefined) throw new Error("The fixture requires its actual native Program");
   const [owner, release] = Program_GetTypeCheckerForFileExclusive(nativeProgram,
     WithCheckerLifetime(Background(), CheckerLifetimeDiagnostics), first.sourceFile);
+  let renewed: Diagnostic | undefined;
   try {
     if (owner === undefined) throw new Error("The actual diagnostic producer must remain available");
     assert.equal(Checker_getTargetOfAliasDeclaration(owner, first.declaration) === undefined, true,
       "a genuine native re-evaluation still has no fabricated successful target");
+    renewed = LinkStore_TryGet(owner.aliasSymbolLinks, first.symbol)?.immediateFailure;
   } finally {
     release();
   }
-  const renewed = first.checker.getAliasStep(first.symbol);
-  assert.equal(renewed?.kind === "unresolved" && first.answer?.kind === "unresolved"
-    && renewed.cause !== first.answer.cause, true, "a new actual producer lifetime replaces the old failure, not first-record-wins");
-  if (renewed?.kind !== "unresolved") throw new Error("The renewed actual answer requires its own original cause");
+  if (renewed === undefined || first.answer?.kind !== "unresolved") throw new Error("Both actual producer lifetimes retain a failure");
+  assert.equal(renewed !== first.answer.cause, true, "a new actual producer lifetime replaces the old failure, not first-record-wins");
   assert.equal(program.session.getDiagnostics("all").some(diagnostic => diagnostic !== undefined
-    && getDiagnosticRunMembers(diagnostic).includes(renewed.cause)), true, "the renewed original appears in the actual published run");
+    && getDiagnosticRunMembers(diagnostic).includes(renewed)), true, "the live diagnostic run contains the renewed original");
+  assert.equal(first.checker.getAliasStep(first.symbol) === undefined, true,
+    "a finalized checked view cannot hand out a cause created after its diagnostic publication");
 });
 
 // Two steps of the same kind whose symbols are one object.

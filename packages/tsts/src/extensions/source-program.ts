@@ -1,20 +1,23 @@
 import type { GoPtr } from "../go/compat.js";
 import type { Context } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
+import { Node_ModuleSpecifier } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { ResolvedCheckerBackingConstraint } from "../internal/checker/types.js";
 import {
   Program_GetDefaultResolutionModeForFile,
+  Program_GetResolvedModuleFromModuleSpecifier,
   Program_GetSourceFileForResolvedModule,
   Program_GetSourceFile,
   Program_GetSourceFiles,
   Program_ResolveModuleName,
   type Program,
 } from "../internal/compiler/program.js";
-import { ResolvedModule_IsResolved } from "../internal/module/types.js";
+import { ResolvedModule_IsResolved, type PackageId } from "../internal/module/types.js";
 import { createAstReader, type AstReader } from "../services/ast-reader.js";
 import { createTypeCheckerQueries, type TypeCheckerQueries } from "../services/type-checker.js";
 import { createTypeShapeQueries, type TypeShapeQueries } from "../services/type-shape.js";
+import type { CheckerDiagnosticMembership } from "../internal/checker/checker/source-type-answers.js";
 import type { ExtensionDiagnostic } from "./host.js";
 import type { ReadonlySourceFactResolver } from "./consumer.js";
 
@@ -33,6 +36,7 @@ export interface SourceProgramQueries {
   readonly getSourceFile: (fileName: string) => GoPtr<SourceFile>;
   readonly getSourceFileQueries: (sourceFile: GoPtr<SourceFile>) => SourceFileQueries;
   readonly getBackingConstraints: () => readonly ResolvedCheckerBackingConstraint[];
+  readonly getCheckedModulePackage: (moduleSpecifier: GoPtr<Node>) => Readonly<PackageId> | undefined;
   readonly resolveModuleSourceFile: (moduleSpecifier: GoPtr<Node>) => GoPtr<SourceFile>;
 }
 
@@ -48,6 +52,7 @@ export interface CreateSourceProgramQueriesOptions {
   readonly context?: Context;
   readonly includeSourceFile?: (sourceFile: SourceFile) => boolean;
   readonly ast?: AstReader;
+  readonly admitsCheckerDiagnostic?: CheckerDiagnosticMembership;
 }
 
 export function createSourceProgramQueries(
@@ -83,10 +88,12 @@ export function createSourceProgramQueries(
     }
     const sourceChecker = createTypeCheckerQueries(program, {
       ...(options.context === undefined ? {} : { context: options.context }),
+      ...(options.admitsCheckerDiagnostic === undefined ? {} : { admitsCheckerDiagnostic: options.admitsCheckerDiagnostic }),
       sourceFile,
     });
     const sourceTypeShape = createTypeShapeQueries(program, {
       ...(options.context === undefined ? {} : { context: options.context }),
+      ...(options.admitsCheckerDiagnostic === undefined ? {} : { admitsCheckerDiagnostic: options.admitsCheckerDiagnostic }),
       sourceFile,
     });
     const created = Object.freeze({
@@ -97,6 +104,22 @@ export function createSourceProgramQueries(
     });
     sourceFileQueries.set(sourceFile, created);
     return created;
+  };
+  const getCheckedModulePackage = (moduleSpecifier: GoPtr<Node>): Readonly<PackageId> | undefined => {
+    if (moduleSpecifier === undefined) return undefined;
+    const kind = ast.kindName(moduleSpecifier);
+    const parent = ast.parent(moduleSpecifier);
+    const parentKind = ast.kindName(parent);
+    const owner = parentKind === "KindLiteralType" ? ast.parent(parent) : undefined;
+    const staticReference = (parentKind === "KindImportDeclaration" || parentKind === "KindExportDeclaration")
+      ? Node_ModuleSpecifier(parent) === moduleSpecifier
+      : parentKind === "KindLiteralType" && ast.as.AsLiteralTypeNode(parent)?.Literal === moduleSpecifier &&
+        ast.kindName(owner) === "KindImportType" && ast.as.AsImportTypeNode(owner)?.Argument === parent;
+    const file = ast.getSourceFile(moduleSpecifier);
+    if (!staticReference || (kind !== "KindStringLiteral" && kind !== "KindNoSubstitutionTemplateLiteral") ||
+      file === undefined || !containsSourceFile(file) || !included(file)) return undefined;
+    const resolved = Program_GetResolvedModuleFromModuleSpecifier(program, file, moduleSpecifier);
+    return resolved?.PackageId.Name ? resolved.PackageId : undefined;
   };
   const resolveModuleSourceFile = (moduleSpecifier: GoPtr<Node>): GoPtr<SourceFile> => {
     if (moduleSpecifier === undefined) {
@@ -149,6 +172,7 @@ export function createSourceProgramQueries(
       }
       return Object.freeze(constraints);
     },
+    getCheckedModulePackage,
     resolveModuleSourceFile,
   });
 }

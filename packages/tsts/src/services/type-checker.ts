@@ -6,6 +6,7 @@ import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Arguments, Node_Expression, Node_PropertyNameOrName, Node_Symbol, Node_Text, SourceFile_FileName, SourceFile_Path } from "../internal/ast/ast.js";
+import { AsExportDeclaration } from "../internal/ast/generated/casts.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
@@ -13,9 +14,13 @@ import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
 import { readTypeIndexInfo } from "./type-members.js";
 import { readInvocationReturnType } from "./signature-returns.js";
+import { sourceModuleLink } from "./source-module-link.js";
+import type { ResolvedSourceModuleLink } from "./source-module-link.js";
+export type { ResolvedSourceModuleLink } from "./source-module-link.js";
 import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
-import { sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
-import type { ResolvedSourceTypeInfo, SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
+import { signatureReturnAnswer, sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
+import { admitSourceTypeAnswer, resolveSourceTypeAnswer } from "./source-type-answer.js";
+import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo, SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
 export type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 import type { TypeIndexInfo } from "./type-shape.js";
 import {
@@ -29,11 +34,10 @@ import type { SymbolFlags } from "../internal/ast/generated/flags.js";
 import {
   IsElementAccessExpression,
   IsAwaitExpression,
+  IsExportDeclaration,
   IsExportSpecifier,
   IsGetAccessorDeclaration,
   IsIdentifier,
-  IsImportClause,
-  IsImportEqualsDeclaration,
   IsImportSpecifier,
   IsNamespaceExport,
   IsNamespaceImport,
@@ -56,6 +60,8 @@ import {
   IsPropertyName,
   IsDynamicName,
   IsImportCall,
+  IsInExpressionContext,
+  IsRightSideOfQualifiedNameOrPropertyAccess,
   ModuleExportNameIsDefault,
   OEKAssertions,
   OEKParentheses,
@@ -91,15 +97,20 @@ import {
   Checker_getDeclarationOfAliasSymbol,
   Checker_getDeclaredTypeOfSymbol,
   Checker_getEffectivePropertyNameForPropertyNameNode,
+  Checker_getExportSymbolOfValueSymbolIfExported,
+  Checker_getIdentifierAssignmentError,
   Checker_getImmediateAliasedSymbol,
   Checker_getLiteralTypeFromPropertyName,
   Checker_getTypeOfPropertyOfContextualTypeEx,
   Checker_getResolvedSymbolOrNil,
   Checker_getModuleSpecifierForImportOrExport,
+  Checker_getExportsOfModule,
   Checker_getTypeOfSymbol,
   Checker_getWriteTypeOfSymbol,
   Checker_resolveExternalModuleName,
   Checker_resolveExternalModuleSymbol,
+  isSourceModuleBinding,
+  retainedAliasFailure,
 } from "../internal/checker/checker/symbols.js";
 import type {
   ResolvedSourceElementAccessInfo as CheckerResolvedSourceElementAccessInfo,
@@ -112,12 +123,11 @@ import {
   Checker_GetTypeAtLocation,
 } from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
-import { AssignmentKindDefinite } from "../internal/checker/utilities.js";
+import { AssignmentKindDefinite, AssignmentKindNone, getAssignmentTargetKind, isReservedMemberName } from "../internal/checker/utilities.js";
 import { Checker_getResolvedSourceIterationInfo } from "../internal/checker/checker/syntax-checking.js";
 import type { ExtensionCheckedIterationSelection } from "../internal/checker/checker/iteration-evidence.js";
 import {
   Checker_GetConstantValue,
-  Checker_GetExportsOfModule,
   Checker_GetRootSymbols,
   Checker_GetSignatureFromDeclaration,
 } from "../internal/checker/services.js";
@@ -159,9 +169,14 @@ import type {
 export interface CreateTypeCheckerQueriesOptions {
   readonly sourceFile: GoPtr<SourceFile>;
   readonly context?: Context;
+  readonly admitsCheckerDiagnostic?: CheckerDiagnosticMembership;
 }
 
 export type ResolvedSourceCallInfo = ResolvedCallEvidence;
+export interface ResolvedSourceIntrinsicValueInfo {
+  readonly kind: "undefined";
+  readonly symbol: Symbol;
+}
 export interface ResolvedSourcePropertyNameInfo {
   readonly kind: "string" | "numeric" | "unique-symbol";
   readonly name: string;
@@ -258,6 +273,12 @@ export type ResolvedAliasStep =
   | ResolvedAliasTarget
   | { readonly kind: "exported-value-member"; readonly exportAssignment: Symbol; readonly member: ResolvedAliasTarget | undefined };
 
+export interface ResolvedModuleExport {
+  readonly name: string;
+  readonly symbol: Symbol;
+  readonly typeOnlyStar: Node | null;
+}
+
 export interface ResolvedSourceStorageInfo {
   readonly expression: Node;
   readonly storageExpression: Node;
@@ -280,6 +301,7 @@ export interface TypeCheckerQueries {
   readonly getLexicallyResolvedSymbol: (identifier: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getResolvedSymbol: (node: GoPtr<Node>) => GoPtr<Symbol>;
   readonly getResolvedSymbolOrNil: (node: GoPtr<Node>) => GoPtr<Symbol>;
+  readonly getResolvedIntrinsicValueInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIntrinsicValueInfo>;
   readonly getAliasedSymbol: (symbol: GoPtr<Symbol>) => GoPtr<Symbol>;
   /**
    * One step of an alias chain (see ResolvedAliasStep). Nothing, and no throw, for a symbol that is not
@@ -314,7 +336,7 @@ export interface TypeCheckerQueries {
   readonly getResolvedYieldInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceYieldInfo>;
   readonly getResolvedWellKnownSymbolInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceWellKnownSymbolInfo>;
   readonly getResolvedResourceManagementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceResourceManagementInfo>;
-  readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
+  readonly getReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getInvocationReturnTypeOfSignature: (signature: GoPtr<Signature>) => GoPtr<Type>;
   readonly getCallSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignaturesOfType: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -323,8 +345,9 @@ export interface TypeCheckerQueries {
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly typeToString: (type: GoPtr<Type>) => string;
   readonly getModuleSymbolFromSpecifier: (moduleSpecifier: GoPtr<Node>) => GoPtr<Symbol>;
+  readonly getResolvedSourceModuleLink: (specifier: GoPtr<Node>) => GoPtr<ResolvedSourceModuleLink>;
   readonly getResolvedExternalModuleSymbol: (moduleSymbol: GoPtr<Symbol>, dontResolveAlias?: boolean) => GoPtr<Symbol>;
-  readonly getExportsOfModule: (moduleSymbol: GoPtr<Symbol>) => readonly GoPtr<Symbol>[];
+  readonly getExportsOfModule: (moduleSymbol: GoPtr<Symbol>) => readonly ResolvedModuleExport[];
   readonly getSymbolName: (symbol: GoPtr<Symbol>) => string;
   readonly getSymbolDeclarations: (symbol: GoPtr<Symbol>) => readonly GoPtr<Node>[];
   readonly getRootSymbols: (symbol: GoPtr<Symbol>) => readonly GoPtr<Symbol>[];
@@ -382,22 +405,20 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
         defaultOptions.context ?? Background(), owner => Checker_getAwaitedType(owner, type));
     },
-    getTypeAtLocation: (node) =>
+    getTypeAtLocation: (node) => resolveSourceTypeAnswer(program, defaultOptions,
       withCheckerForNode(program, node, defaultOptions, checker =>
-        sourceTypeAnswer(checker, node, Checker_GetTypeAtLocation(checker, node))),
-    getTypeFromTypeNode(node) {
-      if (node === undefined) return undefined;
-      return withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, checker => {
-        return sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node));
-      });
-    },
-    getContextualType: (node, contextFlags = ContextFlagsNone) =>
+        sourceTypeAnswer(checker, node, Checker_GetTypeAtLocation(checker, node), defaultOptions.admitsCheckerDiagnostic))),
+    getTypeFromTypeNode: (node) => resolveSourceTypeAnswer(program, defaultOptions,
+      withCheckerForNode(program, node, defaultOptions, checker =>
+        sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node), defaultOptions.admitsCheckerDiagnostic))),
+    getContextualType: (node, contextFlags = ContextFlagsNone) => resolveSourceTypeAnswer(program, defaultOptions,
       withCheckerForNode(program, node, defaultOptions, checker => {
         const output: SourceTypeAnswerOutput = { value: undefined };
         const type = Checker_getContextualType(checker, node, contextFlags, output);
         return output.value?.type === type && output.value !== undefined
-          ? output.value : type === undefined ? undefined : { type, cause: undefined };
-      }),
+          ? admitSourceTypeAnswer(output.value, defaultOptions.admitsCheckerDiagnostic)
+          : type === undefined ? undefined : { type, causes: [] };
+      })),
     getEffectivePropertyName(node) {
       if (node === undefined) return undefined;
       const cached = propertyNames.get(node);
@@ -443,6 +464,15 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForNode(program, node, defaultOptions, (checker) => getDiagnosticFreeResolvedSymbol(checker, node)),
     getResolvedSymbolOrNil: (node) =>
       withCheckerForNode(program, node, defaultOptions, (checker) => Checker_getResolvedSymbolOrNil(checker, node)),
+    getResolvedIntrinsicValueInfo: (node) =>
+      withCheckerForNode(program, node, defaultOptions, (checker): GoPtr<ResolvedSourceIntrinsicValueInfo> => {
+        if (checker === undefined || node?.Parent === undefined || !IsIdentifier(node)) return undefined;
+        const symbol = LinkStore_TryGet(checker.symbolNodeLinks, node)?.resolvedSymbol;
+        return symbol !== undefined && symbol === checker.undefinedSymbol
+          && IsInExpressionContext(node) && !IsRightSideOfQualifiedNameOrPropertyAccess(node)
+          && getAssignmentTargetKind(node) !== AssignmentKindDefinite
+          ? { kind: "undefined", symbol } : undefined;
+      }),
     getAliasedSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => {
         // The made default member of a module's exported value is shared between modules: its alias target is the
@@ -462,22 +492,22 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         const namespaceForm = IsNamespaceImport(declaration) || IsNamespaceExport(declaration);
         const memberForm = (IsImportSpecifier(declaration) || IsExportSpecifier(declaration))
           && !ModuleExportNameIsDefault(Node_PropertyNameOrName(declaration));
-        const moduleForm = namespaceForm || IsImportSpecifier(declaration) || IsExportSpecifier(declaration)
-          || IsImportClause(declaration) || IsImportEqualsDeclaration(declaration);
+        const moduleForm = isSourceModuleBinding(declaration);
         const moduleSpecifier = moduleForm ? Checker_getModuleSpecifierForImportOrExport(checker, declaration) : undefined;
         const selectedModule = moduleSpecifier === undefined ? undefined : moduleOfSpecifier(checker, declaration, moduleSpecifier);
         const referenced = namespaceForm || memberForm ? selectedModule : undefined;
-        const moduleFailure = selectedModule === undefined && moduleSpecifier !== undefined
-          ? LinkStore_TryGet(checker.nodeLinks, moduleSpecifier)?.externalModuleFailure : undefined;
+        const exportDeclaration = IsExportSpecifier(declaration) ? AsExportDeclaration(declaration.Parent?.Parent) : undefined;
+        if (exportDeclaration !== undefined && exportDeclaration.ModuleSpecifier === undefined && Node_Symbol(declaration) !== symbol) return undefined;
         // A namespace form names the module itself: its `export =` assignment when it has one, the module otherwise.
         // The checker's own target for it is the final value behind the assignment or a symbol it makes for the import.
         if (referenced !== undefined && namespaceForm) return { kind: "symbol", symbol: referenced.exportAssignment ?? referenced.module };
-        const immediate = retained?.immediateFailure === undefined && moduleFailure === undefined
+        const failure = retainedAliasFailure(checker, declaration, symbol, selectedModule === undefined);
+        const immediate = failure === undefined
           ? Checker_getImmediateAliasedSymbol(checker, symbol) : retained?.immediateTarget;
         const target = immediate === checker?.unknownSymbol ? undefined : immediate;
-        const cause = LinkStore_TryGet(checker.aliasSymbolLinks, symbol)?.immediateFailure ?? moduleFailure;
+        const cause = failure ?? LinkStore_TryGet(checker.aliasSymbolLinks, symbol)?.immediateFailure;
         const answer: ResolvedAliasTarget | undefined = target !== undefined ? { kind: "symbol", symbol: target }
-          : cause === undefined ? undefined : { kind: "unresolved", cause };
+          : cause === undefined || defaultOptions.admitsCheckerDiagnostic?.(cause) === false ? undefined : { kind: "unresolved", cause };
         if (referenced?.exportAssignment !== undefined) {
           return { kind: "exported-value-member", exportAssignment: referenced.exportAssignment, member: answer };
         }
@@ -537,10 +567,17 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(objectLiteralElementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           getResolvedSourceObjectLiteralElementInfo(checker, node, objectLiteralElementSymbols))),
-    getResolvedStorageInfo: (node) =>
-      memoizeResolvedNodeQuery(storageInfos, node, () =>
+    getResolvedStorageInfo: (node) => {
+      const selected = memoizeResolvedNodeQuery(storageInfos, node, () =>
         withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, (checker) =>
-          getResolvedSourceStorageInfo(checker, node))),
+          getResolvedSourceStorageInfo(checker, node)));
+      if (node === undefined || selected === undefined) return undefined;
+      const type = resolveSourceTypeAnswer(program, defaultOptions, admitSourceTypeAnswer(selected.type, defaultOptions.admitsCheckerDiagnostic));
+      if (type === undefined || type === selected.type) return selected;
+      const published = Object.freeze({ ...selected, type });
+      storageInfos.set(node, published);
+      return published;
+    },
     getResolvedCallableCompletionInfo: (node) =>
       memoizeResolvedNodeQuery(callableCompletionInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
@@ -572,8 +609,9 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(resourceManagementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceResourceManagementInfo(checker, node))),
-    getReturnTypeOfSignature: (signature) =>
-      withCheckerForSignature(program, signature, defaultOptions, (checker) => Checker_GetReturnTypeOfSignature(checker, signature)),
+    getReturnTypeOfSignature: (signature) => resolveSourceTypeAnswer(program, defaultOptions,
+      withCheckerForSignature(program, signature, defaultOptions, checker =>
+        signatureReturnAnswer(checker, signature, Checker_GetReturnTypeOfSignature(checker, signature), defaultOptions.admitsCheckerDiagnostic))),
     getInvocationReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => readInvocationReturnType(checker, signature)),
     getCallSignaturesOfType: (type) =>
@@ -593,10 +631,43 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getModuleSymbolFromSpecifier: (moduleSpecifier) =>
       withCheckerForNode(program, moduleSpecifier, defaultOptions, (checker) => Checker_resolveExternalModuleName(checker, moduleSpecifier, moduleSpecifier, true as bool)),
+    getResolvedSourceModuleLink: (specifier) => specifier === undefined ? undefined
+      : withCheckedFile(program, GetSourceFileOfNode(specifier), defaultOptions, checker =>
+        checker === undefined ? undefined : sourceModuleLink(checker, specifier, defaultOptions.admitsCheckerDiagnostic)),
     getResolvedExternalModuleSymbol: (moduleSymbol, dontResolveAlias = false) =>
       withCheckerForSymbol(program, moduleSymbol, defaultOptions, (checker) => Checker_resolveExternalModuleSymbol(checker, moduleSymbol, dontResolveAlias as bool)),
-    getExportsOfModule: (moduleSymbol) =>
-      withCheckerForSymbol(program, moduleSymbol, defaultOptions, (checker) => Checker_GetExportsOfModule(checker, moduleSymbol)) ?? [],
+    getExportsOfModule: (moduleSymbol) => {
+      if (moduleSymbol === undefined) return [];
+      const readExports = (checker: GoPtr<Checker>) => {
+        if (checker === undefined) return undefined;
+        const exports = Checker_getExportsOfModule(checker, moduleSymbol);
+        const links = LinkStore_TryGet(checker.moduleSymbolLinks, moduleSymbol);
+        if (links?.resolvedExports !== exports) throw new Error("A module export answer requires its actual native export table.");
+        const rows: { name: string; symbol: Symbol; typeOnlyStar: Node | null }[] = [];
+        for (const [name, symbol] of exports) {
+          if (isReservedMemberName(name)) continue;
+          if (symbol === undefined) throw new Error("A native export row requires its actual symbol.");
+          rows.push({ name, symbol, typeOnlyStar: links.typeOnlyExportStarMap?.get(name) ?? null });
+        }
+        return rows;
+      };
+      const owner = moduleSymbol.checkerId;
+      const rows = (owner === undefined
+        ? withCheckedFile(program, getSymbolSourceFile(moduleSymbol), defaultOptions, readExports)
+        : withCheckerById(program, defaultOptions.sourceFile, owner, defaultOptions.context ?? Background(), readExports)) ?? [];
+      for (const row of rows) {
+        if (row.typeOnlyStar !== null || (row.symbol.Flags & SymbolFlagsAlias) === 0) continue;
+        const alias = Checker_getDeclarationOfAliasSymbol(undefined, row.symbol);
+        if (alias === undefined) continue;
+        row.typeOnlyStar = withCheckedFile(program, GetSourceFileOfNode(alias), defaultOptions, checker => {
+          const origin = LinkStore_TryGet(checker?.aliasSymbolLinks, row.symbol)?.typeOnlyDeclaration;
+          if (origin === undefined || !IsExportDeclaration(origin)) return undefined;
+          const declaration = AsExportDeclaration(origin);
+          return declaration?.IsTypeOnly && declaration.ExportClause === undefined ? origin : undefined;
+        }) ?? null;
+      }
+      return rows;
+    },
     getSymbolName: (symbol) => symbol?.Name ?? "",
     getSymbolDeclarations: (symbol) => symbol?.Declarations ?? [],
     getRootSymbols: (symbol) =>
@@ -748,8 +819,16 @@ function getResolvedSourceStorageInfo(
       ? Checker_GetAliasedSymbol(checker, referenceSymbol)
       : referenceSymbol;
     const type = sourceTypeAnswer(checker, storageExpression, Checker_GetTypeAtLocation(checker, storageExpression));
-    if (symbol === undefined || symbol === checker.unknownSymbol || type === undefined) {
+    if (referenceSymbol === undefined || symbol === undefined || symbol === checker.unknownSymbol || type === undefined) {
       return undefined;
+    }
+    let writable: boolean;
+    if (getAssignmentTargetKind(storageExpression) !== AssignmentKindNone) {
+      const localOrExport = Checker_getExportSymbolOfValueSymbolIfExported(checker, referenceSymbol);
+      if (localOrExport === undefined) return undefined;
+      writable = Checker_getIdentifierAssignmentError(checker, storageExpression, localOrExport) === undefined;
+    } else {
+      writable = !Checker_isAssignmentToReadonlyEntity(checker, storageExpression, symbol, AssignmentKindDefinite);
     }
     const declaration = getPrimarySymbolDeclaration(symbol);
     return Object.freeze({
@@ -758,12 +837,7 @@ function getResolvedSourceStorageInfo(
       type,
       symbol,
       ...(declaration === undefined ? {} : { declaration }),
-      writable: !Checker_isAssignmentToReadonlyEntity(
-        checker,
-        storageExpression,
-        symbol,
-        AssignmentKindDefinite,
-      ),
+      writable,
     });
   }
   if (IsPropertyAccessExpression(storageExpression)) {

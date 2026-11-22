@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompilerSessionFromFiles, getDiagnosticRunMembers } from "../index.js";
+import { createCheckerDiagnosticPublication } from "./diagnostic-run-members.js";
 import { Background } from "../go/context.js";
 import { DiagnosticsCollection_GetDiagnosticsForFile, Diagnostic_SetRelatedInfo, NewDiagnostic } from "../internal/ast/diagnostic.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
@@ -141,7 +142,40 @@ test("every raw report of a checked file belongs to exactly one published diagno
     "at least one published diagnostic of the file stands for a run of two or more raw reports");
   const owners = reports.map(report => published.filter(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report)).length);
   assert.ok(owners.every(count => count === 1), "each raw report is a member of exactly one published diagnostic");
+  const publication = createCheckerDiagnosticPublication();
+  assert.equal(publication.publish(published) === published, true);
+  assert.equal(reports.every(report => publication.admits(report) && !publication.admits({ ...report })), true);
+  assert.equal(publication.publish([]) === published && reports.every(report => publication.admits(report)), true);
   const readAgain = session.getDiagnostics("all");
   assert.ok(reports.every(report => readAgain.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(report))),
     "a second read keeps the relation for that read's published objects");
+});
+
+test("the checked aggregate publishes one run for an actual binder report also returned by semantic checking", () => {
+  const source = "export function read(input: boolean): boolean { if (input) nested: type Bad = boolean; return input; }";
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    files: {
+      "/src/invalid.ts": source,
+      "/src/valid.ts": "export function read(input: boolean): boolean { if (input) { type Ready = boolean; } return input; }",
+    },
+    compilerOptions: { noLib: true, strict: true, module: "esnext", target: "es2022" },
+  });
+  const file = Program_GetSourceFile(session.program, "/src/invalid.ts");
+  const valid = Program_GetSourceFile(session.program, "/src/valid.ts");
+  assert.ok(file !== undefined && valid !== undefined);
+  const binder = onlyPublished(session.getDiagnostics("bind", file));
+  assert.equal(binder.code, 1344);
+  const original = onlyPublished(getDiagnosticRunMembers(binder));
+  assert.equal(source.slice(original.loc.pos, original.loc.end), "nested");
+  const semantic = session.getDiagnostics("semantic", file).filter(diagnostic => diagnostic?.file === file);
+  assert.equal(semantic.some(diagnostic => diagnostic !== undefined && getDiagnosticRunMembers(diagnostic).includes(original)), true);
+  const aggregates: readonly (readonly (Diagnostic | undefined)[])[] = [session.getDiagnostics("all", file), session.checkSource().diagnostics];
+  for (const aggregate of aggregates) {
+    const inFile: Diagnostic[] = aggregate.filter((diagnostic): diagnostic is Diagnostic => diagnostic !== undefined && diagnostic.file === file);
+    assert.deepEqual(inFile.map(diagnostic => diagnostic.code), [1344, 1156]);
+    const owner = onlyPublished(inFile.filter(diagnostic => diagnostic.code === 1344));
+    assert.equal(sameMembers(owner, [original]), true);
+    assert.equal(aggregate.some(diagnostic => diagnostic?.file === valid), false);
+  }
 });
