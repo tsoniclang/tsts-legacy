@@ -2584,8 +2584,6 @@ export function Checker_finalizeResolvedCallEvidence(
   if (receiver === undefined || node === undefined || sourceResultType === undefined || !IsCallOrNewExpression(node)) {
     return undefined;
   }
-  const resultType = Checker_getRegularTypeOfLiteralType(receiver, sourceResultType);
-  if (resultType === undefined) throw new Error("A checked call result lost its regular literal type.");
   const links = LinkStore_Get(receiver.signatureLinks, node) as GoPtr<SignatureLinks>;
   const selection = links?.resolvedCallSelectionEvidence;
   if (selection === undefined || links === undefined) {
@@ -2595,6 +2593,11 @@ export function Checker_finalizeResolvedCallEvidence(
     selection.kind === "applicable" && selection.selection.application.instantiatedSignature !== links.resolvedSignature) {
     throw new Error("Final resolved-call evidence does not match the cached call and selected signature.");
   }
+  if (selection.kind === "applicable" && selection.selection.application.instantiatedSignature.resolvedReturnType === undefined) {
+    return undefined;
+  }
+  const resultType = Checker_getRegularTypeOfLiteralType(receiver, sourceResultType);
+  if (resultType === undefined) throw new Error("A checked call result lost its regular literal type.");
   const evidence = links.resolvedCallEvidence;
   if (evidence?.kind === "applicable" && evidence.resultType !== resultType) {
     throw new Error("A checked call produced conflicting final instantiated source result types.");

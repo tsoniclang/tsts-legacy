@@ -474,6 +474,41 @@ test("resolved call info retains the final contextual callee observation", () =>
   );
 });
 
+for (const checkers of [1, 4]) test(`resolved calls publish only completed signature returns with ${checkers} actual checkers`, () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/recursive-call-results", includeBundledLibraries: false,
+    files: {
+      "/recursive-call-results/core.d.ts": testCoreDeclarations,
+      "/recursive-call-results/use.ts": `
+        export function first() { return second(); }
+        export function second() { return first(); }
+        export function acyclic() { return ready(); }
+        function ready() { return true; }
+      `,
+      "/recursive-call-results/other.ts": "export const other = true;",
+      "/recursive-call-results/last.ts": "export const last = false;",
+    },
+    compilerOptions: { ...testNoLibCompilerOptions, strict: true, checkers },
+  });
+  const checked = session.checkSource();
+  assert.equal(session.program?.compilerCheckerPool?.checkers.length, checkers);
+  const source = checked.getSourceFile("/recursive-call-results/use.ts");
+  if (source === undefined) throw new Error("The checked Program owns the actual recursion source.");
+  const { checker } = checked.getSourceFileQueries(source);
+  const baseline = session.getDiagnostics("all");
+  assert.equal(baseline.some(diagnostic => Diagnostic_Code(diagnostic) === 7023), true);
+  const calls = findNodesByKind(source, KindCallExpression);
+  assert.equal(calls.length, 3);
+  for (const [index, call] of calls.entries()) {
+    const result = requireApplicableCallInfo(checker.getResolvedCallInfo(call));
+    assert.equal(checker.getResolvedCallInfo(call) === result, true);
+    assert.equal(result?.selection.application.instantiatedSignature.resolvedReturnType !== undefined, true);
+    assert.equal(checker.typeToString(result?.resultType), index === 2 ? "boolean" : "any");
+  }
+  const repeated = session.getDiagnostics("all");
+  assert.equal(repeated.length, baseline.length);
+  assert.equal(repeated.every((diagnostic, index) => diagnostic === baseline[index]), true);
+});
+
 test("resolved tuple-rest arguments retain their declared rest parameter identity", () => {
   const { program, index } = createProgram(`
     declare function consume(...values: [number, string, boolean]): void;
