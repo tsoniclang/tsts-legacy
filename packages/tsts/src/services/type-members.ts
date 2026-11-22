@@ -11,9 +11,10 @@ import { Checker_GetRootSymbols } from "../internal/checker/services.js";
 import { Checker_isErrorType } from "../internal/checker/checker/diagnostics.js";
 import { Checker_getPropertyOfObjectType, Checker_getPropertyOfType, Checker_getTypeOfSymbol, Checker_isReadonlySymbol } from "../internal/checker/checker/symbols.js";
 import { completedRequiredPropertySource } from "../internal/checker/checker/source-type-answers.js";
+import { Checker_getPropertiesOfObjectType } from "../internal/checker/checker/types.js";
 import { Type_AsMappedType } from "../internal/checker/types.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import type { TypeIndexInfo, TypePropertyInfo } from "./type-shape.js";
+import type { TypeIndexInfo, TypePropertyHeader, TypePropertyInfo } from "./type-shape.js";
 import { typeIndexComponents } from "./type-index-components.js";
 
 export function readTypePropertyInfo(checker: Checker, type: GoPtr<Type>, symbol: GoPtr<Symbol>): TypePropertyInfo {
@@ -33,27 +34,41 @@ export function readObjectPropertyInfo(checker: Checker, type: Type, name: strin
   return Object.freeze(property);
 }
 
-function selectedPropertyInfo(checker: Checker, symbol: Symbol, selected: Symbol): TypePropertyInfo | undefined {
-  const propertyType = Checker_getTypeOfSymbol(checker, selected);
-  if (propertyType === undefined) return undefined;
-  const mapped = (symbol.CheckFlags & CheckFlagsMapped) !== 0;
+export function walkObjectPropertyHeaders(checker: Checker, type: Type, admit: () => boolean,
+  visit: (header: TypePropertyHeader) => boolean): "complete" | "stopped" {
+  const properties = Checker_getPropertiesOfObjectType(checker, type) ?? [];
+  for (let index = 0; index < properties.length; index += 1) {
+    if (!admit()) return "stopped";
+    const symbol = properties[index];
+    if (symbol === undefined) throw new Error("The checker returned an absent property symbol in an object inventory.");
+    if (!visit(selectedPropertyInfo(checker, symbol, undefined))) return "stopped";
+  }
+  return "complete";
+}
+
+function selectedPropertyInfo(checker: Checker, symbol: Symbol, selected: Symbol): TypePropertyInfo | undefined;
+function selectedPropertyInfo(checker: Checker, symbol: Symbol, selected: undefined): TypePropertyHeader;
+function selectedPropertyInfo(checker: Checker, symbol: Symbol, selected: Symbol | undefined): TypePropertyHeader | TypePropertyInfo | undefined {
+  const propertyType = selected === undefined ? undefined : Checker_getTypeOfSymbol(checker, selected);
+  if (selected !== undefined && propertyType === undefined) return undefined;
+  const mapped = propertyType !== undefined && (symbol.CheckFlags & CheckFlagsMapped) !== 0;
   const mappedLinks = mapped
     ? LinkStore_TryGet(checker.mappedSymbolLinks, symbol) : undefined;
-  const links = mapped || symbol.ValueDeclaration === undefined
+  const links = propertyType !== undefined && (mapped || symbol.ValueDeclaration === undefined)
     ? LinkStore_TryGet(checker.valueSymbolLinks, symbol) : undefined;
   const containingType = mapped ? links?.containingType : undefined;
-  const bindingPattern = links?.resolvedType === propertyType ? links.bindingPattern : undefined;
+  const bindingPattern = propertyType !== undefined && links?.resolvedType === propertyType ? links.bindingPattern : undefined;
   const classPrototype = (symbol.Flags & SymbolFlagsPrototype) !== 0 && symbol.ValueDeclaration === undefined
     && symbol.Parent?.Exports?.get(symbol.Name) === symbol ? symbol.Parent.ValueDeclaration : undefined;
   const mappedDeclaration = containingType === undefined ? undefined : Type_AsMappedType(containingType)?.declaration;
   const intrinsicOrigin = symbol === checker.globalThisSymbol ? "global-this"
     : symbol === checker.undefinedSymbol ? "undefined" : undefined;
-  const typeSource = selected === symbol ? completedRequiredPropertySource(checker, symbol, propertyType) : undefined;
+  const typeSource = selected === symbol && propertyType !== undefined ? completedRequiredPropertySource(checker, symbol, propertyType) : undefined;
   return {
     symbol,
     rootSymbols: Object.freeze(Checker_GetRootSymbols(checker, symbol).filter((root): root is Symbol => root !== undefined)),
     name: SymbolName(symbol),
-    type: propertyType,
+    ...(propertyType === undefined ? {} : { type: propertyType }),
     optional: (symbol.Flags & SymbolFlagsOptional) !== 0,
     readonly: Checker_isReadonlySymbol(checker, symbol) === true,
     ...(typeSource === undefined ? {} : { typeSource }),

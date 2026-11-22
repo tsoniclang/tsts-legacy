@@ -176,6 +176,7 @@ export type {
   TypeIndexInfo,
   TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
+  TypePropertyHeader,
   TypePropertyInfo,
   TypeReferenceArgumentInfo,
   TypeSignatureParameterInfo,

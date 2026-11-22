@@ -1,5 +1,5 @@
 import type { GoPtr } from "../go/compat.js";
-import { readObjectPropertyInfo, readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
+import { readObjectPropertyInfo, readTypeIndexInfo, readTypePropertyInfo, walkObjectPropertyHeaders } from "./type-members.js";
 import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type-indexed-access.js";
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeKeyOfComponents, readTypeSubstitutionComponents } from "./type-dependent-operands.js";
@@ -141,17 +141,20 @@ export interface TypeMappedPropertyInfo {
   readonly declaration: GoPtr<Node>;
 }
 
-export interface TypePropertyInfo {
+export interface TypePropertyHeader {
   readonly symbol: Symbol;
   readonly rootSymbols: readonly Symbol[];
   readonly name: string;
-  readonly type: Type;
-  readonly typeSource?: Node;
   readonly optional: boolean;
   readonly readonly: boolean;
   readonly intrinsicOrigin?: "global-this" | "undefined";
-  readonly bindingPattern?: { readonly element: Node; readonly keyType: Type };
   readonly classPrototype?: Node;
+}
+
+export interface TypePropertyInfo extends TypePropertyHeader {
+  readonly type: Type;
+  readonly typeSource?: Node;
+  readonly bindingPattern?: { readonly element: Node; readonly keyType: Type };
   readonly mapped?: TypeMappedPropertyInfo;
 }
 
@@ -243,6 +246,8 @@ export interface TypeShapeQueries {
   readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
   readonly getTupleInfo: (type: GoPtr<Type>) => TypeTupleInfo | undefined;
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
+  readonly forEachObjectPropertyHeader: (type: GoPtr<Type>, admit: () => boolean,
+    visit: (header: TypePropertyHeader) => boolean) => "complete" | "stopped" | undefined;
   readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -270,6 +275,12 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
   if (program === undefined || defaultOptions.sourceFile === undefined) {
     throw new Error("Type-shape queries require one source file from the compiler program.");
   }
+  const withObject = <Value>(type: GoPtr<Type>, read: (checker: Checker, type: Type) => Value): Value | undefined => {
+    if (type === undefined || !hasFlags(type, TypeFlagsObject) || type.data.AsType() !== type) return undefined;
+    return withCheckerForType(program, type, defaultOptions, checker =>
+      checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program)
+        ? undefined : read(checker, type));
+  };
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getTypeFromTypeNode: (node) => resolveSourceTypeAnswer(program, defaultOptions,
@@ -416,12 +427,9 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       defaultOptions,
       (checker) => getTypeTupleInfo(checker, type),
     ),
-    getObjectPropertyInfo: (type, name) => {
-      if (type === undefined || !hasFlags(type, TypeFlagsObject) || type.data.AsType() !== type) return undefined;
-      return withCheckerForType(program, type, defaultOptions, checker =>
-        checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program)
-          ? undefined : readObjectPropertyInfo(checker, type, name));
-    },
+    getObjectPropertyInfo: (type, name) => withObject(type, (checker, object) => readObjectPropertyInfo(checker, object, name)),
+    forEachObjectPropertyHeader: (type, admit, visit) => withObject(type, (checker, object) =>
+      walkObjectPropertyHeaders(checker, object, admit, visit)),
     getPropertyInfos: (type) => withCheckerForType(
       program,
       type,
