@@ -8,7 +8,8 @@ import { CheckFlagsMapped } from "../internal/ast/checkflags.js";
 import { SymbolName } from "../internal/ast/symbol.js";
 import { SymbolFlagsOptional, SymbolFlagsPrototype } from "../internal/ast/symbolflags.js";
 import { Checker_GetRootSymbols } from "../internal/checker/services.js";
-import { Checker_getPropertyOfType, Checker_getTypeOfSymbol, Checker_isReadonlySymbol } from "../internal/checker/checker/symbols.js";
+import { Checker_isErrorType } from "../internal/checker/checker/diagnostics.js";
+import { Checker_getPropertyOfObjectType, Checker_getPropertyOfType, Checker_getTypeOfSymbol, Checker_isReadonlySymbol } from "../internal/checker/checker/symbols.js";
 import { completedRequiredPropertySource } from "../internal/checker/checker/source-type-answers.js";
 import { Type_AsMappedType } from "../internal/checker/types.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
@@ -17,12 +18,24 @@ import { typeIndexComponents } from "./type-index-components.js";
 
 export function readTypePropertyInfo(checker: Checker, type: GoPtr<Type>, symbol: GoPtr<Symbol>): TypePropertyInfo {
   if (symbol === undefined) throw new Error("The checker returned an absent property symbol for a source type.");
-  const name = SymbolName(symbol);
   const selected = Checker_getPropertyOfType(checker, type, symbol.Name);
-  const propertyType = selected === undefined ? undefined : Checker_getTypeOfSymbol(checker, selected);
-  if (propertyType === undefined) {
-    throw new Error(`The checker returned property '${name}' without its effective source type.`);
-  }
+  const property = selected === undefined ? undefined : selectedPropertyInfo(checker, symbol, selected);
+  if (property === undefined)
+    throw new Error(`The checker returned property '${SymbolName(symbol)}' without its effective source type.`);
+  return property;
+}
+
+export function readObjectPropertyInfo(checker: Checker, type: Type, name: string): TypePropertyInfo | null | undefined {
+  const symbol = Checker_getPropertyOfObjectType(checker, type, name);
+  if (symbol === undefined) return null;
+  const property = selectedPropertyInfo(checker, symbol, symbol);
+  if (property === undefined || property.type.checker !== checker || Checker_isErrorType(checker, property.type)) return undefined;
+  return Object.freeze(property);
+}
+
+function selectedPropertyInfo(checker: Checker, symbol: Symbol, selected: Symbol): TypePropertyInfo | undefined {
+  const propertyType = Checker_getTypeOfSymbol(checker, selected);
+  if (propertyType === undefined) return undefined;
   const mapped = (symbol.CheckFlags & CheckFlagsMapped) !== 0;
   const mappedLinks = mapped
     ? LinkStore_TryGet(checker.mappedSymbolLinks, symbol) : undefined;
@@ -39,7 +52,7 @@ export function readTypePropertyInfo(checker: Checker, type: GoPtr<Type>, symbol
   return {
     symbol,
     rootSymbols: Object.freeze(Checker_GetRootSymbols(checker, symbol).filter((root): root is Symbol => root !== undefined)),
-    name,
+    name: SymbolName(symbol),
     type: propertyType,
     optional: (symbol.Flags & SymbolFlagsOptional) !== 0,
     readonly: Checker_isReadonlySymbol(checker, symbol) === true,

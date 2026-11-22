@@ -1,5 +1,5 @@
 import type { GoPtr } from "../go/compat.js";
-import { readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
+import { readObjectPropertyInfo, readTypeIndexInfo, readTypePropertyInfo } from "./type-members.js";
 import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type-indexed-access.js";
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeKeyOfComponents, readTypeSubstitutionComponents } from "./type-dependent-operands.js";
@@ -242,6 +242,7 @@ export interface TypeShapeQueries {
   readonly getKeyOfComponents: (type: GoPtr<Type>) => TypeKeyOfComponents | undefined;
   readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
   readonly getTupleInfo: (type: GoPtr<Type>) => TypeTupleInfo | undefined;
+  readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
   readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -415,6 +416,12 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       defaultOptions,
       (checker) => getTypeTupleInfo(checker, type),
     ),
+    getObjectPropertyInfo: (type, name) => {
+      if (type === undefined || !hasFlags(type, TypeFlagsObject) || type.data.AsType() !== type) return undefined;
+      return withCheckerForType(program, type, defaultOptions, checker =>
+        checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program)
+          ? undefined : readObjectPropertyInfo(checker, type, name));
+    },
     getPropertyInfos: (type) => withCheckerForType(
       program,
       type,

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import { LinkStore_TryGet } from "../internal/core/linkstore.js";
+import { Checker_getPropertyOfType } from "../internal/checker/checker/symbols.js";
 
 test("intrinsic object identity remains exact across aliases and source query owners", () => {
   const declarations = `export type Broad = object; export type Alias = Broad;
@@ -83,5 +85,83 @@ test("global-scope object identity is the actual cached Type, not spelling or de
       for (const type of [ordinary, shadow, foreign, undefined])
         assert.equal(typeShape.isGlobalScopeObject(type), false);
     }
+  }
+});
+
+test("one named object property retains real native ownership without resolving unrelated values", () => {
+  for (const checkers of [1, 4]) {
+    const paths = Array.from({ length: 16 }, (_, index) => `/src/named-${index}.ts`);
+    const open = (metadata: boolean) => createCompilerSessionFromFiles({
+      currentDirectory: "/src",
+      files: {
+        "/src/core.d.ts": `${testCoreDeclarations}
+          interface Object { onlyApparent: boolean }
+          interface SelectedSymbol { ${metadata ? "readonly metadata: symbol;" : ""} optional?: string; }
+          declare var Symbol: SelectedSymbol;
+          declare var broken: MissingCheckedType;
+          declare var actualAny: any;
+          declare function untouched(): string;`,
+        ...Object.fromEntries(paths.map(path => [path, "export type Subject = typeof globalThis;"])),
+        "/src/shadow.ts": `declare const globalThis: { Symbol: { metadata: string }; [key: string]: unknown };
+          export type Subject = typeof globalThis;`,
+      },
+      compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022", checkers },
+    }).checkSource();
+    const read = (session: ReturnType<typeof open>, path: string) => {
+      const file = session.getSourceFile(path);
+      if (file === undefined) assert.fail(path);
+      const { ast, typeShape } = session.getSourceFileQueries(file);
+      const declaration = findNodes(file, ast.children, ast.is.IsTypeAliasDeclaration)[0];
+      const type = typeShape.getTypeFromTypeNode(ast.typeNode(declaration))?.type;
+      if (type === undefined || type.checker === undefined) assert.fail("actual source type and owner");
+      return { type, typeShape, checker: type.checker };
+    };
+    const checked = open(true);
+    const opposite = open(false);
+    assert.deepEqual(checked.diagnostics.map(diagnostic => diagnostic?.code), [2304]);
+    assert.deepEqual(opposite.diagnostics.map(diagnostic => diagnostic?.code), [2304]);
+    const sources = [...new Map(paths.map(path => {
+      const row = read(checked, path);
+      return [row.checker, row];
+    })).values()];
+    assert.equal(sources.length, checkers);
+    const oppositeScope = read(opposite, paths[0]!);
+    const shadow = read(checked, "/src/shadow.ts");
+    for (const { typeShape } of sources) {
+      for (const { type, checker } of sources) {
+        const untouched = checker.globalThisSymbol?.Exports.get("untouched");
+        if (untouched === undefined) assert.fail("actual unrelated global symbol");
+        assert.equal(LinkStore_TryGet(checker.valueSymbolLinks, untouched)?.resolvedType === undefined, true, "untouched before lookup");
+        const symbol = typeShape.getObjectPropertyInfo(type, "Symbol");
+        if (symbol == null) assert.fail("the actual global value");
+        assert.equal(symbol.symbol === checker.globalThisSymbol?.Exports.get("Symbol"), true);
+        assert.equal(symbol.type.checker === checker, true);
+        const selected = typeShape.getObjectPropertyInfo(symbol.type, "metadata");
+        if (selected == null) assert.fail("the actual nested value");
+        assert.equal(selected.type.checker === checker, true);
+        assert.equal(typeShape.isSymbolLike(selected.type), true);
+        assert.equal(selected.readonly, true);
+        assert.equal(selected.optional, false);
+        assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "metadata")?.symbol === selected.symbol, true);
+        assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "optional")?.optional, true);
+        assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "absent") === null, true, "real missing member");
+        assert.equal(typeShape.getObjectPropertyInfo(type, "broken") === undefined, true, "unavailable property value");
+        assert.equal(typeShape.isAny(typeShape.getObjectPropertyInfo(type, "actualAny")?.type), true, "genuine any is present");
+        assert.equal(typeShape.getObjectPropertyInfo(selected.type, "meta") === undefined, true, "nonobject");
+        assert.equal(typeShape.getObjectPropertyInfo({ ...type }, "Symbol") === undefined, true, "copied receiver");
+        assert.equal(LinkStore_TryGet(checker.valueSymbolLinks, untouched)?.resolvedType === undefined, true, "untouched after lookup");
+        assert.equal(Checker_getPropertyOfType(checker, symbol.type, "onlyApparent") !== undefined, true);
+        assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "onlyApparent") === null, true, "not an apparent Object property");
+      }
+      assert.equal(typeShape.getObjectPropertyInfo(oppositeScope.type, "Symbol") === undefined, true, "foreign receiver");
+      const ordinary = typeShape.getObjectPropertyInfo(shadow.type, "Symbol");
+      if (ordinary == null) assert.fail("the ordinary shadow retains its own selected object");
+      const shadowMetadata = typeShape.getObjectPropertyInfo(ordinary.type, "metadata");
+      assert.equal(typeShape.isStringLike(shadowMetadata?.type), true);
+      assert.equal(typeShape.getObjectPropertyInfo(shadow.type, "absent") === null, true, "not an index signature fallback");
+    }
+    const missingOwner = oppositeScope.typeShape.getObjectPropertyInfo(oppositeScope.type, "Symbol");
+    if (missingOwner == null) assert.fail("the missing metadata control retains Symbol");
+    assert.equal(oppositeScope.typeShape.getObjectPropertyInfo(missingOwner.type, "metadata") === null, true, "missing global metadata");
   }
 });
