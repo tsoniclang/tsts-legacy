@@ -21,9 +21,9 @@ import {
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
 import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_OfChecker, Program_SourceFiles } from "../internal/compiler/program.js";
-import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { withOwnedChecker, withCheckerById, withOwnedCheckerAcquisition } from "./checker-ownership.js";
+import { acquireLeasedChecker, withOwnedChecker, withCheckerById, withOwnedCheckerAcquisition } from "./checker-ownership.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import { createTypeNormalization } from "./type-normalization.js";
 import { completedAnnotationSource, originalSignatureDeclaration, signatureReturnAnswer } from "../internal/checker/checker/source-type-answers.js";
@@ -278,6 +278,8 @@ export interface TypeShapeQueries {
   readonly getSignatureParameterInfos: (
     signature: GoPtr<Signature>,
   ) => readonly TypeSignatureParameterInfo[];
+  readonly acquireSignatureParameters: <Stop extends object>(signature: GoPtr<Signature>,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<readonly TypeSignatureParameterInfo[], Stop>;
   readonly getSignatureThisParameterInfo: (
     signature: GoPtr<Signature>,
   ) => TypeSignatureThisParameterInfo | undefined;
@@ -479,6 +481,10 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       defaultOptions,
       (checker) => getTypeSignatureParameterInfos(checker, signature),
     ) ?? [],
+    acquireSignatureParameters: (signature, admit) => signature === undefined ? { kind: "unavailable" } :
+      withCheckerById(program, defaultOptions.sourceFile, signature.checkerId, defaultOptions.context ?? Background(), checker =>
+        acquireLeasedChecker(checker, WithCheckerLifetime(defaultOptions.context ?? Background(), CheckerLifetimeAPI), admit,
+          () => getTypeSignatureParameterInfos(checker, signature))) ?? { kind: "unavailable" },
     getSignatureThisParameterInfo: (signature) => withCheckerForSignature(
       program,
       signature,
@@ -630,14 +636,20 @@ function getTypeTupleInfo(
   if (target === undefined) return undefined;
   const elementTypes = Checker_GetTypeArguments(checker, type);
   const elementInfos = target.elementInfos ?? [];
-  if (elementTypes.length !== elementInfos.length ||
-    elementTypes.some((element) => element === undefined)) {
+  if (elementTypes.length !== elementInfos.length) {
     throw new Error(
       "The checker returned tuple element types without matching tuple element evidence.",
     );
   }
-  const elements = Object.freeze(elementTypes.map((element, index) => {
-    const info = elementInfos[index]!;
+  admitNativeChecker(checker, "retained", 2);
+  const elements: TypeTupleElementInfo[] = [];
+  for (let index = 0; index < elementTypes.length; index += 1) {
+    admitNativeChecker(checker, "work");
+    const element = elementTypes[index];
+    const info = elementInfos[index];
+    if (element === undefined || info === undefined) {
+      throw new Error("The checker returned tuple element types without matching tuple element evidence.");
+    }
     const elementKind = (info.flags & ElementFlagsVariadic) !== 0
       ? "variadic"
       : (info.flags & ElementFlagsRest) !== 0
@@ -645,15 +657,16 @@ function getTypeTupleInfo(
         : (info.flags & ElementFlagsOptional) !== 0
           ? "optional"
           : "required";
-    return Object.freeze({
-      type: element!,
+    admitNativeChecker(checker, "retained", 2);
+    elements.push(Object.freeze({
+      type: element,
       elementKind,
       ...(info.labeledDeclaration === undefined
         ? {}
         : { declaration: info.labeledDeclaration }),
-    });
-  }));
-  return { readonly: target.readonly, elements };
+    }));
+  }
+  return { readonly: target.readonly, elements: Object.freeze(elements) };
 }
 
 function getTypeSignatureInfo(checker: GoPtr<Checker>, signature: Signature, admits?: CheckerDiagnosticMembership): OwnedSignatureInfo {
@@ -675,21 +688,20 @@ function getTypeSignatureParameterInfos(
   if (checker === undefined || signature === undefined) {
     return [];
   }
+  admitNativeChecker(checker, "work");
   const sourceParameters = signature.parameters ?? [];
-  const expandedGroups = Checker_GetExpandedParameters(
-    checker,
-    signature,
-    true,
-  );
-  if (expandedGroups.length !== 1) {
-    throw new Error(
-      "The checker returned more than one effective parameter group while union expansion was disabled.",
-    );
-  }
-  const effectiveParameters = expandedGroups[0] ?? [];
   const restIndex = signatureHasRestParameter(signature)
     ? sourceParameters.length - 1
     : -1;
+  let effectiveParameters: readonly GoPtr<Symbol>[] = sourceParameters;
+  if (restIndex >= 0) {
+    const expandedGroups = Checker_GetExpandedParameters(checker, signature, true);
+    if (expandedGroups.length !== 1 || expandedGroups[0] === undefined) {
+      throw new Error("The checker must return one effective parameter group when union expansion is disabled.");
+    }
+    effectiveParameters = expandedGroups[0];
+  }
+  if (restIndex >= 0) admitNativeChecker(checker, "work");
   const restSymbol = restIndex < 0 ? undefined : sourceParameters[restIndex];
   const restType = restSymbol === undefined
     ? undefined
@@ -699,7 +711,11 @@ function getTypeSignatureParameterInfos(
     effectiveParameters.length === restIndex + tupleElements.length;
   const minimumArgumentCount = Checker_getMinArgumentCount(checker, signature);
   const owner = originalSignatureDeclaration(checker, signature);
-  return Object.freeze(effectiveParameters.map((parameter, index) => {
+  admitNativeChecker(checker, "retained");
+  const rows: TypeSignatureParameterInfo[] = [];
+  for (let index = 0; index < effectiveParameters.length; index += 1) {
+    admitNativeChecker(checker, "work");
+    const parameter = effectiveParameters[index];
     if (parameter === undefined) {
       throw new Error(
         "The checker returned an absent effective signature parameter.",
@@ -738,15 +754,17 @@ function getTypeSignatureParameterInfos(
     const typeSource = owner !== undefined && declaration?.Parent === owner && parameterKind === "required"
       && !tupleExpanded && !unexpandedRest && signature.parameters[index] === parameter && Node_Symbol(declaration) === parameter
       ? completedAnnotationSource(checker, Node_Type(declaration), type) : undefined;
-    return Object.freeze({
+    admitNativeChecker(checker, "retained", 2);
+    rows.push(Object.freeze({
       sourceSymbol,
       type,
       parameterKind,
       acceptsOmission: index >= minimumArgumentCount,
       ...(declaration === undefined ? {} : { declaration }),
       ...(typeSource === undefined ? {} : { typeSource }),
-    });
-  }));
+    }));
+  }
+  return Object.freeze(rows);
 }
 
 function getTypeSignatureThisParameterInfo(

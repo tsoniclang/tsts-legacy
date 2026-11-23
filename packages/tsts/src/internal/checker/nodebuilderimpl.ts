@@ -1,6 +1,7 @@
 import type { bool, int } from "../../go/scalars.js";
 import type { GoComparable, GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
+import { admitNativeChecker, markNativeCheckerProvisional } from "./resource-admission.js";
 import type { ModifierList, Node, NodeFactoryCoercible, NodeList, NodeVisitor } from "../ast/spine.js";
 import type { Identifier, IndexedAccessTypeNode } from "../ast/generated/data.js";
 import type { SourceFile } from "../ast/ast.js";
@@ -4228,6 +4229,7 @@ export function NodeBuilderImpl_signatureToSignatureDeclarationHelper(receiver: 
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/nodebuilderimpl.go::method::Checker.getExpandedParameters","kind":"method","status":"implemented","sigHash":"445d61ebc8f61cf773eb825ce8a50af6065b9a63eb2f819395c68bd78621cfd3","bodyHash":"5015e85ef6bae014f29bcd1786dc1eef5e438d4c2b01f80ee713327449c6dd8f"}
+ * @tsgo-override {"category":"runtime-performance","allow":["body"],"reason":"Admit the reached effective formal ordinals, native work and expansion rows before consuming or retaining them."}
  *
  * Go source:
  * func (c *Checker) getExpandedParameters(sig *Signature, skipUnionExpanding bool) [][]*ast.Symbol {
@@ -4319,39 +4321,59 @@ export function NodeBuilderImpl_signatureToSignatureDeclarationHelper(receiver: 
  * }
  */
 export function Checker_getExpandedParameters(receiver: GoPtr<Checker>, sig: GoPtr<Signature>, skipUnionExpanding: bool): GoSlice<GoSlice<GoPtr<Symbol>>> {
+  admitNativeChecker(receiver, "work");
   if (signatureHasRestParameter(sig)) {
     const restIndex = sig!.parameters.length - 1;
+    admitNativeChecker(receiver, "work");
     const restSymbol = sig!.parameters[restIndex];
     const restType = Checker_getTypeOfSymbol(receiver, restSymbol);
     const getUniqAssociatedNamesFromTupleType = (t: GoPtr<Type>, tupleRestSymbol: GoPtr<Symbol>): GoSlice<string> => {
-      const names = Type_Target(t) !== undefined
-        ? Type_AsTupleType(Type_Target(t))!.elementInfos.map((info, index) => Checker_getTupleElementLabel(receiver, info, tupleRestSymbol, index))
-        : [];
+      admitNativeChecker(receiver, "retained");
+      const names: string[] = [];
+      const target = Type_Target(t);
+      if (target !== undefined) {
+        const infos = Type_AsTupleType(target)!.elementInfos;
+        for (let index = 0; index < infos.length; index += 1) {
+          admitNativeChecker(receiver, "work");
+          const label = Checker_getTupleElementLabel(receiver, infos[index]!, tupleRestSymbol, index);
+          admitNativeChecker(receiver, "retained");
+          names.push(label);
+        }
+      }
       if (names.length > 0) {
+        admitNativeChecker(receiver, "retained", 2);
         const duplicates: GoSlice<int> = [];
         const uniqueNames = new globalThis.Map<string, bool>();
         for (let i = 0; i < names.length; i++) {
+          admitNativeChecker(receiver, "work");
+          admitNativeChecker(receiver, "retained");
           if (uniqueNames.has(names[i]!)) {
             duplicates.push(i);
           } else {
             uniqueNames.set(names[i]!, true);
           }
         }
+        admitNativeChecker(receiver, "retained");
         const counters = new globalThis.Map<string, int>();
         for (const i of duplicates) {
+          admitNativeChecker(receiver, "work");
           let counter = counters.get(names[i]!) ?? 1;
           let name = "";
           while (true) {
+            admitNativeChecker(receiver, "work");
             name = `${names[i]!}_${counter}`;
             if (uniqueNames.has(name)) {
               counter++;
               continue;
             }
+            admitNativeChecker(receiver, "retained");
             uniqueNames.set(name, true);
             break;
           }
           names[i] = name;
-          counters.set(names[i]!, counter + 1);
+          const key = names[i]!;
+          if (!counters.has(key)) admitNativeChecker(receiver, "retained");
+          counters.set(key, counter + 1);
         }
       }
       return names;
@@ -4360,7 +4382,11 @@ export function Checker_getExpandedParameters(receiver: GoPtr<Checker>, sig: GoP
       const elementTypes = Checker_getTypeArguments(receiver, tupleRestType);
       const associatedNames = getUniqAssociatedNamesFromTupleType(tupleRestType, tupleRestSymbol);
       const targetTuple = Type_AsTupleType(Type_Target(tupleRestType))!;
-      const restParams = elementTypes.map((type_, index) => {
+      admitNativeChecker(receiver, "retained");
+      const restParams: GoPtr<Symbol>[] = [];
+      for (let index = 0; index < elementTypes.length; index += 1) {
+        admitNativeChecker(receiver, "work");
+        const type_ = elementTypes[index];
         const name = associatedNames[index]!;
         const flags = targetTuple.elementInfos[index]!.flags;
         let checkFlags: CheckFlags = CheckFlagsNone;
@@ -4369,20 +4395,36 @@ export function Checker_getExpandedParameters(receiver: GoPtr<Checker>, sig: GoP
         } else if ((flags & ElementFlagsOptional) !== 0) {
           checkFlags = CheckFlagsOptionalParameter;
         }
+        admitNativeChecker(receiver, "retained", 3);
+        markNativeCheckerProvisional(receiver);
         const symbol_ = Checker_newSymbolEx(receiver, SymbolFlagsFunctionScopedVariable, name, checkFlags);
         const links = LinkStore_Get(receiver!.valueSymbolLinks as unknown as LinkStore<GoPtr<Symbol>, ValueSymbolLinks>, symbol_);
         links!.resolvedType = (flags & ElementFlagsRest) !== 0 ? Checker_createArrayType(receiver, type_) : type_;
-        return symbol_;
-      });
-      return [...sig!.parameters.slice(0, tupleRestIndex), ...restParams];
+        restParams.push(symbol_);
+      }
+      admitNativeChecker(receiver, "retained");
+      const expanded: GoPtr<Symbol>[] = [];
+      for (let index = 0; index < tupleRestIndex; index += 1) {
+        admitNativeChecker(receiver, "work");
+        admitNativeChecker(receiver, "retained");
+        expanded.push(sig!.parameters[index]);
+      }
+      for (let index = 0; index < restParams.length; index += 1) {
+        admitNativeChecker(receiver, "work");
+        admitNativeChecker(receiver, "retained");
+        expanded.push(restParams[index]);
+      }
+      return expanded;
     };
     if (isTupleType(restType)) {
+      admitNativeChecker(receiver, "retained");
       return [expandSignatureParametersWithTupleMembers(restType, restIndex, restSymbol)];
     }
     if (!skipUnionExpanding && (restType!.flags & TypeFlagsUnion) !== 0 && Every(Type_Types(restType), isTupleType)) {
       return Type_Types(restType).map((type_) => expandSignatureParametersWithTupleMembers(type_, restIndex, restSymbol));
     }
   }
+  admitNativeChecker(receiver, "retained");
   return [sig!.parameters];
 }
 

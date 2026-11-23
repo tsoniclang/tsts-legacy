@@ -533,6 +533,48 @@ test("type-shape signature evidence preserves unexpanded array-rest ownership", 
   }]);
 });
 
+test("bounded signature acquisition owns every actual expanded formal and the original refusal", () => {
+  const text = "declare function read(prefix: string, ...rest: [value: boolean, count?: number]): boolean;";
+  const open = () => {
+    const source = checkedQueries(text);
+    const [declaration] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsFunctionDeclaration);
+    const signature = source.checker.getSignatureFromDeclaration(declaration);
+    assert.ok(signature);
+    return { source, signature };
+  };
+  const actual = open();
+  const charges: [cost: "work" | "retained", units: number][] = [];
+  const result = actual.source.typeShape.acquireSignatureParameters(actual.signature, (cost, units) => {
+    charges.push([cost, units]);
+    return null;
+  });
+  assert.equal(result.kind, "complete");
+  if (result.kind !== "complete") assert.fail("The exact effective inventory was not acquired.");
+  assert.equal(Object.isFrozen(result.value), true);
+  assert.deepEqual(result.value.map(row => [actual.source.ast.text(actual.source.ast.name(row.declaration)),
+    row.parameterKind, row.acceptsOmission]), [
+    ["prefix", "required", false], ["value", "required", false], ["count", "optional", true],
+  ]);
+  assert.equal(result.value[0]?.sourceSymbol === actual.signature.parameters[0], true);
+  assert.equal(result.value[1]?.sourceSymbol === actual.signature.parameters[1], true);
+  assert.equal(result.value[2]?.sourceSymbol === actual.signature.parameters[1], true);
+  const original = { reason: "original acquisition refusal" };
+  for (const [cut, expected] of charges.entries()) {
+    const trial = open();
+    let reached = 0;
+    const refused = trial.source.typeShape.acquireSignatureParameters(trial.signature, (cost, units) => {
+      if (reached++ !== cut) return null;
+      assert.deepEqual([cost, units], expected, `cut ${cut}`);
+      return original;
+    });
+    assert.equal(reached, cut + 1);
+    assert.equal(refused.kind === "refused" && refused.stop === original, true);
+  }
+  const foreign = open();
+  assert.equal(foreign.source.typeShape.acquireSignatureParameters(actual.signature,
+    () => assert.fail("a foreign signature cannot reach native admission")).kind, "unavailable");
+});
+
 test("type-shape signature evidence preserves checker-selected optionality", () => {
   const source = checkedQueries(`
     type Optional = (required: number, optional?: string) => void;
