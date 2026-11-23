@@ -2,6 +2,9 @@ import { hasExactProviderConstructorDeclarations } from "../../../extensions/pro
 import { LiteralConstructionOwner } from "./literal-creation.js";
 import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import { retainErrorOperandSource } from "./source-type-answers.js";
+import { retainFlowExpressionType } from "./types.js";
+import { admitNativeChecker, markNativeCheckerProvisional } from "../resource-admission.js";
+import { IsAssignmentOperator } from "../../ast/generated/predicates.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice, GoMap } from "../../../go/compat.js";
 import type { Context } from "../../../go/context.js";
@@ -1421,6 +1424,7 @@ export function Checker_checkExpression(receiver: GoPtr<Checker>, node: GoPtr<No
  * }
  */
 export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  markNativeCheckerProvisional(receiver);
   const saveCurrentNode = receiver!.currentNode;
   receiver!.currentNode = node;
   receiver!.instantiationCount = 0;
@@ -2861,14 +2865,18 @@ export function Checker_checkBinaryExpression(receiver: GoPtr<Checker>, node: Go
 }
 
 function Checker_checkNonLogicalBinaryExpressionIterative(receiver: GoPtr<Checker>, node: GoPtr<Node>, checkMode: CheckMode, constructionOwner?: LiteralConstructionOwner): GoPtr<Type> {
+  admitNativeChecker(receiver, "retained");
   const binaryChain: GoPtr<Node>[] = [];
   let leftEdge: GoPtr<Node> = node;
   while (isIterativelyCheckableNonLogicalBinaryExpression(leftEdge)) {
+    admitNativeChecker(receiver, "work");
+    admitNativeChecker(receiver, "retained");
     binaryChain.push(leftEdge);
     leftEdge = AsBinaryExpression(leftEdge)!.Left;
   }
   let leftType = Checker_checkExpressionEx(receiver, leftEdge, checkMode, constructionOwner);
   for (let index = binaryChain.length - 1; index >= 0; index--) {
+    admitNativeChecker(receiver, "work");
     const current = binaryChain[index];
     const binary = AsBinaryExpression(current);
     const rightType = Checker_checkExpressionEx(receiver, binary!.Right, checkMode, constructionOwner);
@@ -2884,6 +2892,11 @@ function Checker_checkNonLogicalBinaryExpressionIterative(receiver: GoPtr<Checke
       Checker_checkConstEnumAccess(receiver, current, leftType);
     }
     receiver!.currentNode = saveCurrentNode;
+    if (receiver !== undefined && checkMode === CheckModeTypeOnly && constructionOwner === undefined
+      && receiver.flowLoopStack.length === 0 && receiver.contextualInfos.length === 0
+      && !IsAssignmentOperator(binary!.OperatorToken!.Kind) && binary!.OperatorToken!.Kind !== KindCommaToken
+      && (leftType === receiver.numberType || leftType === receiver.bigintType || leftType === receiver.stringType || leftType === receiver.booleanType))
+      retainFlowExpressionType(receiver, current, leftType);
   }
   return leftType;
 }

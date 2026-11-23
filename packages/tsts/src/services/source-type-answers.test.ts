@@ -16,6 +16,93 @@ import { Node_Arguments, Node_Expression, Node_Type, SourceFile_Text } from "../
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Diagnostic_End, Diagnostic_Pos, type Diagnostic } from "../internal/ast/diagnostic.js";
 
+test("selected signatures retain the actual passive mapping of a direct parameter return", () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/mapped-return", includeBundledLibraries: false,
+    files: { "/mapped-return/core.d.ts": testCoreDeclarations,
+      "/mapped-return/source.ts": `interface Template<Value> { at(): Value; }
+        interface Holder<Left, Right> { left: Template<Left>; right: Template<Right>; }
+        interface Holder<Left, Right> { }` }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const file = checked.getSourceFile("/mapped-return/source.ts");
+  assert.ok(file);
+  const { ast, checker } = checked.getSourceFileQueries(file);
+  const actualMethod = findNodes(file, ast.children, node => ast.kindName(node) === "KindMethodSignature")[0];
+  assert.ok(actualMethod);
+  const annotation = Node_Type(actualMethod);
+  const formals = findNodes(file, ast.children, node => ast.kindName(node) === "KindPropertySignature");
+  assert.equal(formals.length, 2);
+  const originals = checker.getTypeFromTypeNode(annotation);
+  const returned = [];
+  for (const formal of formals) {
+    const type = checker.getTypeFromTypeNode(Node_Type(formal))?.type;
+    const method = checker.getPropertyOfType(type, "at");
+    const signatures = checker.getCallSignaturesOfType(checker.getTypeOfSymbol(method));
+    assert.equal(signatures.length, 1);
+    const signature = signatures[0];
+    const result = checker.acquireSourceType({ kind: "signature-return", signature }, () => null);
+    if (result.kind !== "complete") throw new Error("The selected method has its actual native return.");
+    const { type: selected, projectedReturn } = result.value;
+    assert.ok(projectedReturn);
+    assert.equal(projectedReturn.declaration === actualMethod && projectedReturn.annotation === annotation, true);
+    assert.equal(projectedReturn.original === originals?.type && projectedReturn.selected === selected && selected !== originals?.type, true);
+    assert.equal(result.value.typeSource, undefined, "the original annotation is not the selected parameter's source");
+    assert.equal(checker.getSymbolDeclarations(checker.getTypeSymbol(selected)).length, 2);
+    returned.push(selected);
+  }
+  assert.equal(returned[0] !== returned[1], true, "equal method syntax is not a single selected binder");
+});
+
+test("paid source typing retains genuine primitive binary results in their owning checker and reuses them linearly", () => {
+  const create = (terms: number) => {
+    const source = "export function sum(value: number): number { return " + Array.from({ length: terms }, () => "value").join(" + ") + "; }";
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/binary-answers", includeBundledLibraries: false,
+      files: { "/binary-answers/core.d.ts": testCoreDeclarations, "/binary-answers/main.ts": source },
+      compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+    const checked = session.checkSource();
+    assert.equal(checked.diagnostics.length, 0);
+    const file = checked.getSourceFile("/binary-answers/main.ts");
+    assert.ok(file);
+    const { ast, checker } = checked.getSourceFileQueries(file);
+    const nodes = findNodes(file, ast.children, ast.is.IsBinaryExpression);
+    assert.equal(nodes.length, terms - 1);
+    return { checker, nodes, session };
+  };
+  for (const size of [8, 32, 128]) {
+    const { checker, nodes } = create(size);
+    let work = 0;
+    let retained = 0;
+    const acquire = (node: typeof nodes[number]) => checker.acquireSourceType({ kind: "expression", node }, (axis, units) => {
+      if (axis === "work") work += units;
+      else retained += units;
+      return null;
+    });
+    const root = nodes[0];
+    const first = acquire(root);
+    assert.equal(first.kind, "complete");
+    assert.equal(first.kind === "complete" && first.value.causes.length === 0, true);
+    assert.equal(retained >= nodes.length - 1, true);
+    const beforeChildren = work;
+    const beforeRetained = retained;
+    for (const child of nodes.slice(1)) {
+      const answer = acquire(child);
+      assert.equal(answer.kind === "complete" && first.kind === "complete" && answer.value.type === first.value.type, true);
+    }
+    assert.equal(work - beforeChildren, 3 * (nodes.length - 1));
+    assert.equal(retained, beforeRetained);
+    assert.equal(work < size * 12, true);
+  }
+  const stopped = create(8);
+  const original = { limit: "binary expression native admission" };
+  const early = stopped.checker.acquireSourceType({ kind: "expression", node: stopped.nodes[0] }, () => original);
+  assert.equal(early.kind === "refused" && early.stop === original, true);
+  const late = stopped.checker.acquireSourceType({ kind: "expression", node: stopped.nodes[0] }, axis => axis === "retained" ? original : null);
+  assert.equal(late.kind === "refused" && late.stop === original, true);
+  assert.equal(stopped.session.program?.compilerCheckerPool?.checkers.every(checker => checker?.wasCanceled === true), true);
+  assert.deepEqual(stopped.checker.acquireSourceType({ kind: "expression", node: stopped.nodes[0] }, () => assert.fail("terminal checker reached a paid getter")),
+    { kind: "unavailable" });
+});
+
 for (const checkers of [1, 4]) test(`completed type answers preserve their exact authored source with ${checkers} checkers`, () => {
   const files = {
     "/answers/core.d.ts": testCoreDeclarations,

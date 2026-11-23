@@ -2,15 +2,17 @@ import type { Node } from "../internal/ast/spine.js";
 import type { SourceFile } from "../internal/ast/ast.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import { GetSourceFileOfNode } from "../internal/ast/utilities.js";
+import { Node_Type } from "../internal/ast/ast.js";
 import { type Program } from "../internal/compiler/program.js";
 import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { Background, type Context } from "../go/context.js";
 import { Checker_GetReturnTypeOfSignature, Checker_GetTypeFromTypeNode } from "../internal/checker/exports.js";
 import { Checker_getContextualType, Checker_GetTypeAtLocation } from "../internal/checker/checker/types.js";
 import type { Checker } from "../internal/checker/checker/state.js";
-import { ContextFlagsNone, type ContextFlags, type Signature } from "../internal/checker/types.js";
+import { ContextFlagsNone, TypeFlagsTypeParameter, type ContextFlags, type Signature, type Type } from "../internal/checker/types.js";
+import { TypeMapper_Kind, TypeMapper_Map, TypeMapperKindArray, TypeMapperKindSimple } from "../internal/checker/mapper.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
-import { borrowedSourceTypeAnswer, type CheckerDiagnosticMembership, type ResolvedSourceTypeInfo,
+import { borrowedSourceTypeAnswer, completedAnnotationSource, originalSignatureDeclaration, type CheckerDiagnosticMembership, type ResolvedSourceTypeInfo,
   signatureReturnAnswer, sourceTypeAnswer, type SourceTypeAnswer, type SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
 import { acquireLeasedChecker, withCheckerById, withSourceFileChecker } from "./checker-ownership.js";
 
@@ -32,12 +34,34 @@ export function admitSourceTypeAnswer(answer: SourceTypeAnswer, admits: CheckerD
   return causes.length === answer.causes.length ? answer : { ...answer, causes };
 }
 
+function selectedSignatureReturn(checker: Checker, signature: Signature | undefined, type: Type | undefined,
+  admits: CheckerDiagnosticMembership | undefined): SourceTypeAnswer | undefined {
+  const answer = signatureReturnAnswer(checker, signature, type, admits);
+  if (answer === undefined || answer.causes.length !== 0 || signature === undefined || type === undefined
+    || type.checker !== checker || (type.flags & TypeFlagsTypeParameter) === 0) return answer;
+  admitNativeChecker(checker, "work");
+  const target = signature.target;
+  const mapper = signature.mapper;
+  if (signature.composite !== undefined || target === undefined || mapper === undefined || target.checkerId !== checker.id
+    || signature.resolvedReturnType !== type) return answer;
+  const original = target.resolvedReturnType;
+  if (original === undefined || original === type || original.checker !== checker || (original.flags & TypeFlagsTypeParameter) === 0) return answer;
+  const kind = TypeMapper_Kind(mapper);
+  if (kind !== TypeMapperKindArray && kind !== TypeMapperKindSimple || TypeMapper_Map(mapper, original) !== type) return answer;
+  const declaration = originalSignatureDeclaration(checker, target);
+  const annotation = Node_Type(declaration);
+  if (declaration === undefined || signature.declaration !== declaration || annotation === undefined
+    || completedAnnotationSource(checker, annotation, original) !== annotation) return answer;
+  admitNativeChecker(checker, "retained", 2);
+  return { ...answer, projectedReturn: { declaration, annotation, original, selected: type } };
+}
+
 function readHead(checker: Checker, request: SourceTypeRequest, admits: CheckerDiagnosticMembership | undefined): SourceTypeAnswer | undefined {
   admitNativeChecker(checker, "work");
   switch (request.kind) {
     case "expression": return sourceTypeAnswer(checker, request.node, Checker_GetTypeAtLocation(checker, request.node), admits);
     case "annotation": return sourceTypeAnswer(checker, request.node, Checker_GetTypeFromTypeNode(checker, request.node), admits);
-    case "signature-return": return signatureReturnAnswer(checker, request.signature, Checker_GetReturnTypeOfSignature(checker, request.signature), admits);
+    case "signature-return": return selectedSignatureReturn(checker, request.signature, Checker_GetReturnTypeOfSignature(checker, request.signature), admits);
     case "contextual": {
       const output: SourceTypeAnswerOutput = { value: undefined };
       const type = Checker_getContextualType(checker, request.node, request.flags ?? ContextFlagsNone, output);
