@@ -589,8 +589,23 @@ export function Program_as_checker_Host(receiver: GoPtr<Program>): CheckerHost {
   };
 }
 
+const checkerProgramOwner = Symbol("checker program owner");
+
+interface CompilerCheckerProgram extends Program_e32ad451 {
+  readonly [checkerProgramOwner]: GoPtr<Program>;
+}
+
+function isCompilerCheckerProgram(adapter: Program_e32ad451): adapter is CompilerCheckerProgram {
+  return checkerProgramOwner in adapter;
+}
+
+export function Program_OfChecker(checker: Checker): GoPtr<Program> {
+  return isCompilerCheckerProgram(checker.program) ? checker.program[checkerProgramOwner] : undefined;
+}
+
 export function Program_as_checker_Program(receiver: GoPtr<Program>): Program_e32ad451 {
-  const adapter: Program_e32ad451 = {
+  const adapter: CompilerCheckerProgram = {
+    [checkerProgramOwner]: receiver,
     __tsgoEmbedded0: Program_as_checker_Host(receiver),
     GetSymlinkCache: (): GoPtr<KnownSymlinks> => Program_GetSymlinkCache(receiver),
     CommonSourceDirectory: (): string => Program_CommonSourceDirectory(receiver),

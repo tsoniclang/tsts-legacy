@@ -1,11 +1,15 @@
-import { propertyRows } from "./type-checker-test-support.js";
+import { createProgram, findNodesByKind, propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
 import type { Node } from "../index.js";
 import { Background } from "../go/context.js";
 import { Program_GetTypeChecker } from "../internal/compiler/program.js";
-import { Node_Text } from "../internal/ast/ast.js";
+import { Node_Text, Node_Type } from "../internal/ast/ast.js";
+import { KindTypeAliasDeclaration } from "../internal/ast/generated/kinds.js";
+import { attachExtensionHost, attachExtensionHostToProgram } from "../extensions/host.js";
+import { withOwnedChecker } from "./checker-ownership.js";
+import { createTypeCheckerQueries } from "./type-checker.js";
 
 function open(checkers: number) {
   const session = createCompilerSessionFromFiles({ currentDirectory: "/case", rootFiles: ["/case/first.mts", "/case/second.mts"],
@@ -101,4 +105,56 @@ for (const checkers of [1, 4]) test(`type consumers admit actual program pool me
     "a foreign alias application remains unavailable without actual Program ownership");
   assert.equal(reader.typeShape.getInstantiatedBaseTypes(undefined) === undefined && reader.checker.getAwaitedType(undefined) === undefined, true,
     "absence does not acquire an owner");
+});
+
+test("shared-host queries acquire their actual originating program lease", () => {
+  const { program: requestProgram, index: requestSource } = createProgram("type Value = { value: number };");
+  const { program: ownerProgram, index: ownerSource } = createProgram("type Value = { value: string };");
+  assert.ok(requestProgram !== undefined && ownerProgram !== undefined);
+  attachExtensionHost(requestProgram);
+  attachExtensionHostToProgram(requestProgram, ownerProgram, { bindCompilerProgram: false });
+  const [requestChecker, releaseRequest] = Program_GetTypeChecker(requestProgram, Background());
+  releaseRequest();
+  const alias = findNodesByKind(ownerSource, KindTypeAliasDeclaration)[0];
+  const owner = createTypeCheckerQueries(ownerProgram, { sourceFile: ownerSource })
+    .getTypeFromTypeNode(Node_Type(alias))?.type.checker;
+  const requestPool = requestProgram.checkerPool;
+  const ownerPool = ownerProgram.checkerPool;
+  assert.ok(owner !== undefined && requestChecker !== undefined && requestPool !== undefined && ownerPool !== undefined);
+  const trace: string[] = [];
+  const requestById = requestPool.GetCheckerById;
+  const ownerById = ownerPool.GetCheckerById;
+  requestPool.GetCheckerById = (context, id) => {
+    trace.push("request pool");
+    return requestById(context, id);
+  };
+  let crossed = false;
+  ownerPool.GetCheckerById = (context, id) => {
+    trace.push("owner pool");
+    const [selected, release] = ownerById(context, id);
+    return [crossed ? requestChecker : selected, () => { trace.push("owner release"); release(); }];
+  };
+  const read = () => withOwnedChecker(requestProgram, requestSource, owner, Background(), current => {
+    trace.push("read");
+    return current === owner;
+  });
+  try {
+    assert.equal(withOwnedChecker(requestProgram, ownerSource, owner, Background(), () => false), undefined);
+    assert.deepEqual(trace, [], "the requester must authenticate the exact source before acquiring either pool");
+    assert.equal(read(), true);
+    assert.deepEqual(trace, ["owner pool", "read", "owner release"]);
+    trace.length = 0;
+    crossed = true;
+    assert.equal(read(), undefined, "a crossed exact handle is not authorized by the shared host");
+    assert.deepEqual(trace, ["owner pool", "owner release"]);
+    trace.length = 0;
+    crossed = false;
+    const failure = new Error("real owner operation failure");
+    assert.throws(() => withOwnedChecker(requestProgram, requestSource, owner, Background(), () => { throw failure; }),
+      error => error === failure);
+    assert.deepEqual(trace, ["owner pool", "owner release"]);
+  } finally {
+    requestPool.GetCheckerById = requestById;
+    ownerPool.GetCheckerById = ownerById;
+  }
 });
