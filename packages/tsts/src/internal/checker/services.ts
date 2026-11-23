@@ -1,4 +1,5 @@
 import type { bool, int } from "../../go/scalars.js";
+import { admitNativeChecker } from "./resource-admission.js";
 import type { GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import { Index } from "../../go/strings.js";
 import type { Node, SourceFile } from "../ast/ast.js";
@@ -954,11 +955,23 @@ export function Checker_GetRootSymbols(receiver: GoPtr<Checker>, symbol_: GoPtr<
   if (roots.length === 0) {
     return [symbol_];
   }
-  let result: GoSlice<GoPtr<Symbol>> = [];
-  for (const root of roots) {
-    result = result.concat(Checker_GetRootSymbols(receiver, root));
-  }
+  admitNativeChecker(receiver, "retained");
+  const result: GoSlice<GoPtr<Symbol>> = [];
+  appendRootSymbols(receiver, roots, result);
   return result;
+}
+
+function appendRootSymbols(receiver: GoPtr<Checker>, roots: GoSlice<GoPtr<Symbol>>, result: GoSlice<GoPtr<Symbol>>): void {
+  for (let index = 0; index < roots.length; index += 1) {
+    admitNativeChecker(receiver, "work");
+    const root = roots[index];
+    const nested = Checker_getImmediateRootSymbols(receiver, root);
+    if (nested.length !== 0) appendRootSymbols(receiver, nested, result);
+    else {
+      admitNativeChecker(receiver, "retained");
+      result.push(root);
+    }
+  }
 }
 
 /**
@@ -1016,11 +1029,18 @@ export function Checker_GetMappedTypeSymbolOfProperty(receiver: GoPtr<Checker>, 
  */
 export function Checker_getImmediateRootSymbols(receiver: GoPtr<Checker>, symbol_: GoPtr<Symbol>): GoSlice<GoPtr<Symbol>> {
   if ((symbol_!.CheckFlags & CheckFlagsSynthetic) !== 0) {
-    return MapNonNil(
-      Type_Types((LinkStore_Get<GoPtr<Symbol>, ValueSymbolLinks>(receiver!.valueSymbolLinks as unknown as LinkStore<GoPtr<Symbol>, ValueSymbolLinks>, symbol_) as ValueSymbolLinks).containingType),
-      (t: GoPtr<Type>) => {
-        return Checker_getPropertyOfType(receiver, t, symbol_!.Name);
-      });
+    const types = Type_Types((LinkStore_Get<GoPtr<Symbol>, ValueSymbolLinks>(receiver!.valueSymbolLinks as unknown as LinkStore<GoPtr<Symbol>, ValueSymbolLinks>, symbol_) as ValueSymbolLinks).containingType);
+    admitNativeChecker(receiver, "retained");
+    const roots: GoSlice<GoPtr<Symbol>> = [];
+    for (let index = 0; index < types.length; index += 1) {
+      admitNativeChecker(receiver, "work");
+      const root = Checker_getPropertyOfType(receiver, types[index], symbol_!.Name);
+      if (root !== undefined) {
+        admitNativeChecker(receiver, "retained");
+        roots.push(root);
+      }
+    }
+    return roots;
   }
   if ((symbol_!.Flags & SymbolFlagsTransient) !== 0) {
     if (LinkStore_Has(receiver!.spreadLinks, symbol_)) {

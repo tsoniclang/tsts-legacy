@@ -1,5 +1,5 @@
 import type { GoPtr } from "../go/compat.js";
-import { readObjectPropertyInfo, readTypeIndexInfo, readTypePropertyInfo, walkObjectPropertyHeaders } from "./type-members.js";
+import { readObjectPropertyInfo, readTypeIndexInfo, readTypePropertyInfo, readTypePropertyHeader } from "./type-members.js";
 import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type-indexed-access.js";
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeKeyOfComponents, readTypeSubstitutionComponents } from "./type-dependent-operands.js";
@@ -18,7 +18,7 @@ import {
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_SourceFiles } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_OfChecker, Program_SourceFiles } from "../internal/compiler/program.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { withOwnedChecker, withCheckerById, withOwnedCheckerAcquisition } from "./checker-ownership.js";
@@ -47,7 +47,7 @@ import {
   Checker_getInstantiatedBaseTypes,
   Checker_resolveStructuredTypeMembers,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfObjectType, Checker_getPropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
@@ -163,10 +163,13 @@ export interface TypePropertyInfo extends TypePropertyHeader {
 
 export type TypePropertyRead<Stop extends object> = NativeCheckerResult<TypePropertyInfo, Stop>;
 
-export interface TypePropertyInventory {
+interface NativePropertyInventory<Value> {
   readonly length: number;
-  readonly read: <Stop extends object>(index: number, admit: NativeCheckerAdmission<Stop>) => TypePropertyRead<Stop>;
+  readonly read: <Stop extends object>(index: number, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<Value, Stop>;
 }
+
+export type TypePropertyInventory = NativePropertyInventory<TypePropertyInfo>;
+export type TypePropertyHeaderInventory = NativePropertyInventory<TypePropertyHeader>;
 
 export interface StructuredTypeInventory {
   readonly signatures: readonly GoPtr<Signature>[];
@@ -263,8 +266,7 @@ export interface TypeShapeQueries {
   readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
   readonly getTupleInfo: (type: GoPtr<Type>) => TypeTupleInfo | undefined;
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
-  readonly forEachObjectPropertyHeader: (type: GoPtr<Type>, admit: () => boolean,
-    visit: (header: TypePropertyHeader) => boolean) => "complete" | "stopped" | undefined;
+  readonly getObjectPropertyHeaders: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<TypePropertyHeaderInventory, Stop>;
   readonly getStructuredInventory: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<StructuredTypeInventory, Stop>;
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -445,8 +447,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       (checker) => getTypeTupleInfo(checker, type),
     ),
     getObjectPropertyInfo: (type, name) => withObject(type, (checker, object) => readObjectPropertyInfo(checker, object, name)),
-    forEachObjectPropertyHeader: (type, admit, visit) => withObject(type, (checker, object) =>
-      walkObjectPropertyHeaders(checker, object, admit, visit)),
+    getObjectPropertyHeaders: (type, admit) => getObjectPropertyHeaders(program, type, defaultOptions, admit),
     getStructuredInventory: (type, admit) => getStructuredTypeInventory(program, type, defaultOptions, admit),
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
@@ -568,22 +569,46 @@ function getStructuredTypeInventory<Stop extends object>(
     const properties = (effective.flags & (TypeFlagsUnion | TypeFlagsIntersection)) !== 0
       ? Checker_getPropertiesOfUnionOrIntersectionType(checker, effective)
       : (effective.flags & TypeFlagsObject) !== 0 ? StructuredType_Properties(structured) ?? [] : [];
-    const length = properties.length;
     admitNativeChecker(checker, "retained", 2);
-    const inventory: TypePropertyInventory = {
-      length,
-      read: (index, admitRow) => {
-        if (!Number.isSafeInteger(index) || index < 0 || Object.is(index, -0) || index >= length)
-          throw new RangeError("A property read requires an actual inventory ordinal.");
-        const stop = admitRow("work", 1);
-        if (stop !== null) return { kind: "refused", stop };
-        return withOwnedCheckerAcquisition(program, source, checker, context, admitRow, current =>
-          readTypePropertyInfo(current, type, properties[index]));
-      },
-    };
+    const inventory = propertyInventory(program, source, checker, context, properties,
+      (current, symbol) => readTypePropertyInfo(current, type, symbol));
     return Object.freeze({ signatures: structured?.signatures ?? [], callSignatureCount: structured?.callSignatureCount ?? 0,
-      indexes: Object.freeze(indexes), properties: Object.freeze(inventory) });
+      indexes: Object.freeze(indexes), properties: inventory });
   });
+}
+
+function getObjectPropertyHeaders<Stop extends object>(program: GoPtr<Program>, type: GoPtr<Type>,
+  options: CreateTypeShapeQueriesOptions, admit: NativeCheckerAdmission<Stop>,
+): NativeCheckerResult<TypePropertyHeaderInventory, Stop> {
+  const owner = type?.checker;
+  if (type === undefined || !hasFlags(type, TypeFlagsObject) || type.data.AsType() !== type ||
+    owner === undefined || Program_OfChecker(owner) !== program) return { kind: "unavailable" };
+  const source = options.sourceFile;
+  const context = options.context ?? Background();
+  return withOwnedCheckerAcquisition(program, source, owner, context, admit, checker => {
+    admitNativeChecker(checker, "work");
+    const properties = Checker_getPropertiesOfObjectType(checker, type) ?? [];
+    admitNativeChecker(checker, "retained");
+    return propertyInventory(program, source, checker, context, properties, readTypePropertyHeader);
+  });
+}
+
+function propertyInventory<Value>(program: GoPtr<Program>, source: GoPtr<SourceFile>, owner: Checker,
+  context: Context, properties: readonly GoPtr<Symbol>[], project: (checker: Checker, symbol: GoPtr<Symbol>) => Value,
+): NativePropertyInventory<Value> {
+  const length = properties.length;
+  const inventory: NativePropertyInventory<Value> = {
+    length,
+    read: (index, admit) => {
+      if (!Number.isSafeInteger(index) || index < 0 || Object.is(index, -0) || index >= length)
+        throw new RangeError("A property read requires an actual inventory ordinal.");
+      return withOwnedCheckerAcquisition(program, source, owner, context, admit, checker => {
+        admitNativeChecker(checker, "work");
+        return project(checker, properties[index]);
+      });
+    },
+  };
+  return Object.freeze(inventory);
 }
 
 function getTypeTupleInfo(

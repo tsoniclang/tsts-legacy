@@ -5,6 +5,8 @@ import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../ex
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Checker_getPropertyOfType } from "../internal/checker/checker/symbols.js";
 import { Checker_getPropertiesOfObjectType } from "../internal/checker/checker/types.js";
+import type { NativeCheckerResult } from "../internal/checker/resource-admission.js";
+import type { TypePropertyHeader } from "./type-shape.js";
 
 test("intrinsic object identity remains exact across aliases and source query owners", () => {
   const declarations = `export type Broad = object; export type Alias = Broad;
@@ -138,25 +140,37 @@ test("one named object property retains real native ownership without resolving 
         assert.equal(LinkStore_TryGet(checker.valueSymbolLinks, untouched)?.resolvedType === undefined, true, "untouched before lookup");
         const native = Checker_getPropertiesOfObjectType(checker, type) ?? [];
         const expected = native.map(row => row?.Name);
+        const acquired = typeShape.getObjectPropertyHeaders(type, () => null);
+        assert.equal(acquired.kind, "complete");
+        assert.equal(acquired.value.length, native.length);
         for (let limit = 0; limit <= native.length; limit += 1) {
           for (const stopAfterRow of [false, true]) {
             if (stopAfterRow && limit === 0) continue;
             const events: string[] = [];
-            let index = 0;
-            const state = typeShape.forEachObjectPropertyHeader(type, () => {
-              events.push("admit");
-              return stopAfterRow || index < limit;
-            }, header => {
+            for (let index = 0; index < limit; index += 1) {
+              let first = true;
+              const selected: NativeCheckerResult<TypePropertyHeader, never> = acquired.value.read<never>(index, (cost, units) => {
+                if (first) {
+                  assert.deepEqual([cost, units], ["work", 1]);
+                  events.push("admit");
+                  first = false;
+                }
+                return null;
+              });
+              assert.equal(selected.kind, "complete");
+              const header: TypePropertyHeader = selected.value;
               assert.equal(header.symbol === native[index], true, "original symbol");
               assert.equal("type" in header, false);
               events.push(header.name);
-              index += 1;
-              return !stopAfterRow || index < limit;
-            });
+            }
             const prefix = expected.slice(0, limit).flatMap(name => ["admit", name]);
-            if (!stopAfterRow && limit < native.length) prefix.push("admit");
+            if (!stopAfterRow && limit < native.length) {
+              const stop = { limit };
+              const refused = acquired.value.read(limit, () => { events.push("admit"); return stop; });
+              assert.ok(refused.kind === "refused" && refused.stop === stop);
+              prefix.push("admit");
+            }
             assert.deepEqual(events, prefix);
-            assert.equal(state, stopAfterRow || limit < native.length ? "stopped" : "complete");
           }
         }
         assert.equal(LinkStore_TryGet(checker.valueSymbolLinks, untouched)?.resolvedType === undefined, true, "inventory did not resolve values");
@@ -170,14 +184,18 @@ test("one named object property retains real native ownership without resolving 
         assert.equal(typeShape.isSymbolLike(selected.type), true);
         assert.equal(selected.readonly, true);
         assert.equal(selected.optional, false);
-        assert.equal(typeShape.forEachObjectPropertyHeader(symbol.type, () => true, header => {
+        const symbolHeaders = typeShape.getObjectPropertyHeaders(symbol.type, () => null);
+        assert.equal(symbolHeaders.kind, "complete");
+        for (let index = 0; index < symbolHeaders.value.length; index += 1) {
+          const row: NativeCheckerResult<TypePropertyHeader, never> = symbolHeaders.value.read<never>(index, () => null);
+          assert.equal(row.kind, "complete");
+          const header: TypePropertyHeader = row.value;
           if (header.name === "metadata") {
             assert.equal(header.symbol === selected.symbol && header.rootSymbols[0] === selected.rootSymbols[0], true);
             assert.equal(header.readonly, selected.readonly);
             assert.equal(header.optional, selected.optional);
           }
-          return true;
-        }), "complete");
+        }
         assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "metadata")?.symbol === selected.symbol, true);
         assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "optional")?.optional, true);
         assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "absent") === null, true, "real missing member");
@@ -185,14 +203,16 @@ test("one named object property retains real native ownership without resolving 
         assert.equal(typeShape.isAny(typeShape.getObjectPropertyInfo(type, "actualAny")?.type), true, "genuine any is present");
         assert.equal(typeShape.getObjectPropertyInfo(selected.type, "meta") === undefined, true, "nonobject");
         assert.equal(typeShape.getObjectPropertyInfo({ ...type }, "Symbol") === undefined, true, "copied receiver");
-        assert.equal(typeShape.forEachObjectPropertyHeader({ ...type }, unexpected, unexpected), undefined);
+        assert.equal(typeShape.getObjectPropertyHeaders({ ...type }, unexpected).kind, "unavailable");
         assert.equal(LinkStore_TryGet(checker.valueSymbolLinks, untouched)?.resolvedType === undefined, true, "untouched after lookup");
         assert.equal(Checker_getPropertyOfType(checker, symbol.type, "onlyApparent") !== undefined, true);
         assert.equal(typeShape.getObjectPropertyInfo(symbol.type, "onlyApparent") === null, true, "not an apparent Object property");
       }
       assert.equal(typeShape.getObjectPropertyInfo(oppositeScope.type, "Symbol") === undefined, true, "foreign receiver");
-      assert.equal(typeShape.forEachObjectPropertyHeader(oppositeScope.type, unexpected, unexpected), undefined);
-      assert.equal(typeShape.forEachObjectPropertyHeader(empty.type, unexpected, unexpected), "complete");
+      assert.equal(typeShape.getObjectPropertyHeaders(oppositeScope.type, unexpected).kind, "unavailable");
+      const emptyHeaders = typeShape.getObjectPropertyHeaders(empty.type, () => null);
+      assert.ok(emptyHeaders.kind === "complete" && emptyHeaders.value.length === 0);
+      assert.throws(() => emptyHeaders.value.read(0, unexpected), RangeError);
       const ordinary = typeShape.getObjectPropertyInfo(shadow.type, "Symbol");
       if (ordinary == null) assert.fail("the ordinary shadow retains its own selected object");
       const shadowMetadata = typeShape.getObjectPropertyInfo(ordinary.type, "metadata");

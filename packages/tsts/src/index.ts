@@ -179,6 +179,7 @@ export type {
   TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
   TypePropertyHeader,
+  TypePropertyHeaderInventory,
   TypePropertyInfo,
   TypePropertyInventory,
   TypePropertyRead,
