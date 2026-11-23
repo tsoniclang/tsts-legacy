@@ -158,6 +158,16 @@ export interface TypePropertyInfo extends TypePropertyHeader {
   readonly mapped?: TypeMappedPropertyInfo;
 }
 
+export type TypePropertyRead<Stop extends object> =
+  | { readonly kind: "complete"; readonly value: TypePropertyInfo }
+  | { readonly kind: "refused"; readonly stop: Stop }
+  | { readonly kind: "unavailable" };
+
+export interface TypePropertyInventory {
+  readonly length: number;
+  readonly read: <Stop extends object>(index: number, admit: () => Stop | null) => TypePropertyRead<Stop>;
+}
+
 export interface TypeTupleElementInfo {
   readonly type: Type;
   readonly elementKind: "required" | "optional" | "rest" | "variadic";
@@ -248,7 +258,7 @@ export interface TypeShapeQueries {
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
   readonly forEachObjectPropertyHeader: (type: GoPtr<Type>, admit: () => boolean,
     visit: (header: TypePropertyHeader) => boolean) => "complete" | "stopped" | undefined;
-  readonly getPropertyInfos: (type: GoPtr<Type>) => readonly TypePropertyInfo[];
+  readonly getPropertyInventory: (type: GoPtr<Type>) => TypePropertyInventory | undefined;
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
@@ -430,12 +440,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     getObjectPropertyInfo: (type, name) => withObject(type, (checker, object) => readObjectPropertyInfo(checker, object, name)),
     forEachObjectPropertyHeader: (type, admit, visit) => withObject(type, (checker, object) =>
       walkObjectPropertyHeaders(checker, object, admit, visit)),
-    getPropertyInfos: (type) => withCheckerForType(
-      program,
-      type,
-      defaultOptions,
-      (checker) => getTypePropertyInfos(checker, type),
-    ) ?? [],
+    getPropertyInventory: type => getTypePropertyInventory(program, type, defaultOptions),
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
     getSignatureInfos: (type, kind) => {
@@ -530,15 +535,31 @@ function readTypeConditionalComponents(
     falseBranch: readConditionalBranch(checker, syntax.FalseType, falseType) });
 }
 
-function getTypePropertyInfos(
-  checker: GoPtr<Checker>,
+function getTypePropertyInventory(
+  program: GoPtr<Program>,
   type: GoPtr<Type>,
-): readonly TypePropertyInfo[] {
-  if (checker === undefined) {
-    throw new Error("The source type has no owning checker for property analysis.");
-  }
-  const properties = Checker_GetPropertiesOfType(checker, type) ?? [];
-  return properties.map((symbol) => readTypePropertyInfo(checker, type, symbol));
+  options: CreateTypeShapeQueriesOptions,
+): TypePropertyInventory | undefined {
+  const source = options.sourceFile;
+  const context = options.context ?? Background();
+  const owner = type?.checker;
+  return withOwnedChecker(program, source, owner, context, checker => {
+    const properties = Checker_GetPropertiesOfType(checker, type);
+    const length = properties.length;
+    const inventory: TypePropertyInventory = {
+      length,
+      read: (index, admit) => {
+        if (!Number.isSafeInteger(index) || index < 0 || Object.is(index, -0) || index >= length)
+          throw new RangeError("A property read requires an actual inventory ordinal.");
+        const stop = admit();
+        if (stop !== null) return { kind: "refused", stop };
+        return withOwnedChecker(program, source, checker, context, current => ({
+          kind: "complete", value: readTypePropertyInfo(current, type, properties[index]),
+        })) ?? { kind: "unavailable" };
+      },
+    };
+    return Object.freeze(inventory);
+  });
 }
 
 function getTypeTupleInfo(

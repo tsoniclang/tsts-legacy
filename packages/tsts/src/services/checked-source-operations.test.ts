@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -221,7 +222,7 @@ for (const checkers of [1, 4]) test(`inferred destructuring tuple questions reta
   assert.ok(pattern);
   const [element] = ast.children(pattern);
   assert.ok(ast.is.IsBindingElement(element));
-  const [synthetic] = typeShape.getPropertyInfos(contextual?.elements[1]?.type);
+  const [synthetic] = propertyRows(typeShape, contextual?.elements[1]?.type);
   assert.ok(synthetic);
   assert.equal(checker.getSymbolValueDeclaration(synthetic.symbol), undefined);
   assert.equal(synthetic.rootSymbols.length, 1);
@@ -229,8 +230,8 @@ for (const checkers of [1, 4]) test(`inferred destructuring tuple questions reta
   assert.deepEqual(checker.getSymbolDeclarations(synthetic.symbol), []);
   assert.equal(synthetic.bindingPattern?.element === element, true);
   assert.equal(typeShape.getStringLiteralTypeValue(synthetic.bindingPattern?.keyType), "f");
-  assert.equal(typeShape.getPropertyInfos(contextual?.elements[1]?.type)[0]?.bindingPattern === synthetic.bindingPattern, true);
-  const [authored] = typeShape.getPropertyInfos(actual?.elements[1]?.type);
+  assert.equal(propertyRows(typeShape, contextual?.elements[1]?.type)[0]?.bindingPattern === synthetic.bindingPattern, true);
+  const [authored] = propertyRows(typeShape, actual?.elements[1]?.type);
   assert.ok(authored);
   assert.equal(ast.is.IsPropertyAssignment(checker.getSymbolValueDeclaration(authored.symbol)), true);
   assert.equal(authored.bindingPattern, undefined);
@@ -326,9 +327,9 @@ for (const checkers of [1, 4]) test(`selected conditional components retain the 
   const applied = checker.getTypeFromTypeNode(ast.typeNode(chosen))?.type;
   const indexed = typeShape.getIndexedAccessComponents(applied);
   assert.ok(indexed);
-  const selected = typeShape.getPropertyInfos(indexed.objectType).find(property => property.name === "recur")?.type;
+  const selected = propertyRows(typeShape, indexed.objectType).find(property => property.name === "recur")?.type;
   const data = Type_AsConditionalType(selected);
-  const original = typeShape.getPropertyInfos(typeShape.getIndexedAccessComponents(source)?.objectType)
+  const original = propertyRows(typeShape, typeShape.getIndexedAccessComponents(source)?.objectType)
     .find(property => property.name === "recur")?.type;
   assert.ok(selected && data && original);
   assert.equal(selected === original, false);
@@ -581,10 +582,10 @@ test("type-shape property information preserves effective mapped modifiers", () 
   assert.ok(openValue !== undefined);
   assert.ok(normalizedValue !== undefined);
 
-  const sourceProperties = source.typeShape.getPropertyInfos(
+  const sourceProperties = propertyRows(source.typeShape,
     source.checker.getTypeAtLocation(sourceValue)?.type,
   );
-  const normalizedProperties = source.typeShape.getPropertyInfos(
+  const normalizedProperties = propertyRows(source.typeShape,
     source.checker.getTypeAtLocation(normalizedValue)?.type,
   );
   assert.equal(
@@ -647,7 +648,7 @@ test("type-shape property information preserves private display names and instan
   const box = identifiers.find((node) => source.ast.text(node) === "box");
   assert.ok(box !== undefined);
 
-  const properties = source.typeShape.getPropertyInfos(
+  const properties = propertyRows(source.typeShape,
     source.checker.getTypeAtLocation(box)?.type,
   );
   assert.deepEqual(
@@ -677,7 +678,7 @@ test("a synthetic class prototype retains its actual class, never an authored pr
     assert.ok(use);
     const type = checker.getTypeAtLocation(use)?.type;
     assert.ok(type);
-    return typeShape.getPropertyInfos(type).find(row => row.name === "prototype");
+    return propertyRows(typeShape, type).find(row => row.name === "prototype");
   };
   const synthetic = prototypeOf("constructorValue");
   assert.ok(synthetic);

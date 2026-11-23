@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
@@ -28,7 +29,7 @@ function checked(source: string) {
     return selected;
   };
   const property = (value: Type, name: string): Type => {
-    const selected = types.getPropertyInfos(value).find(entry => entry.name === name);
+    const selected = propertyRows(types, value).find(entry => entry.name === name);
     assert.ok(selected !== undefined, `${name}: actual native member resolution`);
     return selected.type;
   };

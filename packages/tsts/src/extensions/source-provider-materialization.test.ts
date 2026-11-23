@@ -1,3 +1,4 @@
+import { propertyRows } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Diagnostic_Code, Diagnostic_String } from "../internal/ast/diagnostic.js";
@@ -68,7 +69,7 @@ test("incremental providers materialize only exact structured exports demanded b
   const rootUse = findIdentifier(checked, sourceFile, "root");
   assert.ok(rootUse !== undefined);
   const sourceQueries = checked.getSourceFileQueries(sourceFile);
-  assert.doesNotThrow(() => sourceQueries.typeShape.getPropertyInfos(
+  assert.doesNotThrow(() => propertyRows(sourceQueries.typeShape,
     sourceQueries.checker.getTypeAtLocation(rootUse)?.type,
   ));
 });

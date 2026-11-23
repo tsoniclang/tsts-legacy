@@ -1,4 +1,4 @@
-import { requireApplicableCallInfo } from "./type-checker-test-support.js";
+import { propertyRows, requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Node_Expression, Node_Text, Node_Type } from "../internal/ast/ast.js";
@@ -25,6 +25,8 @@ import {
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
 import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
+import { Checker_GetPropertiesOfType } from "../internal/checker/exports.js";
+import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { createTypeShapeQueries } from "./type-shape.js";
 import {
@@ -790,7 +792,7 @@ test("global property origins belong only to the actual checker-created intrinsi
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const shape = createTypeShapeQueries(program, { sourceFile: index });
   const variables = findNodesByKind(index, KindVariableDeclaration);
-  const native = shape.getPropertyInfos(queries.getTypeAtLocation(variables[0])?.type);
+  const native = propertyRows(shape, queries.getTypeAtLocation(variables[0])?.type);
   assert.deepEqual(native.filter(property => property.intrinsicOrigin !== undefined)
     .map(property => [property.name, property.intrinsicOrigin]).sort(), [["globalThis", "global-this"], ["undefined", "undefined"]]);
   for (const property of native.filter(property => property.intrinsicOrigin !== undefined)) {
@@ -798,7 +800,7 @@ test("global property origins belong only to the actual checker-created intrinsi
     assert.equal(property.rootSymbols.length, 1);
     assert.equal(property.rootSymbols[0] === property.symbol, true);
   }
-  const authored = shape.getPropertyInfos(queries.getTypeAtLocation(variables[1])?.type);
+  const authored = propertyRows(shape, queries.getTypeAtLocation(variables[1])?.type);
   assert.deepEqual(authored.map(property => property.name).sort(), ["globalThis", "undefined"]);
   for (const property of authored) {
     assert.equal(property.intrinsicOrigin, undefined);
@@ -846,7 +848,7 @@ test("mapped property metadata retains actual mapped owners, checked keys and sy
   ];
   for (const entry of cases) {
     const type = queries.getTypeAtLocation(variable(entry.name))?.type;
-    const properties = shape.getPropertyInfos(type);
+    const properties = propertyRows(shape, type);
     const expectedOwner = entry.owner ?? Node_Type(queries.getPrimarySymbolDeclaration(queries.getTypeAliasSymbol(type)));
     assert.equal(expectedOwner?.Kind, KindMappedType, entry.name);
     assert.equal(properties.length, entry.keys?.length ?? 2, entry.name);
@@ -872,12 +874,12 @@ test("mapped property metadata retains actual mapped owners, checked keys and sy
       }
     }
     if (entry.keys !== undefined) assert.deepEqual(keys, entry.keys, entry.name);
-    const repeated = shape.getPropertyInfos(type);
+    const repeated = propertyRows(shape, type);
     assert.equal(repeated.every((property, position) => property.mapped?.keyType === properties[position]?.mapped?.keyType &&
       property.mapped?.syntheticOrigin === properties[position]?.mapped?.syntheticOrigin &&
       property.mapped?.declaration === properties[position]?.mapped?.declaration), true, entry.name);
   }
-  assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))?.type).every(property => property.mapped === undefined), true);
+  assert.equal(propertyRows(shape, queries.getTypeAtLocation(variable("ordinary"))?.type).every(property => property.mapped === undefined), true);
 });
 
 test("wide composite properties finish in native order and retain the canonical symbols", () => {
@@ -896,14 +898,57 @@ test("wide composite properties finish in native order and retain the canonical 
   assert.equal(variables.length, 2);
   for (const [position, declaration] of variables.entries()) {
     const type = queries.getTypeAtLocation(declaration)?.type;
-    const original = shape.getPropertyInfos(type);
+    const original = propertyRows(shape, type);
     const expected = position === 0 ? fields : [...fields, "first", "second"];
     assert.deepEqual(original.map(row => row.name), expected);
-    const repeated = shape.getPropertyInfos(type);
+    const repeated = propertyRows(shape, type);
     assert.equal(repeated.length, original.length);
     assert.equal(repeated.every((row, rowIndex) =>
       row.symbol === original[rowIndex]?.symbol && row.type === original[rowIndex]?.type), true);
   }
+});
+
+test("an acquired union inventory admits only the reached effective property", () => {
+  const { program, index } = createProgram(`
+    interface Left<T> { first: T; later: T; }
+    interface Middle<T> { first: T; later: T; }
+    interface Right<T> { first: T; later: T; }
+    type Joined = Left<string> | Middle<number> | Right<boolean>;
+    declare const empty: {};
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const checker = createTypeCheckerQueries(program, { sourceFile: index });
+  const shape = createTypeShapeQueries(program, { sourceFile: index });
+  const [joined] = findNodesByKind(index, KindTypeAliasDeclaration);
+  const [empty] = findNodesByKind(index, KindVariableDeclaration);
+  const type = checker.getTypeFromTypeNode(Node_Type(joined))?.type;
+  const owner = type?.checker;
+  assert.ok(owner && type);
+  const symbols = Checker_GetPropertiesOfType(owner, type);
+  const [first, later] = symbols;
+  assert.ok(first && later);
+  const resolved = () => symbols.map(symbol => LinkStore_TryGet(owner.valueSymbolLinks, symbol)?.resolvedType !== undefined);
+  assert.deepEqual(resolved(), [false, false]);
+  const inventory = shape.getPropertyInventory(type);
+  assert.ok(inventory);
+  assert.equal(inventory.length, 2);
+  assert.deepEqual(resolved(), [false, false]);
+  const original = { dimension: "work", maximum: 0 };
+  assert.equal(inventory.read(0, () => original).kind, "refused");
+  assert.deepEqual(resolved(), [false, false]);
+  const admitted = inventory.read(0, () => null);
+  assert.ok(admitted.kind === "complete");
+  assert.equal(admitted.value.symbol, first);
+  assert.deepEqual(resolved(), [true, false]);
+  const refused = inventory.read(1, () => original);
+  assert.ok(refused.kind === "refused");
+  assert.equal(refused.stop, original);
+  assert.deepEqual(resolved(), [true, false]);
+  const foreign = createProgram("declare const foreign: boolean;");
+  const crossed = createTypeShapeQueries(foreign.program, { sourceFile: foreign.index });
+  assert.equal(crossed.getPropertyInventory(type), undefined);
+  assert.equal(shape.getPropertyInventory(checker.getTypeAtLocation(empty)?.type)?.length, 0);
+  assert.throws(() => inventory.read(2, () => assert.fail("An invalid ordinal reads no row.")), RangeError);
 });
 
 test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {

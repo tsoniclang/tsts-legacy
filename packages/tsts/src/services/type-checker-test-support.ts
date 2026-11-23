@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import type { ResolvedSourceCallInfo } from "./type-checker.js";
+import type { TypePropertyInfo, TypeShapeQueries } from "./type-shape.js";
+import type { Type } from "../internal/checker/types.js";
 import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
 import { Background } from "../go/context.js";
@@ -22,6 +24,16 @@ export function requireApplicableCallInfo(
 ): Extract<ResolvedSourceCallInfo, { readonly kind: "applicable" }> {
   assert.ok(evidence?.kind === "applicable", "The original valid call requires an actual applicable checker candidate.");
   return evidence;
+}
+
+export function propertyRows(shape: TypeShapeQueries, type: GoPtr<Type>): readonly TypePropertyInfo[] {
+  const inventory = shape.getPropertyInventory(type);
+  assert.ok(inventory, "An actual property query has its owning checker.");
+  return Array.from({ length: inventory.length }, (_, index) => {
+    const row = inventory.read(index, () => null);
+    assert.equal(row.kind, "complete");
+    return row.value;
+  });
 }
 
 export function createProgram(

@@ -178,6 +178,8 @@ export type {
   TypeMappedPropertyInfo,
   TypePropertyHeader,
   TypePropertyInfo,
+  TypePropertyInventory,
+  TypePropertyRead,
   TypeReferenceArgumentInfo,
   TypeSignatureParameterInfo,
   TypeSignatureInfo,

@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, createCompilerSessionFromProgram, type ResolvedSourceTypeInfo } from "../index.js";
@@ -154,13 +155,13 @@ for (const checkers of [1, 4]) test(`structural inventories carry only their act
   const [exact, nearby, required, optional, applied, combined, accessor] = annotations.map(checker.getTypeFromTypeNode);
   assert.ok(exact && nearby && required && optional && applied && combined && accessor);
   assert.equal(exact.type === nearby.type && annotations[0] !== annotations[1], true);
-  const [left, right] = typeShape.getPropertyInfos(required.type);
+  const [left, right] = propertyRows(typeShape, required.type);
   assert.ok(left && right && annotations[0] && annotations[1]);
   assert.deepEqual([left.name, right.name], ["left", "right"]);
   assert.equal(left.type === right.type && left.typeSource === annotations[0] && right.typeSource === annotations[1], true);
   assert.equal(typeShape.isUnion(combined.type) && typeShape.getTypeReferenceTarget(applied.type) !== undefined, true);
   for (const other of [optional, applied, combined, accessor]) {
-    const member = typeShape.getPropertyInfos(other.type).find(info => info.name === "left");
+    const member = propertyRows(typeShape, other.type).find(info => info.name === "left");
     assert.ok(member);
     assert.equal(member.typeSource === undefined, true);
   }

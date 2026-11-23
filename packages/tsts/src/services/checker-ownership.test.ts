@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -59,7 +60,7 @@ for (const checkers of [1, 4]) test(`type consumers admit actual program pool me
       const bases = reader.typeShape.getInstantiatedBaseTypes(value);
       assert.equal(bases !== undefined && bases.length === 1, true, "actual file-owned generic bases are available");
       if (bases === undefined || bases[0] === undefined) throw new Error("The actual derived type has one selected base");
-      const member = reader.typeShape.getPropertyInfos(bases[0]).find(property => property.name === "value");
+      const member = propertyRows(reader.typeShape, bases[0]).find(property => property.name === "value");
       assert.equal(member !== undefined && reader.checker.typeToString(member.type) === expected, true,
         "the base operation uses the actual producer and its selected generic argument");
       const awaited = current.annotation(fileName, "awaited");

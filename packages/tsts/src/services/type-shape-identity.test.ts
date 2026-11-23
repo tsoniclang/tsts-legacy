@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
@@ -111,8 +112,8 @@ test("public identity preserves exact generic instances obtained from different 
   const numericLeft = typeFor(left, "numeric");
   const numericRight = typeFor(right, "numeric");
   assert.equal(numericLeft.checker !== numericRight.checker, true, "the public queries retain their actual native file producers");
-  left.typeShape.getPropertyInfos(numericLeft);
-  right.typeShape.getPropertyInfos(numericRight);
+  propertyRows(left.typeShape, numericLeft);
+  propertyRows(right.typeShape, numericRight);
   assertIdentityInBothOrders(left, numericLeft, numericRight, true, "identical Box<number> instances");
   assertIdentityInBothOrders(right, numericLeft, typeFor(right, "textual"), false, "Box<number> versus Box<string>");
 });
@@ -129,7 +130,7 @@ test("public identity preserves mapped optional readonly member instantiations",
   const mappedLeft = typeFor(left, "mapped");
   const mappedRight = typeFor(right, "mapped");
   for (const [queries, type] of [[left, mappedLeft], [right, mappedRight]] as const) {
-    const fields = queries.typeShape.getPropertyInfos(type);
+    const fields = propertyRows(queries.typeShape, type);
     assert.equal(fields.length, 2, "the actual mapped member inventory is complete");
     assert.equal(fields.every(field => field.optional && field.readonly), true, "optional and readonly flags are preserved");
   }
@@ -166,9 +167,9 @@ test("public identity is independent of file query and member inspection order",
     const first = reverse ? right : left;
     const second = reverse ? left : right;
     const firstType = typeFor(first, "mapped");
-    first.typeShape.getPropertyInfos(firstType);
+    propertyRows(first.typeShape, firstType);
     const secondType = typeFor(second, "mapped");
-    second.typeShape.getPropertyInfos(secondType);
+    propertyRows(second.typeShape, secondType);
     assert.equal(firstType.checker !== secondType.checker, true, "query order preserves the distinct native file owners");
     assertIdentityInBothOrders(first, firstType, secondType, true, "member inspection order");
   }

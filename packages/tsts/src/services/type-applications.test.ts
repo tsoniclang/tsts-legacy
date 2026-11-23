@@ -1,3 +1,4 @@
+import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
@@ -140,7 +141,7 @@ test("retained indexed alias inputs come from the native application, not the al
 test("a retained default follows the actual enclosing native instantiation", () => {
   const { source, definitions } = applicationSource();
   const receiver = functionParameterType(source, "applied");
-  const selected = source.typeShape.getPropertyInfos(receiver).find(property => property.name === "chosen")?.type;
+  const selected = propertyRows(source.typeShape, receiver).find(property => property.name === "chosen")?.type;
   assert.equal(selected !== undefined, true);
   const evidence = source.typeShape.getTypeAliasApplication(selected);
   assert.equal(evidence !== undefined && evidence.result === selected, true);
@@ -232,7 +233,7 @@ test("alias applications preserve conditional inference, identity and cross-file
   assert.equal(source.typeShape.isNumberLike(number.result), true);
   const record = source.typeShape.instantiateTypeAlias(storage, [wrapped]);
   assert.ok(record);
-  const properties = source.typeShape.getPropertyInfos(record.result);
+  const properties = propertyRows(source.typeShape, record.result);
   assert.deepEqual(properties.map(property => property.name), ["value"]);
   assert.equal(source.typeShape.isNumberLike(properties[0]?.type), true);
   assert.equal(record.declaration, storage);
@@ -251,7 +252,7 @@ test("alias applications preserve conditional inference, identity and cross-file
   assert.equal(source.typeShape.isTypeIdenticalTo(record.result, repeated.result), true);
   const rows = source.typeShape.instantiateTypeAlias(alias(definitions, "Rows"), [wrapped]);
   assert.ok(rows);
-  const row = source.typeShape.getPropertyInfos(rows.result).find(property => property.name === "rows");
+  const row = propertyRows(source.typeShape, rows.result).find(property => property.name === "rows");
   assert.ok(row);
   assert.equal(source.typeShape.isArrayLike(row.type), true);
   const rowType = source.typeShape.getTypeArguments(row.type)[0];
