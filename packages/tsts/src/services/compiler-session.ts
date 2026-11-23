@@ -421,6 +421,9 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
   if (Config === undefined) throw new Error("Source import preparation requires a parsed command line.");
   const prepared = loadSourceImports({ host: Host, config: Config,
     ...(SelectedLibraries === undefined ? {} : { libraryFiles: SelectedLibraries }) });
+  const files = Host.FS();
+  const caseSensitive = files.UseCaseSensitiveFileNames();
+  const actualFileName = (path: string): string => caseSensitive ? path : files.Realpath(path);
   const ast = createAstReader();
   const note = (diagnostic: Diagnostic): PreparedDiagnosticNote => {
     const file = diagnostic.file;
@@ -429,9 +432,13 @@ export function prepareSourceImports(input: SourceImportPreparationInput): Sourc
     const range = ast.sourceRange(file, diagnostic.loc.pos, diagnostic.loc.end);
     if (range.kind !== "source") throw new Error("An import diagnostic must have a source range.");
     return { code: diagnostic.code, message,
-      site: { fileName: ast.getFileName(file), start: range.start, length: range.end - range.start } };
+      site: { fileName: actualFileName(ast.getFileName(file)), start: range.start, length: range.end - range.start } };
   };
-  return { roots: prepared.roots, files: prepared.files, diagnostics: prepared.diagnostics.map(diagnostic => ({
+  return { roots: caseSensitive ? prepared.roots : prepared.roots.map(root => root.state === "missing" ? root : { ...root, fileName: actualFileName(root.fileName) }),
+    files: caseSensitive ? prepared.files : prepared.files.map(file => ({ ...file, fileName: actualFileName(file.fileName),
+      references: file.references.map(reference => reference.resolution.kind === "unresolved" ? reference : {
+        ...reference, resolution: { kind: "resolved", fileName: actualFileName(reference.resolution.fileName) },
+      }) })), diagnostics: prepared.diagnostics.map(diagnostic => ({
     ...note(diagnostic), category: diagnostic.category, arguments: diagnostic.messageArgs,
     related: diagnostic.relatedInformation.map(entry => {
       if (entry === undefined) throw new Error("An import diagnostic contains an absent related diagnostic.");

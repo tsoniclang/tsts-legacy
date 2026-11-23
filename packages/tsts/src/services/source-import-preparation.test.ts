@@ -100,6 +100,27 @@ test("options-mode import preparation and checked opening share the explicit cap
   assert.throws(() => Reflect.apply(prepareFiles, undefined, [options]), /requires explicit roots/);
 });
 
+test("options-mode preparation publishes captured names of case-insensitively loaded files and diagnostics", () => {
+  const root = "/src/main.mts";
+  const target = "/src/typed.mts";
+  const broken = "\uFEFF/* 🚀 */ export function value() { return true;";
+  const files = new Map([[root, 'import "./TyPeD.mjs";'], [target, broken]]);
+  const options = { currentDirectory: "/src", files, rootFiles: ["/src/MaIn.mts"], includeBundledLibraries: false,
+    compilerOptions: { module: "nodenext", moduleResolution: "nodenext", noLib: true, types: [] } };
+  const result = prepareFiles({ ...options, useCaseSensitiveFileNames: false });
+  assert.deepEqual(result.roots, [{ fileName: root, state: "loaded" }]);
+  assert.deepEqual(result.files.map(row => row.fileName), [target, root]);
+  assert.deepEqual(file(result, root).references.map(facts), [["import", "./TyPeD.mjs", "import", target]]);
+  const [error] = result.diagnostics;
+  assert.equal(error?.code, 1005);
+  assert.deepEqual(error.site, { fileName: target, start: broken.length - 1, length: 0 });
+  assert.deepEqual(error.related.map(row => [row.code, row.site]),
+    [[1007, { fileName: target, start: broken.indexOf("{") - 1, length: 0 }]]);
+  const sensitive = prepareFiles({ ...options, rootFiles: [root], useCaseSensitiveFileNames: true });
+  assert.deepEqual(sensitive.files.map(row => row.fileName), [root]);
+  assert.deepEqual(file(sensitive, root).references.map(facts), [["import", "./TyPeD.mjs", "import", "unresolved"]]);
+});
+
 test("source import preparation preserves all eight authored reference families and genuine resolution", () => {
   const authored = [
     { prefix: '/// <reference path="', token: "./ambient.d.ts", suffix: '" />' },
