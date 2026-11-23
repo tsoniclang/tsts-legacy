@@ -1,5 +1,6 @@
 import type { bool } from "../../../go/scalars.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
+import { admitNativeChecker } from "../resource-admission.js";
 import type { Node } from "../../ast/spine.js";
 import { Node_Name } from "../../ast/spine.js";
 import { Node_Body, Node_Elements, Node_Expression, Node_Initializer, Node_ModifierFlags, Node_Parameters, Node_Text, Node_Type } from "../../ast/ast.js";
@@ -1061,25 +1062,27 @@ export function Checker_isDiscriminantWithNeverType(receiver: GoPtr<Checker>, pr
  * }
  */
 export function Checker_getConditionalFlowTypeOfType(receiver: GoPtr<Checker>, t: GoPtr<Type>, node: GoPtr<Node>): GoPtr<Type> {
-  const constraints: GoSlice<GoPtr<Type>> = [];
+  let constraints: GoSlice<GoPtr<Type>> | undefined;
   let covariant = true;
-  while (node !== undefined && !IsStatement(node) && node!.Kind !== KindJSDoc) {
-    const parent = node!.Parent;
+  while (node !== undefined) {
+    admitNativeChecker(receiver, "work");
+    if (IsStatement(node) || node.Kind === KindJSDoc) break;
+    const parent = node.Parent;
     if (parent === undefined) {
       break;
     }
     if (IsParameterDeclaration(parent)) {
       covariant = !covariant;
     }
-    if (
-      (covariant || (t!.flags & TypeFlagsTypeVariable) !== 0) &&
-      IsConditionalTypeNode(parent) &&
-      node === AsConditionalTypeNode(parent)!.TrueType
-    ) {
-      const conditional = AsConditionalTypeNode(parent)!;
+    const conditional = (covariant || (t!.flags & TypeFlagsTypeVariable) !== 0) && IsConditionalTypeNode(parent)
+      ? AsConditionalTypeNode(parent) : undefined;
+    if (conditional !== undefined) admitNativeChecker(receiver, "work");
+    if (conditional !== undefined && node === conditional.TrueType) {
+      admitNativeChecker(receiver, "work", 2);
       const constraint = Checker_getImpliedConstraint(receiver, t, conditional.CheckType, conditional.ExtendsType);
       if (constraint !== undefined) {
-        constraints.push(constraint);
+        admitNativeChecker(receiver, "retained", constraints === undefined ? 2 : 1);
+        (constraints ??= []).push(constraint);
       }
     } else if (
       (t!.flags & TypeFlagsTypeParameter) !== 0 &&
@@ -1093,14 +1096,15 @@ export function Checker_getConditionalFlowTypeOfType(receiver: GoPtr<Checker>, t
         if (typeParameter !== undefined) {
           const constraint = Checker_getConstraintOfTypeParameter(receiver, typeParameter);
           if (constraint !== undefined && everyType(constraint, (tt) => Checker_isArrayOrTupleType(receiver, tt))) {
-            constraints.push(Checker_getUnionType(receiver, [receiver!.numberType, receiver!.numericStringType]));
+            admitNativeChecker(receiver, "retained", constraints === undefined ? 2 : 1);
+            (constraints ??= []).push(Checker_getUnionType(receiver, [receiver!.numberType, receiver!.numericStringType]));
           }
         }
       }
     }
     node = parent;
   }
-  if (constraints.length !== 0) {
+  if (constraints !== undefined) {
     return Checker_getSubstitutionType(receiver, t, Checker_getIntersectionType(receiver, constraints));
   }
   return t;

@@ -6,10 +6,13 @@ import type { Node } from "../index.js";
 import { Background } from "../go/context.js";
 import { Program_GetTypeChecker } from "../internal/compiler/program.js";
 import { Checker_getReturnTypeOfSignature } from "../internal/checker/checker/signatures.js";
+import { Checker_getConditionalTypeInstantiationWithCapture } from "../internal/checker/checker/inference.js";
 import { Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { KindTypeAliasDeclaration } from "../internal/ast/generated/kinds.js";
 import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
 import type { NativeCheckerCost } from "../internal/checker/resource-admission.js";
+import { newSimpleTypeMapper } from "../internal/checker/mapper.js";
+import { Type_AsConditionalType } from "../internal/checker/types.js";
 import { withOwnedChecker, withOwnedCheckerAcquisition } from "./checker-ownership.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { createTypeShapeQueries } from "./type-shape.js";
@@ -121,6 +124,101 @@ test("a cold composite signature pays before the actual return and child signatu
       assert.equal(subject.host?.checkerSessionTerminal, provisional);
       assert.equal(subject.checker.getTypeFromTypeNode(subject.annotation) === undefined, provisional);
       maximum += size;
+    }
+  }
+});
+
+test("a cold native conditional admits its argument, branch and cache before returning a completed result", () => {
+  type Charge = readonly [NativeCheckerCost, number];
+  const prepare = () => {
+    const { program, index } = createProgram("type Choose<Value> = Value extends string ? boolean : number; type Actual = string;");
+    assert.ok(program !== undefined && index !== undefined);
+    attachExtensionHost(program);
+    const checker = createTypeCheckerQueries(program, { sourceFile: index });
+    const [declaration, selected] = findNodesByKind(index, KindTypeAliasDeclaration);
+    const annotation = Node_Type(declaration);
+    const template = checker.getTypeFromTypeNode(annotation)?.type;
+    const input = checker.getTypeFromTypeNode(Node_Type(selected))?.type;
+    const root = Type_AsConditionalType(template)?.root;
+    const owner = template?.checker;
+    assert.ok(root?.node !== undefined && input !== undefined && owner !== undefined);
+    assert.equal(root.outerTypeParameters.length, 1);
+    const parameter = root.outerTypeParameters[0];
+    assert.ok(parameter !== undefined);
+    const mapper = newSimpleTypeMapper(parameter, input);
+    const reads: { readonly field: string; readonly after: number }[] = [];
+    const charges: Charge[] = [];
+    const trueBranch = root.node.TrueType;
+    const falseBranch = root.node.FalseType;
+    Object.defineProperty(root.outerTypeParameters, 0, { get() {
+      reads.push({ field: "parameter", after: charges.length });
+      return parameter;
+    } });
+    Object.defineProperty(root.node, "TrueType", { get() {
+      reads.push({ field: "true", after: charges.length });
+      return trueBranch;
+    } });
+    Object.defineProperty(root.node, "FalseType", { get() {
+      reads.push({ field: "false", after: charges.length });
+      return falseBranch;
+    } });
+    const acquire = <Stop extends object>(admit: (cost: NativeCheckerCost, units: number) => Stop | null) =>
+      withOwnedCheckerAcquisition(program, index, owner, Background(), (cost, units) => {
+        charges.push([cost, units]);
+        return admit(cost, units);
+      }, checker => Checker_getConditionalTypeInstantiationWithCapture(checker, template, mapper, false, undefined, undefined));
+    return { root, reads, charges, acquire, host: getExtensionHost(program), checker, annotation };
+  };
+
+  const cold = prepare();
+  const initial = cold.root.instantiations.size;
+  const result = cold.acquire(() => null);
+  assert.ok(result.kind === "complete" && result.value !== undefined);
+  assert.equal(cold.checker.typeToString(result.value), "boolean");
+  assert.equal(cold.root.instantiations.size, initial + 1);
+  assert.deepEqual(cold.reads.map(read => read.field), ["parameter", "parameter", "true", "true", "true"]);
+  for (let position = 1; position < cold.reads.length; position += 1) {
+    const previous = cold.reads[position - 1];
+    const current = cold.reads[position];
+    assert.ok(previous !== undefined && current !== undefined && previous.after < current.after);
+  }
+  assert.deepEqual(cold.charges.slice(0, 3), [["work", 1], ["work", 1], ["retained", 2]]);
+  assert.deepEqual(cold.charges.at(-1), ["retained", 1]);
+  const trace = cold.charges.slice();
+  const readTrace = cold.reads.slice();
+  cold.charges.length = 0;
+  cold.reads.length = 0;
+  const warm = cold.acquire(() => null);
+  assert.ok(warm.kind === "complete" && warm.value === result.value);
+  assert.deepEqual(cold.charges, [["work", 1], ["work", 1], ["retained", 2], ["work", 3], ["work", 1]]);
+  assert.deepEqual(cold.reads.map(read => read.field), ["parameter"]);
+  assert.equal(cold.root.instantiations.size, initial + 1);
+
+  for (const field of ["work", "retained"] as const) {
+    let maximum = 0;
+    for (const [cost, units] of trace) {
+      if (cost !== field) continue;
+      const subject = prepare();
+      const before = subject.root.instantiations.size;
+      const original = { field, maximum };
+      let remaining = maximum;
+      const denied = subject.acquire((dimension, size) => {
+        if (dimension !== field) return null;
+        if (remaining < size) return original;
+        remaining -= size;
+        return null;
+      });
+      assert.ok(denied.kind === "refused" && denied.stop === original);
+      assert.deepEqual(subject.charges, trace.slice(0, subject.charges.length));
+      assert.deepEqual(subject.reads, readTrace.filter(read => read.after < subject.charges.length));
+      assert.equal(subject.root.instantiations.size, before);
+      if (subject.reads.some(read => read.field === "true")) {
+        assert.equal(subject.host?.checkerSessionTerminal, true);
+        assert.equal(subject.checker.getTypeFromTypeNode(subject.annotation), undefined);
+      } else if (subject.charges.length === 1) {
+        assert.equal(subject.host?.checkerSessionTerminal, false);
+      }
+      maximum += units;
     }
   }
 });

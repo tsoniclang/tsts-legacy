@@ -3,6 +3,7 @@ import type { GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import { NewGoStructMap } from "../../go/compat.js";
 import * as slices from "../../go/slices.js";
 import * as core from "../core/core.js";
+import { admitNativeChecker } from "./resource-admission.js";
 import { Set_Has } from "../collections/set.js";
 import type { Node } from "../ast/spine.js";
 import { IsInJSFile } from "../ast/utilities.js";
@@ -2982,7 +2983,15 @@ export function Checker_createEmptyObjectTypeFromStringLiteral(receiver: GoPtr<C
 export function Checker_newInferenceContext(receiver: GoPtr<Checker>, typeParameters: GoSlice<GoPtr<Type>>, signature: GoPtr<Signature>, flags: InferenceFlags, compareTypes: TypeComparer | undefined): GoPtr<InferenceContext> {
   const c = receiver!;
   const ct = compareTypes !== undefined ? compareTypes : c.compareTypesAssignable;
-  return Checker_newInferenceContextWorker(receiver, core.Map(typeParameters, newInferenceInfo), signature, flags, ct);
+  const count = typeParameters?.length ?? 0;
+  admitNativeChecker(receiver, "retained", 1 + count);
+  const inferences: GoSlice<GoPtr<InferenceInfo>> = [];
+  for (let position = 0; position < count; position += 1) {
+    admitNativeChecker(receiver, "work");
+    admitNativeChecker(receiver, "retained");
+    inferences.push(newInferenceInfo(typeParameters[position]));
+  }
+  return Checker_newInferenceContextWorker(receiver, inferences, signature, flags, ct);
 }
 
 /**
@@ -3046,6 +3055,7 @@ export function Checker_cloneInferredPartOfContext(receiver: GoPtr<Checker>, n: 
  * }
  */
 export function Checker_newInferenceContextWorker(receiver: GoPtr<Checker>, inferences: GoSlice<GoPtr<InferenceInfo>>, signature: GoPtr<Signature>, flags: InferenceFlags, compareTypes: TypeComparer): GoPtr<InferenceContext> {
+  admitNativeChecker(receiver, "retained");
   const n: InferenceContext = {
     inferences,
     signature,

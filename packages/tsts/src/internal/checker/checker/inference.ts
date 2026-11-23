@@ -13,6 +13,7 @@ import { InternalSymbolNameInstantiationExpression } from "../../ast/symbol.js";
 import { SymbolFlagsMethod, SymbolFlagsNone, SymbolFlagsPrototype, SymbolFlagsTypeLiteral } from "../../ast/symbolflags.js";
 import { Diagnostic_AddRelatedInfo, DiagnosticsCollection_Add, NewDiagnostic } from "../../ast/diagnostic.js";
 import { Filter, FindLastIndex, IfElse, Map, OrElse, Same, SameMap, Some } from "../../core/core.js";
+import { admitNativeChecker } from "../resource-admission.js";
 import { LinkStore_Get } from "../../core/linkstore.js";
 import { getDeclarationsOfKind, isNodeDescendantOf, IsTypeAny, NewDiagnosticForNode } from "../utilities.js";
 import { Checker_symbolToString, Checker_TypeToString } from "../printer.js";
@@ -114,6 +115,8 @@ import {
   intrinsicTypeKinds,
   getTypeInstantiationKey,
   getConditionalTypeKey,
+  instantiateConditionalArguments,
+  createConditionalMapper,
   getTypeAliasInstantiationKey,
   getStringLiteralValue,
   everyType,
@@ -1178,14 +1181,19 @@ export function Checker_getConditionalTypeInstantiation(receiver: GoPtr<Checker>
 }
 
 export function Checker_getConditionalTypeInstantiationWithCapture(receiver: GoPtr<Checker>, t: GoPtr<Type>, mapper: GoPtr<TypeMapper>, forConstraint: bool, alias: GoPtr<TypeAlias>, capture: ExtensionConditionalCapture | undefined): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   const root = Type_AsConditionalType(t)!.root;
-  if (root!.outerTypeParameters.length !== 0) {
-    const typeArguments = Map(root!.outerTypeParameters, (tp: GoPtr<Type>): GoPtr<Type> => TypeMapper_Map(mapper, tp));
-    const key = getConditionalTypeKey(typeArguments, alias, forConstraint);
-    const cached = root!.instantiations.get(key);
+  const parameters = root!.outerTypeParameters;
+  if (parameters.length !== 0) {
+    const typeArguments = instantiateConditionalArguments(receiver, parameters, mapper);
+    const key = getConditionalTypeKey(receiver, typeArguments, alias, forConstraint);
+    admitNativeChecker(receiver, "work");
+    const instantiations = root!.instantiations;
+    const cached = instantiations.get(key);
     let result = cached;
     if (result === undefined || capture !== undefined) {
-      const newMapper = newTypeMapper(root!.outerTypeParameters, typeArguments);
+      const newMapper = createConditionalMapper(receiver, parameters, typeArguments);
+      admitNativeChecker(receiver, "work", 2);
       const checkType = root!.checkType;
       let distributionType: GoPtr<Type> = undefined;
       if (root!.isDistributive) {
@@ -1202,7 +1210,10 @@ export function Checker_getConditionalTypeInstantiationWithCapture(receiver: GoP
           ? Checker_getConditionalType(receiver, root, newMapper, forConstraint, alias)
           : Checker_getConditionalTypeWithCapture(receiver, root, newMapper, forConstraint, alias, capture);
       }
-      if (capture === undefined) root!.instantiations.set(key, result);
+      if (capture === undefined) {
+        admitNativeChecker(receiver, "retained");
+        instantiations.set(key, result);
+      }
     }
     if (capture !== undefined && cached !== undefined) {
       return result !== undefined && Checker_isTypeIdenticalTo(receiver, result, cached) ? cached : undefined;

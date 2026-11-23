@@ -1,5 +1,6 @@
 import type { bool, int } from "../../../go/scalars.js";
-import { Filter, IfElse, Map as core_Map, OrElse, Some } from "../../core/core.js";
+import { Filter, IfElse, OrElse, Some } from "../../core/core.js";
+import { admitNativeChecker } from "../resource-admission.js";
 import type { GoPtr, GoSlice } from "../../../go/compat.js";
 import { Tristate_IsTrue } from "../../core/tristate.js";
 import type { Node } from "../../ast/spine.js";
@@ -88,7 +89,7 @@ import { AsBinaryExpression, AsConditionalExpression, AsImportEqualsDeclaration,
 import type { ExportSpecifierNode, IdentifierNode } from "../../ast/generated/unions.js";
 import type { Symbol } from "../../ast/symbol.js";
 import { LinkStore_Get } from "../../core/linkstore.js";
-import { Checker_combineTypeMappers, newTypeMapper, TypeMapper_Map } from "../mapper.js";
+import { Checker_combineTypeMappers, TypeMapper_Map } from "../mapper.js";
 import type { TypeMapper } from "../mapper.js";
 import { Checker_isTypeAssignableTo } from "../relater.js";
 import type { ArrayLiteralLinks, SymbolReferenceLinks } from "../types.js";
@@ -100,7 +101,7 @@ import { Checker_getContextualType, Checker_getOptionalType, Checker_getProperti
 import { Checker_getCombinedNodeFlagsCached } from "./syntax-checking.js";
 import { Checker_checkExternalImportOrExportDeclaration, Checker_getPropertyOfObjectType, Checker_getTypeOfPropertyOfType, Checker_getTypeOfSymbol, Checker_isContextSensitiveFunctionLikeDeclaration, Checker_isExactOptionalPropertyMismatch, Checker_markDecoratorAliasReferenced, Checker_markExportSpecifierAliasReferenced, Checker_markIdentifierAliasReferenced, Checker_markImportEqualsAliasReferenced, Checker_markJsxAliasReferenced, Checker_markPropertyAliasReferenced } from "./symbols.js";
 import type { CacheHashKey, CallState, Checker, IterationTypeKind, keyBuilder, ReferenceHint, WideningContext } from "./state.js";
-import { isInternalModuleImportEqualsDeclaration, isTupleType, IterationTypeKindYield, ReferenceHintDecorator, ReferenceHintExportAssignment, ReferenceHintExportImportEquals, ReferenceHintExportSpecifier, ReferenceHintIdentifier, ReferenceHintJsx, ReferenceHintProperty, ReferenceHintUnspecified, shouldMarkIdentifierAliasReferenced } from "./state.js";
+import { createConditionalMapper, instantiateConditionalArguments, isInternalModuleImportEqualsDeclaration, isTupleType, IterationTypeKindYield, ReferenceHintDecorator, ReferenceHintExportAssignment, ReferenceHintExportImportEquals, ReferenceHintExportSpecifier, ReferenceHintIdentifier, ReferenceHintJsx, ReferenceHintProperty, ReferenceHintUnspecified, shouldMarkIdentifierAliasReferenced } from "./state.js";
 import { Checker_markExportAssignmentAliasReferenced } from "./relations.js";
 import { The_call_would_have_succeeded_against_this_implementation_but_implementation_signatures_of_overloads_are_not_externally_visible } from "../../diagnostics/generated/messages.js";
 
@@ -734,12 +735,16 @@ export function Checker_getCombinedModifierFlagsCached(receiver: GoPtr<Checker>,
  * }
  */
 export function Checker_getTailRecursionRoot(receiver: GoPtr<Checker>, newType: GoPtr<Type>, newMapper: GoPtr<TypeMapper>): [GoPtr<ConditionalRoot>, GoPtr<TypeMapper>] {
+  admitNativeChecker(receiver, "work");
   if ((newType!.flags & TypeFlagsConditional) !== 0 && newMapper !== undefined) {
-    const newRoot = Type_AsConditionalType(newType)!.root;
-    if (newRoot!.outerTypeParameters.length !== 0) {
-      const typeParamMapper = Checker_combineTypeMappers(receiver, Type_AsConditionalType(newType)!.mapper, newMapper);
-      const typeArguments = core_Map(newRoot!.outerTypeParameters, (t: GoPtr<Type>): GoPtr<Type> => TypeMapper_Map(typeParamMapper, t));
-      const newRootMapper = newTypeMapper(newRoot!.outerTypeParameters, typeArguments);
+    const conditional = Type_AsConditionalType(newType)!;
+    const newRoot = conditional.root;
+    const parameters = newRoot!.outerTypeParameters;
+    if (parameters.length !== 0) {
+      const typeParamMapper = Checker_combineTypeMappers(receiver, conditional.mapper, newMapper);
+      const typeArguments = instantiateConditionalArguments(receiver, parameters, typeParamMapper);
+      const newRootMapper = createConditionalMapper(receiver, parameters, typeArguments);
+      admitNativeChecker(receiver, "work");
       const newCheckType: GoPtr<Type> = newRoot!.isDistributive ? TypeMapper_Map(newRootMapper, newRoot!.checkType) : undefined;
       if (newCheckType === undefined || newCheckType === newRoot!.checkType || (newCheckType!.flags & (TypeFlagsUnion | TypeFlagsNever)) === 0) {
         return [newRoot, newRootMapper];

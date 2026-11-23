@@ -74,7 +74,7 @@ export function readConditionalApplication(checker: Checker, result: Type, data:
     if (file === undefined || !checker.fileIndexMap.has(file)) return null;
     bindings.push(Object.freeze({ declaration, parameter, argument }));
   }
-  if (root.instantiations.get(getConditionalTypeKey(inputs.targets, result.alias, false)) !== result) return null;
+  if (root.instantiations.get(getConditionalTypeKey(checker, inputs.targets, result.alias, false)) !== result) return null;
   return Object.freeze(bindings);
 }
 

@@ -19,7 +19,7 @@ import { isShorthandAmbientModuleSymbol } from "../utilities.js";
 import { Checker_hasSignatures } from "./signatures.js";
 import { Checker_canHaveSyntheticDefault } from "./support.js";
 import { isESMFormatImportImportingCommonjsFormatFile } from "./state.js";
-import { Checker_cloneTypeAsModuleType, Checker_getSpreadType, Checker_getTypeWithSyntheticDefaultOnly, Checker_isValidSpreadType, Checker_mapTypeEx, Checker_removeType } from "./types.js";
+import { Checker_cloneTypeAsModuleType, Checker_getSpreadType, Checker_getTypeWithSyntheticDefaultOnly, Checker_isValidSpreadType, Checker_mapTypeEx, Checker_removeType, mapNativeTypeMembers } from "./types.js";
 import type { Hasher } from "../../../go/github.com/zeebo/xxh3.js";
 import * as xxh3 from "../../../go/github.com/zeebo/xxh3.js";
 import { Clone as MapClone, Values as MapValues } from "../../../go/maps.js";
@@ -12449,12 +12449,16 @@ export function keyBuilder_writeSymbol(receiver: GoPtr<keyBuilder>, s: GoPtr<Sym
  */
 export function keyBuilder_writeAlias(receiver: GoPtr<keyBuilder>, alias: GoPtr<TypeAlias>): void {
   if (alias !== undefined) {
-    keyBuilder_writeByte(receiver, 1);
-    keyBuilder_writeSymbol(receiver, alias.symbol);
-    keyBuilder_writeTypes(receiver, alias.typeArguments);
+    keyBuilder_writePresentAlias(receiver, alias.symbol, alias.typeArguments);
   } else {
     keyBuilder_writeByte(receiver, 0);
   }
+}
+
+export function keyBuilder_writePresentAlias(receiver: GoPtr<keyBuilder>, symbol: GoPtr<Symbol>, argumentsList: GoSlice<GoPtr<Type>>): void {
+  keyBuilder_writeByte(receiver, 1);
+  keyBuilder_writeSymbol(receiver, symbol);
+  keyBuilder_writeTypes(receiver, argumentsList);
 }
 
 /**
@@ -17181,7 +17185,9 @@ export function Checker_getWidenedUniqueESSymbolType(receiver: GoPtr<Checker>, t
  */
 export function Checker_mapTypeWithAlias(receiver: GoPtr<Checker>, t: GoPtr<Type>, f: (t: GoPtr<Type>) => GoPtr<Type>, alias: GoPtr<TypeAlias>): GoPtr<Type> {
   if ((t!.flags & TypeFlagsUnion) !== 0 && alias !== undefined) {
-    return Checker_getUnionTypeEx(receiver, Map(Type_Types(t), f), UnionReductionLiteral, alias, undefined);
+    admitNativeChecker(receiver, "work");
+    const mapped = mapNativeTypeMembers(receiver, Type_Types(t), f, () => true);
+    return Checker_getUnionTypeEx(receiver, mapped, UnionReductionLiteral, alias, undefined);
   }
   return Checker_mapType(receiver, t, f);
 }
