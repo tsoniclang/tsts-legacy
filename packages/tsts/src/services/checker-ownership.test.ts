@@ -5,11 +5,12 @@ import { createCompilerSessionFromFiles } from "../index.js";
 import type { Node } from "../index.js";
 import { Background } from "../go/context.js";
 import { Program_GetTypeChecker } from "../internal/compiler/program.js";
+import { Checker_getReturnTypeOfSignature } from "../internal/checker/checker/signatures.js";
 import { Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { KindTypeAliasDeclaration } from "../internal/ast/generated/kinds.js";
 import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
 import type { NativeCheckerCost } from "../internal/checker/resource-admission.js";
-import { withOwnedChecker } from "./checker-ownership.js";
+import { withOwnedChecker, withOwnedCheckerAcquisition } from "./checker-ownership.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { createTypeShapeQueries } from "./type-shape.js";
 
@@ -53,6 +54,76 @@ function open(checkers: number) {
   };
   return { session, view, annotation };
 }
+
+test("a cold composite signature pays before the actual return and child signature reads", () => {
+  type Charge = readonly [NativeCheckerCost, number];
+  const prepare = () => {
+    const { program, index } = createProgram("type Selected = ((value: string) => string) | ((value: string) => number);");
+    assert.ok(program !== undefined && index !== undefined);
+    attachExtensionHost(program);
+    const checker = createTypeCheckerQueries(program, { sourceFile: index });
+    const shape = createTypeShapeQueries(program, { sourceFile: index });
+    const annotation = Node_Type(findNodesByKind(index, KindTypeAliasDeclaration)[0]);
+    const type = checker.getTypeFromTypeNode(annotation)?.type;
+    assert.ok(type?.checker !== undefined);
+    const owner = type.checker;
+    const inventory = shape.getStructuredInventory(type, () => null);
+    assert.ok(inventory.kind === "complete" && inventory.value.callSignatureCount === 1);
+    const signature = inventory.value.signatures[0];
+    assert.ok(signature?.composite !== undefined && signature.checkerId === owner.id);
+    assert.equal(signature.resolvedReturnType, undefined, "the actual composite return has not been computed");
+    const rows = signature.composite.signatures;
+    assert.equal(rows.length, 2);
+    const reached: number[] = [];
+    for (let position = 0; position < rows.length; position += 1) {
+      const original = rows[position];
+      Object.defineProperty(rows, position, { get() { reached.push(position); return original; } });
+    }
+    const acquire = <Stop extends object>(admit: (cost: NativeCheckerCost, units: number) => Stop | null) =>
+      withOwnedCheckerAcquisition(program, index, owner, Background(), admit,
+        selected => Checker_getReturnTypeOfSignature(selected, signature));
+    return { acquire, reached, host: getExtensionHost(program), checker, annotation, signature };
+  };
+  const completed = prepare();
+  const trace: Charge[] = [];
+  const answer = completed.acquire((cost, units) => { trace.push([cost, units]); return null; });
+  assert.ok(answer.kind === "complete" && answer.value === completed.signature.resolvedReturnType);
+  assert.deepEqual(completed.reached, [0, 1]);
+  assert.deepEqual(trace.slice(0, 3), [["work", 1], ["retained", 3], ["work", 1]]);
+  const warm: Charge[] = [];
+  completed.reached.length = 0;
+  const repeated = completed.acquire((cost, units) => { warm.push([cost, units]); return null; });
+  assert.ok(repeated.kind === "complete" && repeated.value === answer.value);
+  assert.deepEqual(warm, [["work", 1]]);
+  assert.deepEqual(completed.reached, []);
+
+  for (const field of ["work", "retained"] as const) {
+    let maximum = 0;
+    for (const [dimension, size] of trace) {
+      if (dimension !== field) continue;
+      const subject = prepare();
+      const refused = { field, maximum };
+      let remaining = maximum;
+      const paid: Charge[] = [];
+      const result = subject.acquire((cost, units) => {
+        paid.push([cost, units]);
+        if (cost !== field) return null;
+        if (remaining < units) return refused;
+        remaining -= units;
+        return null;
+      });
+      assert.ok(result.kind === "refused" && result.stop === refused);
+      assert.deepEqual(paid, trace.slice(0, paid.length));
+      assert.deepEqual(subject.reached, [0, 1].slice(0, subject.reached.length));
+      assert.equal(subject.signature.resolvedReturnType, undefined);
+      if (maximum === 0) assert.deepEqual(subject.reached, []);
+      const provisional = field === "retained" || maximum > 0;
+      assert.equal(subject.host?.checkerSessionTerminal, provisional);
+      assert.equal(subject.checker.getTypeFromTypeNode(subject.annotation) === undefined, provisional);
+      maximum += size;
+    }
+  }
+});
 
 for (const checkers of [1, 4]) test(`type consumers admit actual program pool members with ${checkers} checkers`, () => {
   const current = open(checkers);

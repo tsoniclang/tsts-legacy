@@ -1,5 +1,5 @@
 import type { LiteralConstructionOwner } from "./literal-creation.js";
-import { admitNativeChecker } from "../resource-admission.js";
+import { admitNativeChecker, markNativeCheckerProvisional } from "../resource-admission.js";
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoMap, GoPtr, GoSlice } from "../../../go/compat.js";
@@ -8274,9 +8274,10 @@ export function Checker_isTypeUsableAsIndexSignatureDeclaration(receiver: GoPtr<
  * }
  */
 export function Checker_getReturnTypeOfSignature(receiver: GoPtr<Checker>, sig: GoPtr<Signature>): GoPtr<Type> {
-  if (sig!.resolvedReturnType !== undefined) {
-    return sig!.resolvedReturnType;
-  }
+  admitNativeChecker(receiver, "work");
+  const ready = sig!.resolvedReturnType;
+  if (ready !== undefined) return ready;
+  markNativeCheckerProvisional(receiver);
   if (!Checker_pushTypeResolution(receiver, sig, TypeSystemPropertyNameResolvedReturnType)) {
     return receiver!.errorType;
   }
@@ -8284,7 +8285,16 @@ export function Checker_getReturnTypeOfSignature(receiver: GoPtr<Checker>, sig: 
   if (sig!.target !== undefined) {
     t = Checker_instantiateType(receiver, Checker_getReturnTypeOfSignature(receiver, sig!.target), sig!.mapper);
   } else if (sig!.composite !== undefined) {
-    t = Checker_instantiateType(receiver, Checker_getUnionOrIntersectionType(receiver, core.Map(sig!.composite.signatures, (signature: GoPtr<Signature>) => Checker_getReturnTypeOfSignature(receiver, signature)), sig!.composite.isUnion, UnionReductionSubtype), sig!.mapper);
+    const composite = sig!.composite;
+    const rows = composite.signatures;
+    const count = rows.length;
+    admitNativeChecker(receiver, "retained", count + 1);
+    const results: GoPtr<Type>[] = [];
+    for (let position = 0; position < count; position += 1) {
+      admitNativeChecker(receiver, "work");
+      results.push(Checker_getReturnTypeOfSignature(receiver, rows[position]));
+    }
+    t = Checker_instantiateType(receiver, Checker_getUnionOrIntersectionType(receiver, results, composite.isUnion, UnionReductionSubtype), sig!.mapper);
   } else {
     t = Checker_getReturnTypeFromAnnotation(receiver, sig!.declaration);
     if (t === undefined) {
@@ -8316,10 +8326,12 @@ export function Checker_getReturnTypeOfSignature(receiver: GoPtr<Checker>, sig: 
     }
     t = receiver!.anyType;
   }
-  if (sig!.resolvedReturnType === undefined) {
-    sig!.resolvedReturnType = t;
-  }
-  return sig!.resolvedReturnType;
+  admitNativeChecker(receiver, "work");
+  const alreadyCompleted = sig!.resolvedReturnType;
+  if (alreadyCompleted !== undefined) return alreadyCompleted;
+  admitNativeChecker(receiver, "retained");
+  sig!.resolvedReturnType = t;
+  return t;
 }
 
 /**
