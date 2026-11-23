@@ -3,9 +3,10 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { prepareSourceImports } from "../index.js";
-import { loadedLibraryFilesByName } from "./source-import-preparation.js";
-import type { SourceImportPreparation, SourceImportPreparationFile, SourceImportPreparationReference } from "../index.js";
+import { createCompilerSessionFromFiles, prepareSourceImports as prepareFiles } from "../index.js";
+import { loadedLibraryFilesByName, prepareSourceImports } from "./source-import-preparation.js";
+import type { SourceImportPreparationFile, SourceImportPreparationReference } from "../index.js";
+import type { SourceImportPreparation } from "./source-import-preparation.js";
 import type { SourceFile } from "../internal/ast/ast.js";
 import { SourceFile_Diagnostics, SourceFile_FileName, SourceFile_Imports } from "../internal/ast/ast.js";
 import { Diagnostic_Code } from "../internal/ast/diagnostic.js";
@@ -47,7 +48,7 @@ function fixture(files: ReadonlyMap<string, string>, roots: readonly string[], o
   return { host, config, parsed };
 }
 
-function file(result: SourceImportPreparation, fileName: string): SourceImportPreparationFile {
+function file(result: Pick<SourceImportPreparation, "files">, fileName: string): SourceImportPreparationFile {
   const found = result.files.find(candidate => candidate.fileName === fileName);
   assert.equal(found !== undefined, true, `the complete file domain contains ${fileName}`);
   if (found === undefined) throw new Error(`The prepared closure omits ${fileName}.`);
@@ -58,6 +59,46 @@ function facts(reference: SourceImportPreparationReference) {
   return [reference.kind, reference.specifier, reference.mode,
     reference.resolution.kind === "resolved" ? reference.resolution.fileName : "unresolved"];
 }
+
+test("options-mode import preparation and checked opening share the explicit captured roots and files", () => {
+  const first = "/src/first.mts";
+  const second = "/src/second.mts";
+  const alpha = "/src/alpha.mts";
+  const beta = "/src/beta.mts";
+  const files = new Map([
+    [first, '\uFEFF/* astral 🚀 */ import { alpha } from "./alpha.mjs"; export { alpha };'],
+    [second, 'import { beta } from "./beta.mjs"; import "./missing.mjs"; export { beta };'],
+    [alpha, "export const alpha = true;"],
+    [beta, "export const beta = false;"],
+    ["/src/tsconfig.json", '{ "files": ["unexpected.ts"], "compilerOptions": { "target": "bad" } }'],
+    ["/src/unexpected.ts", "export const unexpected: Missing = true;"],
+  ]);
+  const options = { currentDirectory: "/src", files, includeBundledLibraries: false,
+    selectedLibraries: new Map<string, string>(), useCaseSensitiveFileNames: true,
+    compilerOptions: { module: "nodenext", moduleResolution: "nodenext", noLib: true, types: [] } };
+  const cases = [{ root: first, expected: alpha, excluded: beta, references: [["import", "./alpha.mjs", "import", alpha]] },
+    { root: second, expected: beta, excluded: alpha,
+      references: [["import", "./beta.mjs", "import", beta], ["import", "./missing.mjs", "import", "unresolved"]] }];
+  for (const { root, expected, excluded, references } of cases) {
+    const input = { ...options, rootFiles: [root] };
+    const prepared = prepareFiles(input);
+    assert.deepEqual(prepared.roots, [{ fileName: root, state: "loaded" }]);
+    assert.deepEqual(prepared.files.map(entry => entry.fileName), [expected, root]);
+    assert.deepEqual(file(prepared, root).references.map(facts), references);
+    const firstReference = file(prepared, root).references[0]!;
+    const text = files.get(root)!.replace(/^\uFEFF/, "");
+    assert.equal(text.slice(firstReference.start, firstReference.start + firstReference.length), `"${firstReference.specifier}"`);
+    const checked = createCompilerSessionFromFiles(input).checkSource();
+    assert.equal(checked.getSourceFile(root) !== undefined, true);
+    assert.equal(checked.getSourceFile(expected) !== undefined, true);
+    assert.equal(checked.getSourceFile(excluded), undefined);
+    assert.equal(checked.getSourceFile("/src/unexpected.ts"), undefined);
+  }
+  assert.deepEqual(prepareFiles({ ...options, rootFiles: [] }).roots, []);
+  const configured = { ...options, rootFiles: [first], configFileName: "/src/tsconfig.json" };
+  assert.throws(() => prepareFiles(configured), /not a configuration file/);
+  assert.throws(() => Reflect.apply(prepareFiles, undefined, [options]), /requires explicit roots/);
+});
 
 test("source import preparation preserves all eight authored reference families and genuine resolution", () => {
   const authored = [
@@ -753,14 +794,11 @@ test("source import preparation executes real parser and resolver without constr
   const coverageDirectory = mkdtempSync(join(process.cwd(), ".temp/source-import-preparation-"));
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
     const sdk = await import(${JSON.stringify(new URL("../index.js", import.meta.url).href)});
-    const host = sdk.createCompilerHost({currentDirectory:"/src", includeBundledLibraries:false,
-      fileSystem:sdk.createInMemoryFileSystem({includeBundledLibraries:false, files:{
+    const result = sdk.prepareSourceImports({currentDirectory:"/src", includeBundledLibraries:false,
+      rootFiles:["/src/main.mts"], compilerOptions:{module:"nodenext",noLib:true}, files:{
         "/src/main.mts":'import "./dep.mjs"; const value: MissingType = unusedCapabilityValue;',
         "/src/dep.mts":"export {};"
-      }})});
-    const config = sdk.ParseCommandLine(["--module","nodenext","--noLib","/src/main.mts"],host);
-    if (config === undefined) throw new Error("Actual SDK command-line parsing failed.");
-    const result = sdk.prepareSourceImports({host,config});
+      }});
     process.stdout.write(JSON.stringify({files:result.files.map(file=>file.fileName),diagnostics:result.diagnostics.length}));
   `], { encoding: "utf8", env: { ...process.env, NODE_V8_COVERAGE: coverageDirectory }, maxBuffer: 65536 });
   assert.equal(child.status, 0, `the genuine SDK preparation child completes: ${child.stderr.slice(0, 2048)}`);

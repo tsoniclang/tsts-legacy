@@ -46,6 +46,10 @@ import type { CheckedSourceProgram } from "../extensions/source-program.js";
 import { getProviderVirtualArtifactForCompiler } from "../extensions/provider-virtual-internal.js";
 import { createCompilerHost, createInMemoryFileSystem } from "./embedding-host.js";
 import type { CompilerHostOptions } from "./embedding-host.js";
+import { prepareSourceImports as loadSourceImports } from "./source-import-preparation.js";
+import type { SourceImportPreparation as LoadedSourceImports } from "./source-import-preparation.js";
+import { createAstReader } from "./ast-reader.js";
+import { flattenDiagnosticMessageText } from "./transpile.js";
 export type CompilerDiagnosticKind =
   | "config"
   | "program"
@@ -346,7 +350,10 @@ function diagnosticKindRequiresSemanticProgram(kind: CompilerDiagnosticKind): bo
     || kind === "all";
 }
 
-export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionOptions): CompilerSession {
+export type SourceImportPreparationInput = Omit<InMemoryCompilerSessionOptions,
+  "configFileName" | "extensionHostOptions" | "context"> & { readonly rootFiles: readonly string[] };
+
+function createFilesProgramInputs(options: InMemoryCompilerSessionOptions) {
   const files = options.files instanceof Map ? new Map(options.files) : new Map(Object.entries(options.files));
   const fileSystem = createInMemoryFileSystem({
     files,
@@ -387,12 +394,55 @@ export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionO
     supplied.Errors = [...optionErrors];
     config = supplied;
   }
+  return { Config: config, Host: host,
+    ...(options.selectedLibraries !== undefined ? { SelectedLibraries: options.selectedLibraries } : {}) };
+}
+
+interface PreparedDiagnosticNote {
+  readonly code: number;
+  readonly message: string;
+  readonly site: { readonly fileName: string; readonly start: number; readonly length: number } | null;
+}
+
+export interface PreparedImportDiagnostic extends PreparedDiagnosticNote {
+  readonly category: Diagnostic["category"];
+  readonly arguments: readonly string[];
+  readonly related: readonly PreparedDiagnosticNote[];
+}
+
+export interface SourceImportPreparation extends Omit<LoadedSourceImports, "diagnostics"> {
+  readonly diagnostics: readonly PreparedImportDiagnostic[];
+}
+
+export function prepareSourceImports(input: SourceImportPreparationInput): SourceImportPreparation {
+  if ("configFileName" in input) throw new TypeError("Source import preparation accepts options and explicit roots, not a configuration file.");
+  if (!Array.isArray(input.rootFiles)) throw new TypeError("Source import preparation requires explicit roots.");
+  const { Config, Host, SelectedLibraries } = createFilesProgramInputs(input);
+  if (Config === undefined) throw new Error("Source import preparation requires a parsed command line.");
+  const prepared = loadSourceImports({ host: Host, config: Config,
+    ...(SelectedLibraries === undefined ? {} : { libraryFiles: SelectedLibraries }) });
+  const ast = createAstReader();
+  const note = (diagnostic: Diagnostic): PreparedDiagnosticNote => {
+    const file = diagnostic.file;
+    const message = flattenDiagnosticMessageText(diagnostic);
+    if (file === undefined) return { code: diagnostic.code, message, site: null };
+    const range = ast.sourceRange(file, diagnostic.loc.pos, diagnostic.loc.end);
+    if (range.kind !== "source") throw new Error("An import diagnostic must have a source range.");
+    return { code: diagnostic.code, message,
+      site: { fileName: ast.getFileName(file), start: range.start, length: range.end - range.start } };
+  };
+  return { roots: prepared.roots, files: prepared.files, diagnostics: prepared.diagnostics.map(diagnostic => ({
+    ...note(diagnostic), category: diagnostic.category, arguments: diagnostic.messageArgs,
+    related: diagnostic.relatedInformation.map(entry => {
+      if (entry === undefined) throw new Error("An import diagnostic contains an absent related diagnostic.");
+      return note(entry);
+    }),
+  })) };
+}
+
+export function createCompilerSessionFromFiles(options: InMemoryCompilerSessionOptions): CompilerSession {
   return createCompilerSession({
-    programOptions: {
-      Config: config,
-      Host: host,
-      ...(options.selectedLibraries !== undefined ? { SelectedLibraries: options.selectedLibraries } : {}),
-    },
+    programOptions: createFilesProgramInputs(options),
     ...(options.extensionHostOptions !== undefined ? { extensionHostOptions: options.extensionHostOptions } : {}),
     ...(options.context !== undefined ? { context: options.context } : {}),
   });

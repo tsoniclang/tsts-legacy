@@ -265,10 +265,9 @@ export type {
 } from "./internal/checker/types.js";
 export { readOriginalSignature } from "./internal/checker/original-signature-evidence.js";
 export { ContextFlagsSkipBindingPatterns, TypeFlagsConditional, TypeFlagsIndexedAccess, TypeFlagsUniqueESSymbol } from "./internal/checker/types.js";
-export { prepareSourceImports } from "./services/source-import-preparation.js";
+export { prepareSourceImports } from "./services/compiler-session.js";
+export type { PreparedImportDiagnostic, SourceImportPreparation, SourceImportPreparationInput } from "./services/compiler-session.js";
 export type {
-  SourceImportPreparationInput,
   SourceImportPreparationReference,
   SourceImportPreparationFile,
-  SourceImportPreparation,
 } from "./services/source-import-preparation.js";

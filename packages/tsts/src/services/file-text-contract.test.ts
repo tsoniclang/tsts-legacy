@@ -6,7 +6,8 @@ import { FromMap } from "../internal/vfs/vfstest/vfstest.js";
 import { Parse as parsePackageJson } from "../internal/packagejson/packagejson.js";
 import { Unmarshal as unmarshalJson } from "../internal/json/json.js";
 import { GetParsedCommandLineOfConfigFile } from "../internal/tsoptions/tsconfigparsing.js";
-import { createCompilerHost, prepareSourceImports } from "../index.js";
+import { createCompilerHost } from "../index.js";
+import { prepareSourceImports } from "./source-import-preparation.js";
 
 // The text of a file as the SDK delivers it to the parser, for the paths that carry source files, declaration files,
 // session documents and bundled declarations. Contract of a file read, from the Go original (decodeBytes): input with
