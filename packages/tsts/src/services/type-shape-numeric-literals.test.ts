@@ -29,6 +29,25 @@ function aliasType(source: SourceFileQueries, name: string): Type {
   return type;
 }
 
+test("enum types retain their nominal declaration independently of equal member values", () => {
+  const text = `enum ModeLeft { First = 2, Second = 5 } enum ModeRight { First = 2 } enum ModeText { First = "two" }
+    type Whole = ModeLeft; type LeftMember = ModeLeft.First; type RightMember = ModeRight.First; type TextMember = ModeText.First;
+    type PlainNumber = 2; type NumericUnion = 2 | 5; type Mixed = ModeLeft.First | ModeRight.First; type Namespace = typeof ModeLeft;`;
+  const { source } = checkedSource(text);
+  const declarations = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsEnumDeclaration);
+  assert.equal(declarations.length, 3);
+  for (const [name, ordinal] of [["Whole", 0], ["LeftMember", 0], ["RightMember", 1], ["TextMember", 2]] as const) {
+    const type = aliasType(source, name);
+    assert.equal(source.typeShape.getEnumOwnerDeclaration(type) === declarations[ordinal], true, name);
+    assert.equal(source.typeShape.getEnumOwnerDeclaration({ ...type }), undefined, "an equal-shaped copy does not own the native type");
+  }
+  for (const name of ["PlainNumber", "NumericUnion", "Mixed", "Namespace"]) {
+    assert.equal(source.typeShape.getEnumOwnerDeclaration(aliasType(source, name)), undefined, name);
+  }
+  const foreign = checkedSource(text);
+  assert.equal(source.typeShape.getEnumOwnerDeclaration(aliasType(foreign.source, "LeftMember")), undefined);
+});
+
 test("numeric literal type values preserve exact checker numbers and signed bigint values", () => {
   const { source } = checkedSource(`
     type Small = 2;

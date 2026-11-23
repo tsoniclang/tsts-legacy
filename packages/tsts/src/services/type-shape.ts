@@ -10,9 +10,11 @@ import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Symbol, Node_Type, SourceFile_FileName } from "../internal/ast/ast.js";
 import { AsConditionalTypeNode } from "../internal/ast/generated/casts.js";
 import { IsLiteralTypeNode } from "../internal/ast/generated/predicates.js";
+import { KindEnumDeclaration } from "../internal/ast/generated/kinds.js";
 import { Node_AsNode } from "../internal/ast/spine.js";
 import { GetSourceFileOfNode, IsFunctionLike } from "../internal/ast/utilities.js";
 import type { Symbol } from "../internal/ast/symbol.js";
+import { SymbolFlagsEnum, SymbolFlagsEnumMember } from "../internal/ast/symbolflags.js";
 import {
   CheckFlagsOptionalParameter,
   CheckFlagsRestParameter,
@@ -78,6 +80,7 @@ import {
   TypeFlagsBooleanLike,
   TypeFlagsBooleanLiteral,
   TypeFlagsConditional,
+  TypeFlagsEnumLike,
   TypeFlagsESSymbolLike,
   TypeFlagsIntersection,
   TypeFlagsNever,
@@ -266,6 +269,7 @@ export interface TypeShapeQueries {
   readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
   readonly getTupleInfo: (type: GoPtr<Type>) => TypeTupleInfo | undefined;
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
+  readonly getEnumOwnerDeclaration: (type: GoPtr<Type>) => GoPtr<Node>;
   readonly getObjectPropertyHeaders: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<TypePropertyHeaderInventory, Stop>;
   readonly getStructuredInventory: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<StructuredTypeInventory, Stop>;
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
@@ -447,6 +451,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       (checker) => getTypeTupleInfo(checker, type),
     ),
     getObjectPropertyInfo: (type, name) => withObject(type, (checker, object) => readObjectPropertyInfo(checker, object, name)),
+    getEnumOwnerDeclaration: type => withCheckerForType(program, type, defaultOptions, () => enumOwnerDeclaration(type)),
     getObjectPropertyHeaders: (type, admit) => getObjectPropertyHeaders(program, type, defaultOptions, admit),
     getStructuredInventory: (type, admit) => getStructuredTypeInventory(program, type, defaultOptions, admit),
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
@@ -499,6 +504,16 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
 
 function hasFlags(type: GoPtr<Type>, flags: number): boolean {
   return type !== undefined && (type.flags & flags) !== 0;
+}
+
+function enumOwnerDeclaration(type: GoPtr<Type>): GoPtr<Node> {
+  if (type === undefined || !hasFlags(type, TypeFlagsEnumLike) || type.data.AsType() !== type) return undefined;
+  const symbol = type.symbol;
+  if (symbol === undefined) return undefined;
+  const owner = (symbol.Flags & SymbolFlagsEnumMember) === 0 ? symbol : symbol.Parent;
+  const declaration = owner?.ValueDeclaration;
+  return owner !== undefined && (owner.Flags & SymbolFlagsEnum) !== 0 && declaration?.Kind === KindEnumDeclaration
+    ? declaration : undefined;
 }
 
 function readConditionalBranch(checker: Checker, node: GoPtr<Node>, completed: GoPtr<Type>): TypeConditionalBranch | undefined {
