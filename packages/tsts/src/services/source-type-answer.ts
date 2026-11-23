@@ -28,10 +28,31 @@ interface SourceTypeOptions {
   readonly admitsCheckerDiagnostic?: CheckerDiagnosticMembership;
 }
 
-export function admitSourceTypeAnswer(answer: SourceTypeAnswer, admits: CheckerDiagnosticMembership | undefined): SourceTypeAnswer {
+export function admitSourceTypeAnswer(answer: SourceTypeAnswer, admits: CheckerDiagnosticMembership | undefined,
+  checker?: Checker): SourceTypeAnswer {
   if (admits === undefined || answer.causes.length === 0) return answer;
-  const causes = answer.causes.filter(admits);
-  return causes.length === answer.causes.length ? answer : { ...answer, causes };
+  let causes: Diagnostic[] | undefined;
+  for (let position = 0; position < answer.causes.length; position += 1) {
+    admitNativeChecker(checker, "work");
+    const cause = answer.causes[position];
+    if (cause === undefined) throw new Error("A source-type answer requires a dense diagnostic vector.");
+    if (!admits(cause)) {
+      if (causes !== undefined) continue;
+      admitNativeChecker(checker, "retained");
+      causes = [];
+      for (let prefix = 0; prefix < position; prefix += 1) {
+        admitNativeChecker(checker, "work");
+        admitNativeChecker(checker, "retained");
+        causes.push(answer.causes[prefix]!);
+      }
+    } else if (causes !== undefined) {
+      admitNativeChecker(checker, "retained");
+      causes.push(cause);
+    }
+  }
+  if (causes === undefined) return answer;
+  admitNativeChecker(checker, "retained");
+  return { ...answer, causes };
 }
 
 function selectedSignatureReturn(checker: Checker, signature: Signature | undefined, type: Type | undefined,
@@ -65,7 +86,7 @@ function readHead(checker: Checker, request: SourceTypeRequest, admits: CheckerD
     case "contextual": {
       const output: SourceTypeAnswerOutput = { value: undefined };
       const type = Checker_getContextualType(checker, request.node, request.flags ?? ContextFlagsNone, output);
-      return output.value?.type === type && output.value !== undefined ? admitSourceTypeAnswer(output.value, admits)
+      return output.value?.type === type && output.value !== undefined ? admitSourceTypeAnswer(output.value, admits, checker)
         : type === undefined ? undefined : { type, causes: [] };
     }
   }
@@ -100,7 +121,7 @@ export function resolveSourceTypeAnswer(program: Program, options: SourceTypeOpt
   return result.kind === "complete" ? result.value : undefined;
 }
 
-function settleSourceTypeAnswer<Stop extends object>(program: Program, options: SourceTypeOptions, answer: SourceTypeAnswer | undefined,
+export function settleSourceTypeAnswer<Stop extends object>(program: Program, options: SourceTypeOptions, answer: SourceTypeAnswer | undefined,
   admit: NativeCheckerAdmission<Stop> | null): NativeCheckerResult<ResolvedSourceTypeInfo, Stop> {
   if (answer === undefined) return { kind: "unavailable" };
   if (answer.borrowedFrom === undefined) return { kind: "complete", value: answer };

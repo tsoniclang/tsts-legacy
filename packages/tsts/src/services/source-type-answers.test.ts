@@ -16,6 +16,57 @@ import { Node_Arguments, Node_Expression, Node_Type, SourceFile_Text } from "../
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { Diagnostic_End, Diagnostic_Pos, type Diagnostic } from "../internal/ast/diagnostic.js";
 
+test("bounded storage settles original wrapper evidence before completing the shared occurrence cache", () => {
+  const open = () => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/storage", includeBundledLibraries: false,
+      files: { "/storage/core.d.ts": testCoreDeclarations,
+        "/storage/source.ts": "export function store(value:boolean) { const fixed:boolean=true; ((fixed))=value; }" },
+      compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+    const checked = session.checkSource();
+    const sourceFile = checked.getSourceFile("/storage/source.ts");
+    assert.ok(sourceFile);
+    const source = checked.getSourceFileQueries(sourceFile);
+    const [binary] = findNodes(sourceFile, source.ast.children, source.ast.is.IsBinaryExpression);
+    const left = AsBinaryExpression(binary)?.Left;
+    assert.ok(left);
+    const diagnostic = checked.diagnostics.flatMap(root => {
+      assert.ok(root);
+      return getDiagnosticRunMembers(root);
+    }).find(root => root.code === 2588);
+    assert.ok(diagnostic);
+    return { source, left, diagnostic };
+  };
+  const actual = open();
+  const charges: [cost: "work" | "retained", units: number][] = [];
+  const acquired = actual.source.checker.acquireResolvedStorage(actual.left, (cost, units) => {
+    charges.push([cost, units]);
+    return null;
+  });
+  if (acquired.kind !== "complete") assert.fail("The actual target needs its completed storage answer.");
+  assert.equal(acquired.value.expression === actual.left, true);
+  assert.equal(actual.source.ast.kindName(acquired.value.storageExpression), "KindIdentifier");
+  assert.equal(acquired.value.writable, false);
+  assert.equal(acquired.value.type.causes[0] === actual.diagnostic, true);
+  assert.equal(actual.source.checker.getResolvedStorageInfo(actual.left) === acquired.value, true);
+  const original = { resource: "storage" };
+  const cachedRefusal = actual.source.checker.acquireResolvedStorage(actual.left, () => original);
+  assert.equal(cachedRefusal.kind === "refused" && cachedRefusal.stop === original, true);
+  assert.equal(actual.source.checker.getResolvedStorageInfo(actual.left) === acquired.value, true);
+  for (const [cut, expected] of charges.entries()) {
+    const trial = open();
+    let reached = 0;
+    const refused = trial.source.checker.acquireResolvedStorage(trial.left, (cost, units) => {
+      if (reached++ !== cut) return null;
+      assert.deepEqual([cost, units], expected, `cut ${cut}`);
+      return original;
+    });
+    assert.equal(reached, cut + 1);
+    assert.equal(refused.kind === "refused" && refused.stop === original, true);
+  }
+  assert.equal(open().source.checker.acquireResolvedStorage(actual.left,
+    () => assert.fail("a foreign wrapper cannot reach storage admission")).kind, "unavailable");
+});
+
 test("selected signatures retain the actual passive mapping of a direct parameter return", () => {
   const session = createCompilerSessionFromFiles({ currentDirectory: "/mapped-return", includeBundledLibraries: false,
     files: { "/mapped-return/core.d.ts": testCoreDeclarations,
