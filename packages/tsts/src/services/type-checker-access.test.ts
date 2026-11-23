@@ -880,6 +880,32 @@ test("mapped property metadata retains actual mapped owners, checked keys and sy
   assert.equal(shape.getPropertyInfos(queries.getTypeAtLocation(variable("ordinary"))?.type).every(property => property.mapped === undefined), true);
 });
 
+test("wide composite properties finish in native order and retain the canonical symbols", () => {
+  const fields = Array.from({ length: 256 }, (_, index) => `field${255 - index}`);
+  const properties = fields.map(name => `${name}: T;`).join(" ");
+  const { program, index } = createProgram(`
+    interface First<T> { ${properties} first: T; }
+    interface Second<T> { ${properties} second: T; }
+    declare const joined: First<number> | Second<string>;
+    declare const combined: First<number> & Second<number>;
+  `);
+  assertCleanSemanticDiagnostics(program, index);
+  const queries = createTypeCheckerQueries(program, { sourceFile: index });
+  const shape = createTypeShapeQueries(program, { sourceFile: index });
+  const variables = findNodesByKind(index, KindVariableDeclaration);
+  assert.equal(variables.length, 2);
+  for (const [position, declaration] of variables.entries()) {
+    const type = queries.getTypeAtLocation(declaration)?.type;
+    const original = shape.getPropertyInfos(type);
+    const expected = position === 0 ? fields : [...fields, "first", "second"];
+    assert.deepEqual(original.map(row => row.name), expected);
+    const repeated = shape.getPropertyInfos(type);
+    assert.equal(repeated.length, original.length);
+    assert.equal(repeated.every((row, rowIndex) =>
+      row.symbol === original[rowIndex]?.symbol && row.type === original[rowIndex]?.type), true);
+  }
+});
+
 test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {
   const cases = [
     { name: "array", setup: "declare const source: number[];", expression: "source", element: "number" },

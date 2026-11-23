@@ -6302,14 +6302,14 @@ export function Checker_getPropertiesOfUnionOrIntersectionType(receiver: GoPtr<C
   const d = Type_AsUnionOrIntersectionType(t);
   if (d!.resolvedProperties === undefined) {
     const checked: orderedSet<string> = { valuesByKey: new globalThis.Map(), values: [] };
-    let props: GoSlice<GoPtr<Symbol>> = [];
+    const props: GoSlice<GoPtr<Symbol>> = [];
     for (const current of d!.types) {
       for (const prop of Checker_getPropertiesOfType(receiver, current)) {
         if (!orderedSet_contains(checked, prop!.Name)) {
           orderedSet_add(checked, prop!.Name);
           const combinedProp = Checker_getPropertyOfUnionOrIntersectionType(receiver, t, prop!.Name, (t!.flags & TypeFlagsIntersection) !== 0);
           if (combinedProp !== undefined) {
-            props = [...props, combinedProp];
+            props.push(combinedProp);
           }
         }
       }
