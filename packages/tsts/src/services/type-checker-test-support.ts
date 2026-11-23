@@ -27,8 +27,9 @@ export function requireApplicableCallInfo(
 }
 
 export function propertyRows(shape: TypeShapeQueries, type: GoPtr<Type>): readonly TypePropertyInfo[] {
-  const inventory = shape.getPropertyInventory(type);
-  assert.ok(inventory, "An actual property query has its owning checker.");
+  const selected = shape.getStructuredInventory(type, () => null);
+  assert.equal(selected.kind, "complete", "An actual property query has its owning checker.");
+  const inventory = selected.value.properties;
   return Array.from({ length: inventory.length }, (_, index) => {
     const row = inventory.read(index, () => null);
     assert.equal(row.kind, "complete");

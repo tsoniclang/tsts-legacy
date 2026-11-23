@@ -929,8 +929,9 @@ test("an acquired union inventory admits only the reached effective property", (
   assert.ok(first && later);
   const resolved = () => symbols.map(symbol => LinkStore_TryGet(owner.valueSymbolLinks, symbol)?.resolvedType !== undefined);
   assert.deepEqual(resolved(), [false, false]);
-  const inventory = shape.getPropertyInventory(type);
-  assert.ok(inventory);
+  const structured = shape.getStructuredInventory(type, () => null);
+  assert.equal(structured.kind, "complete");
+  const inventory = structured.value.properties;
   assert.equal(inventory.length, 2);
   assert.deepEqual(resolved(), [false, false]);
   const original = { dimension: "work", maximum: 0 };
@@ -946,8 +947,9 @@ test("an acquired union inventory admits only the reached effective property", (
   assert.deepEqual(resolved(), [true, false]);
   const foreign = createProgram("declare const foreign: boolean;");
   const crossed = createTypeShapeQueries(foreign.program, { sourceFile: foreign.index });
-  assert.equal(crossed.getPropertyInventory(type), undefined);
-  assert.equal(shape.getPropertyInventory(checker.getTypeAtLocation(empty)?.type)?.length, 0);
+  assert.equal(crossed.getStructuredInventory(type, () => assert.fail("A foreign acquisition is not charged.")).kind, "unavailable");
+  const emptyInventory = shape.getStructuredInventory(checker.getTypeAtLocation(empty)?.type, () => null);
+  assert.ok(emptyInventory.kind === "complete" && emptyInventory.value.properties.length === 0);
   assert.throws(() => inventory.read(2, () => assert.fail("An invalid ordinal reads no row.")), RangeError);
 });
 

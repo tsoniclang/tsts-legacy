@@ -1,4 +1,5 @@
 import type { bool, int } from "../../go/scalars.js";
+import { admitNativeChecker } from "./resource-admission.js";
 import { Every, Find, FirstOrNil, Filter, Some } from "../core/core.js";
 import type { GoComparable, GoMap, GoPtr, GoSlice } from "../../go/compat.js";
 import * as slices from "../../go/slices.js";
@@ -1081,7 +1082,12 @@ export function createSymbolTable(symbols: GoSlice<GoPtr<Symbol>>): SymbolTable 
  * }
  */
 export function Checker_sortSymbols(receiver: GoPtr<Checker>, symbols: GoSlice<GoPtr<Symbol>>): void {
-  symbols.sort((s1, s2) => receiver!.compareSymbols(s1, s2));
+  admitNativeChecker(receiver, "work", symbols.length);
+  admitNativeChecker(receiver, "retained", symbols.length);
+  symbols.sort((left, right) => {
+    admitNativeChecker(receiver, "work");
+    return receiver!.compareSymbols(left, right);
+  });
 }
 
 /**

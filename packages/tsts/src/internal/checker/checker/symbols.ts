@@ -1,4 +1,5 @@
 import type { bool, int } from "../../../go/scalars.js";
+import { admitNativeChecker, markNativeCheckerProvisional } from "../resource-admission.js";
 import type { LiteralConstructionOwner } from "./literal-creation.js";
 import { activeBackingCandidate, checkedComponent, withBackingConstraint } from "./backing-constraint-evidence.js";
 import type { ExtensionConditionalCapture } from "../../../extensions/conditional-type-evidence.js";
@@ -42,7 +43,7 @@ import type { NodeFlags, SymbolFlags } from "../../ast/generated/flags.js";
 import type { Symbol, SymbolTable } from "../../ast/symbol.js";
 import type { NameResolver } from "../../binder/nameresolver.js";
 import type { OrderedSet } from "../../collections/ordered_set.js";
-import { NewOrderedSetWithSizeHint, OrderedSet_Add, OrderedSet_Size, OrderedSet_Values } from "../../collections/ordered_set.js";
+import { NewOrderedSetWithSizeHint, OrderedSet_Add, OrderedSet_Has, OrderedSet_Size, OrderedSet_Values } from "../../collections/ordered_set.js";
 import type { ResolutionMode } from "../../core/compileroptions.js";
 import { CompilerOptions_GetAllowImportingTsExtensions, CompilerOptions_GetIsolatedModules, CompilerOptions_GetUseDefineForClassFields, CompilerOptions_ShouldPreserveConstEnums, CompilerOptions_GetEmitModuleKind, CompilerOptions_GetModuleResolutionKind, JsxEmitPreserve, JsxEmitReact, JsxEmitReactNative, ModuleKindCommonJS, ModuleKindES2015, ModuleKindES2020, ModuleKindPreserve, ModuleKind_IsNonNodeESM, ModuleKind_SupportsImportAttributes, ModuleResolutionKindBundler, ResolutionModeNone, ScriptTargetES2017 } from "../../core/compileroptions.js";
 import { ModuleKindNode16, ModuleKindNode18, ModuleKindNode20, ModuleKindNodeNext, ModuleKindESNext, ModuleKindSystem } from "../../core/compileroptions.js";
@@ -8701,6 +8702,7 @@ export function Checker_getReferencedValueOrAliasSymbol(receiver: GoPtr<Checker>
  * }
  */
 export function Checker_newSymbol(receiver: GoPtr<Checker>, flags: SymbolFlags, name: string): GoPtr<Symbol> {
+  admitNativeChecker(receiver, "retained");
   receiver!.SymbolCount++;
   const result = { checkerId: receiver!.id } as Symbol;
   result!.Flags = (flags | SymbolFlagsTransient) as SymbolFlags;
@@ -11791,6 +11793,7 @@ export function Checker_getDeclarationOfAliasSymbol(receiver: GoPtr<Checker>, sy
  * }
  */
 export function Checker_getTypeOfSymbolWithDeferredType(receiver: GoPtr<Checker>, symbol_: GoPtr<Symbol>): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   const links = LinkStore_Get(receiver!.valueSymbolLinks, symbol_) as GoPtr<ValueSymbolLinks>;
   if (links!.resolvedType === undefined) {
     const deferred = LinkStore_Get(receiver!.deferredSymbolLinks, symbol_) as GoPtr<DeferredSymbolLinks>;
@@ -11825,6 +11828,7 @@ export function Checker_getTypeOfSymbolWithDeferredType(receiver: GoPtr<Checker>
  * }
  */
 export function Checker_getWriteTypeOfSymbolWithDeferredType(receiver: GoPtr<Checker>, symbol_: GoPtr<Symbol>): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   const links = LinkStore_Get(receiver!.valueSymbolLinks, symbol_) as GoPtr<ValueSymbolLinks>;
   if (links!.writeType === undefined) {
     const deferred = LinkStore_Get(receiver!.deferredSymbolLinks, symbol_) as GoPtr<DeferredSymbolLinks>;
@@ -12004,6 +12008,7 @@ export function Checker_GetTypeOfSymbolAtLocation(receiver: GoPtr<Checker>, symb
  * }
  */
 export function Checker_getTypeOfSymbol(receiver: GoPtr<Checker>, symbol_: GoPtr<Symbol>): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   if ((symbol_!.CheckFlags & CheckFlagsDeferredType) !== 0) {
     return Checker_getTypeOfSymbolWithDeferredType(receiver, symbol_);
   }
@@ -13062,6 +13067,7 @@ export function Checker_getPropertyOfType(receiver: GoPtr<Checker>, t: GoPtr<Typ
  * }
  */
 export function Checker_getPropertyOfTypeEx(receiver: GoPtr<Checker>, t: GoPtr<Type>, name: string, skipObjectFunctionPropertyAugment: bool, includeTypeOnlyMembers: bool): GoPtr<Symbol> {
+  admitNativeChecker(receiver, "work");
   t = Checker_getReducedApparentType(receiver, t);
   if ((t!.flags & TypeFlagsObject) !== 0) {
     const resolved = Checker_resolveStructuredTypeMembers(receiver, t);
@@ -13171,7 +13177,7 @@ export function Checker_getIndexInfosOfStructuredType(receiver: GoPtr<Checker>, 
  * }
  */
 export function Checker_getIndexInfoOfType(receiver: GoPtr<Checker>, t: GoPtr<Type>, keyType: GoPtr<Type>): GoPtr<IndexInfo> {
-  return findIndexInfo(Checker_getIndexInfosOfType(receiver, t), keyType);
+  return findIndexInfo(receiver, Checker_getIndexInfosOfType(receiver, t), keyType);
 }
 
 /**
@@ -13248,8 +13254,10 @@ export function Checker_getIndexTypeOfTypeEx(receiver: GoPtr<Checker>, t: GoPtr<
  * }
  */
 export function Checker_resolveStructuredTypeMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>): GoPtr<StructuredType> {
+  admitNativeChecker(receiver, "work");
   recordProviderStructuredTypeDemand(receiver!.program, t, receiver!.currentNode);
   if ((t!.objectFlags & ObjectFlagsMembersResolved) === 0) {
+    markNativeCheckerProvisional(receiver);
     if ((t!.flags & TypeFlagsObject) !== 0) {
       if ((t!.objectFlags & ObjectFlagsReference) !== 0) {
         Checker_resolveTypeReferenceMembers(receiver, t);
@@ -13428,20 +13436,40 @@ export function Checker_resolveObjectTypeMembers(receiver: GoPtr<Checker>, t: Go
   const baseTypes = Checker_getBaseTypes(receiver, source);
   if (baseTypes.length !== 0) {
     if (mapper === undefined) {
+      const memberCount = members?.size ?? 0;
+      admitNativeChecker(receiver, "work", memberCount);
+      admitNativeChecker(receiver, "retained", 1 + memberCount);
       members = MapClone(members) ?? new globalThis.Map<string, GoPtr<Symbol>>();
     }
     Checker_setStructuredTypeMembers(receiver, t, members, callSignatures, constructSignatures, indexInfos);
     t!.objectFlags |= ObjectFlagsUnresolvedMembers;
-    for (const baseType of baseTypes) {
+    for (let index = 0; index < baseTypes.length; index += 1) {
+      admitNativeChecker(receiver, "work");
+      const baseType = baseTypes[index];
       const instantiatedBaseType = instantiateObjectBaseType(receiver, baseType, mapper, typeArguments);
       members = Checker_addInheritedMembers(receiver, members, Checker_getPropertiesOfType(receiver, instantiatedBaseType));
-      callSignatures = [...callSignatures, ...Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindCall)];
-      constructSignatures = [...constructSignatures, ...Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindConstruct)];
+      const baseCalls = Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindCall);
+      const baseConstructs = Checker_getSignaturesOfType(receiver, instantiatedBaseType, SignatureKindConstruct);
+      const signatureSlots = callSignatures.length + baseCalls.length + constructSignatures.length + baseConstructs.length;
+      admitNativeChecker(receiver, "work", signatureSlots);
+      admitNativeChecker(receiver, "retained", 2 + signatureSlots);
+      callSignatures = [...callSignatures, ...baseCalls];
+      constructSignatures = [...constructSignatures, ...baseConstructs];
       const inheritedIndexInfos = instantiatedBaseType !== receiver!.anyType ? Checker_getIndexInfosOfType(receiver, instantiatedBaseType) : [receiver!.anyBaseTypeIndexInfo];
-      indexInfos = [
-        ...indexInfos,
-        ...Filter(inheritedIndexInfos, (info: GoPtr<IndexInfo>): bool => findIndexInfo(indexInfos, info!.keyType) === undefined),
-      ];
+      if (inheritedIndexInfos.length !== 0) {
+        admitNativeChecker(receiver, "work", indexInfos.length);
+        admitNativeChecker(receiver, "retained", 1 + indexInfos.length);
+        const inherited = indexInfos.slice();
+        for (let index = 0; index < inheritedIndexInfos.length; index += 1) {
+          admitNativeChecker(receiver, "work");
+          const info = inheritedIndexInfos[index];
+          if (findIndexInfo(receiver, indexInfos, info!.keyType) === undefined) {
+            admitNativeChecker(receiver, "retained");
+            inherited.push(info);
+          }
+        }
+        indexInfos = inherited;
+      }
     }
     t!.objectFlags &= ~ObjectFlagsUnresolvedMembers;
   }
@@ -13468,13 +13496,17 @@ export function Checker_resolveObjectTypeMembers(receiver: GoPtr<Checker>, t: Go
  */
 export function Checker_addInheritedMembers(receiver: GoPtr<Checker>, symbols: SymbolTable, baseSymbols: GoSlice<GoPtr<Symbol>>): SymbolTable {
   let result = symbols;
-  for (const base of baseSymbols ?? []) {
+  for (let index = 0; index < (baseSymbols?.length ?? 0); index += 1) {
+    admitNativeChecker(receiver, "work");
+    const base = baseSymbols[index];
     if (!isStaticPrivateIdentifierProperty(base)) {
       const symbol_ = result?.get(base!.Name);
       if (symbol_ === undefined || (symbol_!.Flags & SymbolFlagsValue) === 0) {
         if (result === undefined) {
+          admitNativeChecker(receiver, "retained");
           result = new globalThis.Map();
         }
+        if (symbol_ === undefined) admitNativeChecker(receiver, "retained");
         result.set(base!.Name, base);
       }
     }
@@ -13640,7 +13672,7 @@ export function Checker_getIndexInfosOfIndexSymbol(receiver: GoPtr<Checker>, ind
         if (typeNode !== undefined) {
           const valueType = returnTypeNode !== undefined ? Checker_getTypeFromTypeNode(receiver, returnTypeNode) : receiver!.anyType;
           forEachType(Checker_getTypeFromTypeNode(receiver, typeNode), (keyType: GoPtr<Type>) => {
-            if (Checker_isValidIndexKeyType(receiver, keyType) && findIndexInfo(indexInfos, keyType) === undefined) {
+            if (Checker_isValidIndexKeyType(receiver, keyType) && findIndexInfo(receiver, indexInfos, keyType) === undefined) {
               indexInfos.push(Checker_newIndexInfo(receiver, keyType, valueType, HasModifier(declaration, ModifierFlagsReadonly), declaration, []));
             }
           });
@@ -13651,7 +13683,7 @@ export function Checker_getIndexInfosOfIndexSymbol(receiver: GoPtr<Checker>, ind
       const keyType = IsElementAccessExpression(declName)
         ? Checker_checkExpressionCached(receiver, AsElementAccessExpression(declName)!.ArgumentExpression as GoPtr<Node>)
         : Checker_checkComputedPropertyName(receiver, declName);
-      if (findIndexInfo(indexInfos, keyType) !== undefined) {
+      if (findIndexInfo(receiver, indexInfos, keyType) !== undefined) {
         continue;
       }
       if (Checker_isTypeAssignableTo(receiver, keyType, receiver!.stringNumberSymbolType)) {
@@ -13681,13 +13713,13 @@ export function Checker_getIndexInfosOfIndexSymbol(receiver: GoPtr<Checker>, ind
         propertySymbols.push(sym);
       }
     }
-    if (hasComputedStringProperty && findIndexInfo(indexInfos, receiver!.stringType) === undefined) {
+    if (hasComputedStringProperty && findIndexInfo(receiver, indexInfos, receiver!.stringType) === undefined) {
       indexInfos.push(Checker_getObjectLiteralIndexInfo(receiver, readonlyComputedStringProperty, propertySymbols, receiver!.stringType));
     }
-    if (hasComputedNumberProperty && findIndexInfo(indexInfos, receiver!.numberType) === undefined) {
+    if (hasComputedNumberProperty && findIndexInfo(receiver, indexInfos, receiver!.numberType) === undefined) {
       indexInfos.push(Checker_getObjectLiteralIndexInfo(receiver, readonlyComputedNumberProperty, propertySymbols, receiver!.numberType));
     }
-    if (hasComputedSymbolProperty && findIndexInfo(indexInfos, receiver!.esSymbolType) === undefined) {
+    if (hasComputedSymbolProperty && findIndexInfo(receiver, indexInfos, receiver!.esSymbolType) === undefined) {
       indexInfos.push(Checker_getObjectLiteralIndexInfo(receiver, readonlyComputedSymbolProperty, propertySymbols, receiver!.esSymbolType));
     }
   }
@@ -14180,9 +14212,16 @@ export function Checker_instantiateSymbolTable(receiver: GoPtr<Checker>, symbols
   if (symbols.size === 0) {
     return undefined as unknown as SymbolTable;
   }
+  admitNativeChecker(receiver, "retained");
   const result: SymbolTable = new globalThis.Map();
-  for (const [id, symbol_] of symbols) {
+  const entries = symbols.entries();
+  for (let position = 0; position < symbols.size; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const entry = entries.next();
+    if (entry.done) throw new Error("A symbol instantiation requires its original complete member table.");
+    const [id, symbol_] = entry.value;
     if (Checker_isNamedMember(receiver, symbol_, id)) {
+      admitNativeChecker(receiver, "retained");
       if (mappingThisOnly && isThisless(symbol_)) {
         result.set(id, symbol_);
       } else {
@@ -15039,6 +15078,7 @@ export function Checker_getUnionOrIntersectionProperty(receiver: GoPtr<Checker>,
  * }
  */
 export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checker>, containingType: GoPtr<Type>, name: string, skipObjectFunctionPropertyAugment: bool): GoPtr<Symbol> {
+  admitNativeChecker(receiver, "retained", 3);
   let propFlags: SymbolFlags = SymbolFlagsNone;
   let singleProp: GoPtr<Symbol>;
   const propSet = NewOrderedSetWithSizeHint<GoPtr<Symbol>>(0)!;
@@ -15052,7 +15092,10 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
   }
   let syntheticFlag: CheckFlags = CheckFlagsSyntheticMethod;
   let mergedInstantiations = false;
-  for (const current of Type_Types(containingType)) {
+  const constituents = Type_Types(containingType);
+  for (let index = 0; index < constituents.length; index += 1) {
+    admitNativeChecker(receiver, "work");
+    const current = constituents[index];
     const t = Checker_getApparentType(receiver, current);
     if (!Checker_isErrorType(receiver, t) && (t!.flags & TypeFlagsNever) === 0) {
       const prop = Checker_getPropertyOfTypeEx(receiver, t, name, skipObjectFunctionPropertyAugment, false);
@@ -15076,8 +15119,10 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
               Checker_getLocalTypeParametersOfClassOrInterfaceOrTypeAlias(receiver, singleProp!.Parent).length !== 0;
           } else {
             if (OrderedSet_Size(propSet) === 0) {
+              admitNativeChecker(receiver, "retained");
               OrderedSet_Add(propSet, singleProp);
             }
+            if (!OrderedSet_Has(propSet, prop)) admitNativeChecker(receiver, "retained");
             OrderedSet_Add(propSet, prop);
           }
           if ((propFlags & SymbolFlagsAccessor) !== 0 && (prop!.Flags & SymbolFlagsAccessor) !== (propFlags & SymbolFlagsAccessor)) {
@@ -15117,12 +15162,15 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
             if (indexType === undefined) {
               indexType = receiver!.undefinedType;
             }
+            admitNativeChecker(receiver, "retained");
             indexTypes.push(indexType);
           } else {
+            admitNativeChecker(receiver, "retained");
             indexTypes.push(indexInfo!.valueType);
           }
         } else if (isObjectLiteralType(t) && (t!.objectFlags & ObjectFlagsContainsSpread) === 0) {
           checkFlags = (checkFlags | CheckFlagsWritePartial) as CheckFlags;
+          admitNativeChecker(receiver, "retained");
           indexTypes.push(receiver!.undefinedType);
         } else {
           checkFlags = (checkFlags | CheckFlagsReadPartial) as CheckFlags;
@@ -15158,8 +15206,10 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
     return clone;
   }
   if (OrderedSet_Size(propSet) === 0) {
+    admitNativeChecker(receiver, "retained");
     OrderedSet_Add(propSet, singleProp);
   }
+  admitNativeChecker(receiver, "retained", 2);
   const declarations: GoSlice<GoPtr<Node>> = [];
   let firstType: GoPtr<Type>;
   let nameType: GoPtr<Type>;
@@ -15167,13 +15217,19 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
   let writeTypes: GoSlice<GoPtr<Type>> | undefined;
   let firstValueDeclaration: GoPtr<Node>;
   let hasNonUniformValueDeclaration = false;
-  OrderedSet_Values<GoPtr<Symbol>>(propSet)((prop) => {
+  const selectedProperties = propSet.m.keys;
+  for (let index = 0; index < selectedProperties.length; index += 1) {
+    admitNativeChecker(receiver, "work");
+    const prop = selectedProperties[index];
     if (firstValueDeclaration === undefined) {
       firstValueDeclaration = prop!.ValueDeclaration;
     } else if (prop!.ValueDeclaration !== undefined && prop!.ValueDeclaration !== firstValueDeclaration) {
       hasNonUniformValueDeclaration = true;
     }
-    declarations.push(...(prop!.Declarations ?? []));
+    const originals = prop!.Declarations ?? [];
+    admitNativeChecker(receiver, "work", originals.length);
+    admitNativeChecker(receiver, "retained", originals.length);
+    declarations.push(...originals);
     const t = Checker_getTypeOfSymbol(receiver, prop);
     if (firstType === undefined) {
       firstType = t;
@@ -15182,8 +15238,11 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
     const writeType = Checker_getWriteTypeOfSymbol(receiver, prop);
     if (writeTypes !== undefined || writeType !== t) {
       if (writeTypes === undefined) {
+        admitNativeChecker(receiver, "work", propTypes.length);
+        admitNativeChecker(receiver, "retained", 1 + propTypes.length);
         writeTypes = propTypes.slice();
       }
+      admitNativeChecker(receiver, "retained");
       writeTypes.push(writeType);
     }
     if (t !== firstType) {
@@ -15195,9 +15254,11 @@ export function Checker_createUnionOrIntersectionProperty(receiver: GoPtr<Checke
     if ((t!.flags & TypeFlagsNever) !== 0 && t !== receiver!.uniqueLiteralType) {
       checkFlags = (checkFlags | CheckFlagsHasNeverType) as CheckFlags;
     }
+    admitNativeChecker(receiver, "retained");
     propTypes.push(t);
-    return true;
-  });
+  }
+  admitNativeChecker(receiver, "work", indexTypes.length);
+  admitNativeChecker(receiver, "retained", indexTypes.length);
   propTypes.push(...indexTypes);
   const result = Checker_newSymbolEx(receiver, (propFlags | optionalFlag) as SymbolFlags, name, (checkFlags | syntheticFlag) as CheckFlags);
   result!.Declarations = declarations;
@@ -15407,25 +15468,42 @@ export function Checker_getNamedMembers(receiver: GoPtr<Checker>, members: Symbo
   if (members === undefined || members.size === 0) {
     return undefined as unknown as GoSlice<GoPtr<Symbol>>;
   }
+  admitNativeChecker(receiver, "retained");
   const result: GoSlice<GoPtr<Symbol>> = [];
   let containedCount = 0;
   if (container !== undefined && (container!.Flags & (SymbolFlagsClass | SymbolFlagsInterface)) !== 0) {
-    for (const [id, symbol_] of members) {
+    const entries = members.entries();
+    for (let position = 0; position < members.size; position += 1) {
+      admitNativeChecker(receiver, "work");
+      const entry = entries.next();
+      if (entry.done) throw new Error("A contained member walk requires its original complete symbol table.");
+      const [id, symbol_] = entry.value;
       if (Checker_isNamedMember(receiver, symbol_, id) && Checker_isDeclarationContainedBy(receiver, symbol_, container)) {
+        admitNativeChecker(receiver, "retained");
         result.push(symbol_);
       }
     }
     containedCount = result.length;
   }
-  for (const [id, symbol_] of members) {
+  const entries = members.entries();
+  for (let position = 0; position < members.size; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const entry = entries.next();
+    if (entry.done) throw new Error("A named member walk requires its original complete symbol table.");
+    const [id, symbol_] = entry.value;
     if (Checker_isNamedMember(receiver, symbol_, id) && (container === undefined || (container!.Flags & (SymbolFlagsClass | SymbolFlagsInterface)) === 0 || !Checker_isDeclarationContainedBy(receiver, symbol_, container))) {
+      admitNativeChecker(receiver, "retained");
       result.push(symbol_);
     }
   }
+  admitNativeChecker(receiver, "work", result.length);
+  admitNativeChecker(receiver, "retained", 2 + result.length);
   const contained = result.slice(0, containedCount);
   const inherited = result.slice(containedCount);
   Checker_sortSymbols(receiver, contained);
   Checker_sortSymbols(receiver, inherited);
+  admitNativeChecker(receiver, "work", result.length);
+  admitNativeChecker(receiver, "retained", 1 + result.length);
   result.splice(0, result.length, ...contained, ...inherited);
   return result;
 }
@@ -15521,6 +15599,7 @@ export function Checker_instantiateTypeWithAlias(receiver: GoPtr<Checker>, t: Go
 }
 
 export function Checker_instantiateTypeWithAliasAndCapture(receiver: GoPtr<Checker>, t: GoPtr<Type>, m: GoPtr<TypeMapper>, alias: GoPtr<TypeAlias>, capture: ExtensionConditionalCapture | undefined): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   if (
     t === undefined ||
     m === undefined ||
@@ -15542,6 +15621,7 @@ export function Checker_instantiateTypeWithAliasAndCapture(receiver: GoPtr<Check
     Checker_error(receiver, receiver!.currentNode, Type_instantiation_is_excessively_deep_and_possibly_infinite);
     return receiver!.errorType;
   }
+  markNativeCheckerProvisional(receiver);
   const index = Checker_findActiveMapper(receiver, m);
   if (index === -1) {
     Checker_pushActiveMapper(receiver, m);
@@ -15563,6 +15643,7 @@ export function Checker_instantiateTypeWithAliasAndCapture(receiver: GoPtr<Check
   if (index === -1) {
     Checker_popActiveMapper(receiver);
   } else if (capture === undefined) {
+    admitNativeChecker(receiver, "retained");
     cache.set(key, result);
   }
   receiver!.instantiationDepth--;
@@ -16930,12 +17011,16 @@ export function Checker_newUniqueESSymbolType(receiver: GoPtr<Checker>, symbol_:
 export function Checker_setStructuredTypeMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>, members: GoPtr<SymbolTable>, callSignatures: GoPtr<GoSlice<GoPtr<Signature>>>, constructSignatures: GoPtr<GoSlice<GoPtr<Signature>>>, indexInfos: GoPtr<GoSlice<GoPtr<IndexInfo>>>): void {
   t!.objectFlags |= ObjectFlagsMembersResolved;
   const data = Type_AsStructuredType(t);
+  if (members === undefined) admitNativeChecker(receiver, "retained");
   const effectiveMembers = members ?? new globalThis.Map<string, GoPtr<Symbol>>();
   const effectiveCallSignatures = callSignatures ?? [];
   const effectiveConstructSignatures = constructSignatures ?? [];
   const effectiveIndexInfos = indexInfos ?? [];
   data!.members = effectiveMembers;
   data!.properties = Checker_getNamedMembers(receiver, effectiveMembers, t!["symbol"]);
+  const signatureSlots = effectiveCallSignatures.length + effectiveConstructSignatures.length;
+  admitNativeChecker(receiver, "work", signatureSlots);
+  admitNativeChecker(receiver, "retained", 1 + signatureSlots);
   if (effectiveCallSignatures.length !== 0) {
     if (effectiveConstructSignatures.length !== 0) {
       data!.signatures = effectiveCallSignatures.concat(effectiveConstructSignatures);
@@ -16951,6 +17036,8 @@ export function Checker_setStructuredTypeMembers(receiver: GoPtr<Checker>, t: Go
     }
     data!.callSignatureCount = 0;
   }
+  admitNativeChecker(receiver, "work", effectiveIndexInfos.length);
+  admitNativeChecker(receiver, "retained", 1 + effectiveIndexInfos.length);
   data!.indexInfos = effectiveIndexInfos.slice();
 }
 

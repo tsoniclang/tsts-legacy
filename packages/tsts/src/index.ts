@@ -170,7 +170,9 @@ export type {
 } from "./services/ast-reader.js";
 export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSessionFromProgram } from "./services/compiler-session.js";
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
+export type { NativeCheckerAdmission } from "./internal/checker/resource-admission.js";
 export type {
+  StructuredTypeInventory,
   TypeConditionalComponents,
   TypeConditionalBranch,
   TypeIndexInfo,

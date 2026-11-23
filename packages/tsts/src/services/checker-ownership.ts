@@ -5,15 +5,16 @@ import type { SourceFile } from "../internal/ast/ast.js";
 import { SourceFile_FileName } from "../internal/ast/ast.js";
 import type { Checker } from "../internal/checker/checker/state.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetSourceFile, Program_GetTypeCheckerById, Program_OfChecker } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerById, Program_HasUsableCheckerSession, Program_OfChecker, Program_TerminateCheckerSession } from "../internal/compiler/program.js";
 import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
+import { runNativeCheckerAcquisition, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 
 export function withCheckerById<Value>(
   program: GoPtr<Program>, sourceFile: GoPtr<SourceFile>, checkerId: uint, context: Context,
   read: (checker: Checker) => Value,
 ): Value | undefined {
-  if (program === undefined || sourceFile === undefined ||
+  if (program === undefined || sourceFile === undefined || !Program_HasUsableCheckerSession(program) ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
   const [checker, release] = Program_GetTypeCheckerById(program,
     WithCheckerLifetime(context, CheckerLifetimeAPI), checkerId);
@@ -25,10 +26,10 @@ export function withOwnedChecker<Value>(
   program: GoPtr<Program>, sourceFile: GoPtr<SourceFile>, owner: GoPtr<Checker>, context: Context,
   read: (checker: Checker) => Value,
 ): Value | undefined {
-  if (program === undefined || sourceFile === undefined || owner === undefined ||
+  if (program === undefined || sourceFile === undefined || owner === undefined || !Program_HasUsableCheckerSession(program) ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
   const ownerProgram = Program_OfChecker(owner);
-  if (ownerProgram === undefined) return undefined;
+  if (ownerProgram === undefined || !Program_HasUsableCheckerSession(ownerProgram)) return undefined;
   if (ownerProgram !== program) {
     const host = getExtensionHost(program);
     if (host === undefined || host !== getExtensionHost(ownerProgram)) return undefined;
@@ -37,4 +38,16 @@ export function withOwnedChecker<Value>(
     WithCheckerLifetime(context, CheckerLifetimeAPI), owner.id);
   try { return selected === owner ? read(selected) : undefined; }
   finally { release(); }
+}
+
+export function withOwnedCheckerAcquisition<Value, Stop extends object>(
+  program: GoPtr<Program>, sourceFile: GoPtr<SourceFile>, owner: GoPtr<Checker>, context: Context,
+  admit: NativeCheckerAdmission<Stop>, read: (checker: Checker) => Value,
+): NativeCheckerResult<Value, Stop> {
+  return withOwnedChecker(program, sourceFile, owner, context, checker => {
+    const producer = Program_OfChecker(checker);
+    if (producer === undefined) throw new Error("An acquired checker must retain its originating program.");
+    return runNativeCheckerAcquisition(checker, context, admit,
+      () => Program_TerminateCheckerSession(producer, checker), () => read(checker));
+  }) ?? { kind: "unavailable" };
 }

@@ -95,7 +95,7 @@ import type { OrderedMap } from "../collections/ordered_map.js";
 import { OrderedMap_Entries } from "../collections/ordered_map.js";
 import { recordBoundSourceFileExtensionFacts } from "../../extensions/compiler-integration.js";
 import { collectExtensionDiagnosticsForSourceFile } from "../../extensions/diagnostics.js";
-import { attachExtensionHostToProgram } from "../../extensions/host.js";
+import { attachExtensionHostToProgram, getExtensionHost } from "../../extensions/host.js";
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/compiler/program.go::type::ProgramOptions","kind":"type","status":"implemented","sigHash":"9eb7d18f0dae3f15940de7ca327de6159681203c5eb38cedc77879444adaee3f","bodyHash":"fd2579730de2d43c0ed258754b40e4b212195c5b2a367c70b29872aca609e055"}
@@ -600,7 +600,25 @@ function isCompilerCheckerProgram(adapter: Program_e32ad451): adapter is Compile
 }
 
 export function Program_OfChecker(checker: Checker): GoPtr<Program> {
-  return isCompilerCheckerProgram(checker.program) ? checker.program[checkerProgramOwner] : undefined;
+  const adapter = checker.program;
+  return isCompilerCheckerProgram(adapter) ? adapter[checkerProgramOwner] : undefined;
+}
+
+export function Program_HasUsableCheckerSession(program: Program): boolean {
+  return getExtensionHost(program)?.checkerSessionTerminal !== true &&
+    program.compilerCheckerPool?.checkers[0]?.wasCanceled !== true;
+}
+
+export function Program_RequireCheckerSession(program: Program): void {
+  if (!Program_HasUsableCheckerSession(program)) throw new Error("The owning checked session is terminal.");
+}
+
+export function Program_TerminateCheckerSession(program: Program, checker: Checker): void {
+  checker.wasCanceled = true;
+  getExtensionHost(program)?.terminateCheckerSession();
+  for (const member of program.compilerCheckerPool?.checkers ?? []) {
+    if (member !== undefined) member.wasCanceled = true;
+  }
 }
 
 export function Program_as_checker_Program(receiver: GoPtr<Program>): Program_e32ad451 {

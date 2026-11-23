@@ -1,4 +1,5 @@
 import type { bool, byte, int } from "../../../go/scalars.js";
+import { admitNativeChecker, markNativeCheckerProvisional } from "../resource-admission.js";
 import type { LiteralSpreadSite, LiteralPartialSite } from "../types.js";
 import { LiteralCreation } from "./literal-creation.js";
 import type { LiteralConstructionOwner } from "./literal-creation.js";
@@ -6243,6 +6244,7 @@ export function Checker_popTypeResolution(receiver: GoPtr<Checker>): bool {
  * }
  */
 export function Checker_getPropertiesOfType(receiver: GoPtr<Checker>, t: GoPtr<Type>): GoSlice<GoPtr<Symbol>> {
+  admitNativeChecker(receiver, "work");
   t = Checker_getReducedApparentType(receiver, t);
   if ((t!.flags & TypeFlagsUnionOrIntersection) !== 0) {
     return Checker_getPropertiesOfUnionOrIntersectionType(receiver, t);
@@ -6299,16 +6301,28 @@ export function Checker_getPropertiesOfObjectType(receiver: GoPtr<Checker>, t: G
  * }
  */
 export function Checker_getPropertiesOfUnionOrIntersectionType(receiver: GoPtr<Checker>, t: GoPtr<Type>): GoSlice<GoPtr<Symbol>> {
+  admitNativeChecker(receiver, "work");
   const d = Type_AsUnionOrIntersectionType(t);
   if (d!.resolvedProperties === undefined) {
+    admitNativeChecker(receiver, "retained", 4);
+    markNativeCheckerProvisional(receiver);
     const checked: orderedSet<string> = { valuesByKey: new globalThis.Map(), values: [] };
     const props: GoSlice<GoPtr<Symbol>> = [];
-    for (const current of d!.types) {
-      for (const prop of Checker_getPropertiesOfType(receiver, current)) {
-        if (!orderedSet_contains(checked, prop!.Name)) {
-          orderedSet_add(checked, prop!.Name);
-          const combinedProp = Checker_getPropertyOfUnionOrIntersectionType(receiver, t, prop!.Name, (t!.flags & TypeFlagsIntersection) !== 0);
+    const constituents = d!.types;
+    for (let constituent = 0; constituent < constituents.length; constituent += 1) {
+      admitNativeChecker(receiver, "work");
+      const current = constituents[constituent];
+      const currentProperties = Checker_getPropertiesOfType(receiver, current);
+      for (let index = 0; index < currentProperties.length; index += 1) {
+        admitNativeChecker(receiver, "work");
+        const name = currentProperties[index]!.Name;
+        admitNativeChecker(receiver, "work", name.length);
+        if (!orderedSet_contains(checked, name)) {
+          admitNativeChecker(receiver, "retained", 2);
+          orderedSet_add(checked, name);
+          const combinedProp = Checker_getPropertyOfUnionOrIntersectionType(receiver, t, name, (t!.flags & TypeFlagsIntersection) !== 0);
           if (combinedProp !== undefined) {
+            admitNativeChecker(receiver, "retained");
             props.push(combinedProp);
           }
         }
@@ -7324,12 +7338,14 @@ export function Checker_getReducedType(receiver: GoPtr<Checker>, t: GoPtr<Type>)
       if (resolvedReducedType !== undefined) {
         return resolvedReducedType;
       }
+      markNativeCheckerProvisional(receiver);
       const reducedType = Checker_getReducedUnionType(receiver, t);
       Type_AsUnionType(t)!.resolvedReducedType = reducedType;
       return reducedType;
     }
   } else if ((t!.flags & TypeFlagsIntersection) !== 0) {
     if ((t!.objectFlags & ObjectFlagsIsNeverIntersectionComputed) === 0) {
+      markNativeCheckerProvisional(receiver);
       t!.objectFlags |= ObjectFlagsIsNeverIntersectionComputed;
       if (core.Some(Checker_getPropertiesOfUnionOrIntersectionType(receiver, t), (prop) => Checker_isNeverReducedProperty(receiver, prop))) {
         t!.objectFlags |= ObjectFlagsIsNeverIntersection;
@@ -7383,6 +7399,7 @@ export function Checker_getReducedUnionType(receiver: GoPtr<Checker>, unionType:
  * }
  */
 export function Checker_getReducedApparentType(receiver: GoPtr<Checker>, t: GoPtr<Type>): GoPtr<Type> {
+  admitNativeChecker(receiver, "work");
   return Checker_getReducedType(receiver, Checker_getApparentType(receiver, Checker_getReducedType(receiver, t)));
 }
 
@@ -10579,6 +10596,7 @@ export function Checker_isReducibleIntersection(receiver: GoPtr<Checker>, t: GoP
  * }
  */
 export function Checker_newType(receiver: GoPtr<Checker>, flags: TypeFlags, objectFlags: ObjectFlags, data: TypeData): GoPtr<Type> {
+  admitNativeChecker(receiver, "retained");
   receiver!.TypeCount++;
   const t: GoPtr<Type> = {
     flags,
@@ -11944,7 +11962,9 @@ export function Checker_UnionTypes(receiver: GoPtr<Checker>): GoSeq<GoPtr<Type>>
  */
 export function Checker_addTypesToUnion(receiver: GoPtr<Checker>, typeSet: GoSlice<GoPtr<Type>>, includes: TypeFlags, types: GoSlice<GoPtr<Type>>): [GoSlice<GoPtr<Type>>, TypeFlags] {
   let lastType: GoPtr<Type>;
-  for (const t of types) {
+  for (let index = 0; index < types.length; index += 1) {
+    admitNativeChecker(receiver, "work");
+    const t = types[index];
     if (t !== lastType) {
       if ((t!.flags & TypeFlagsUnion) !== 0) {
         const unionType = Type_AsUnionType(t)!;
@@ -12016,8 +12036,13 @@ export function Checker_addTypeToUnion(receiver: GoPtr<Checker>, typeSet: GoSlic
         includes = (includes | TypeFlagsIncludesNonWideningType) as TypeFlags;
       }
     } else {
-      const [index, ok] = slices.BinarySearchFunc(typeSet, t, CompareTypes);
+      const [index, ok] = slices.BinarySearchFunc(typeSet, t, (left, right) => {
+        admitNativeChecker(receiver, "work");
+        return CompareTypes(left, right);
+      });
       if (!ok) {
+        admitNativeChecker(receiver, "work", typeSet.length - index);
+        admitNativeChecker(receiver, "retained");
         typeSet = slices.Insert(typeSet, index, t);
       }
     }
@@ -12558,7 +12583,9 @@ export function Checker_getIntersectionTypeEx(receiver: GoPtr<Checker>, types: G
  * }
  */
 export function Checker_addTypesToIntersection(receiver: GoPtr<Checker>, typeSet: GoPtr<orderedSet<GoPtr<Type>>>, includes: TypeFlags, types: GoSlice<GoPtr<Type>>): TypeFlags {
-  for (const t of types) {
+  for (let index = 0; index < types.length; index += 1) {
+    admitNativeChecker(receiver, "work");
+    const t = types[index];
     includes = Checker_addTypeToIntersection(receiver, typeSet, includes, Checker_getRegularTypeOfLiteralType(receiver, t));
   }
   return includes;
@@ -12613,6 +12640,7 @@ export function Checker_addTypeToIntersection(receiver: GoPtr<Checker>, typeSet:
   if (Checker_IsEmptyAnonymousObjectType(receiver, t)) {
     if ((includes & TypeFlagsIncludesEmptyObject) === 0) {
       includes = (includes | TypeFlagsIncludesEmptyObject) as TypeFlags;
+      admitNativeChecker(receiver, "retained", 2);
       orderedSet_add(typeSet, t);
     }
   } else {
@@ -12632,6 +12660,7 @@ export function Checker_addTypeToIntersection(receiver: GoPtr<Checker>, typeSet:
         if ((t!.flags & TypeFlagsUnit) !== 0 && (includes & TypeFlagsUnit) !== 0) {
           includes = (includes | TypeFlagsNonPrimitive) as TypeFlags;
         }
+        admitNativeChecker(receiver, "retained", 2);
         orderedSet_add(typeSet, t);
       }
     }

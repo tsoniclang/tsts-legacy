@@ -1,4 +1,5 @@
 import type { LiteralConstructionOwner } from "./literal-creation.js";
+import { admitNativeChecker } from "../resource-admission.js";
 import { hasExactProviderConstructorDeclarations } from "../../../extensions/provider-materialization-integration.js";
 import type { bool, int } from "../../../go/scalars.js";
 import type { GoMap, GoPtr, GoSlice } from "../../../go/compat.js";
@@ -7194,6 +7195,9 @@ export function Checker_getSignaturesOfStructuredType(receiver: GoPtr<Checker>, 
     return [];
   }
   const resolved = Checker_resolveStructuredTypeMembers(receiver, t);
+  const count = kind === SignatureKindCall ? resolved!.callSignatureCount : resolved!.signatures.length - resolved!.callSignatureCount;
+  admitNativeChecker(receiver, "work", count);
+  admitNativeChecker(receiver, "retained", 1 + count);
   if (kind === SignatureKindCall) {
     return resolved!.signatures.slice(0, resolved!.callSignatureCount) as GoSlice<GoPtr<Signature>>;
   }

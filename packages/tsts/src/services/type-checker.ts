@@ -69,7 +69,7 @@ import {
   SkipParentheses,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerForFile, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
 import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
@@ -1090,7 +1090,7 @@ function withCheckedFile<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
-  if (program === undefined || sourceFile === undefined ||
+  if (program === undefined || sourceFile === undefined || !Program_HasUsableCheckerSession(program) ||
     Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
   const context = defaultOptions.context ?? Background();
@@ -1109,7 +1109,7 @@ function withChecker<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
-  if (program === undefined || sourceFile === undefined ||
+  if (program === undefined || sourceFile === undefined || !Program_HasUsableCheckerSession(program) ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
     return undefined;
   }

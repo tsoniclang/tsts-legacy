@@ -18,10 +18,11 @@ import {
   CheckFlagsRestParameter,
 } from "../internal/ast/checkflags.js";
 import type { Program } from "../internal/compiler/program.js";
-import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_SourceFiles } from "../internal/compiler/program.js";
+import { Program_GetSourceFile, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_SourceFiles } from "../internal/compiler/program.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
+import { withOwnedChecker, withCheckerById, withOwnedCheckerAcquisition } from "./checker-ownership.js";
+import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import { createTypeNormalization } from "./type-normalization.js";
 import { completedAnnotationSource, originalSignatureDeclaration, signatureReturnAnswer, sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
 import { resolveSourceTypeAnswer } from "./source-type-answer.js";
@@ -32,7 +33,6 @@ import {
   Checker_GetApparentType,
   Checker_GetExpandedParameters,
   Checker_GetIndexInfosOfType,
-  Checker_GetPropertiesOfType,
   Checker_GetReturnTypeOfSignature,
   Checker_GetSignaturesOfType,
   Checker_GetTypeArguments,
@@ -45,8 +45,9 @@ import {
 import {
   Checker_getTypeOfSymbol,
   Checker_getInstantiatedBaseTypes,
+  Checker_resolveStructuredTypeMembers,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getBaseTypeOfLiteralType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
@@ -70,6 +71,7 @@ import {
   ObjectFlagsClassOrInterface,
   SignatureKindCall,
   SignatureKindConstruct,
+  StructuredType_Properties,
   TypeFlagsAny,
   TypeFlagsBigIntLike,
   TypeFlagsBigIntLiteral,
@@ -86,6 +88,7 @@ import {
   TypeFlagsObject,
   TypeFlagsStringLike,
   TypeFlagsStringLiteral,
+  TypeFlagsStructuredType,
   TypeFlagsStructuredOrInstantiable,
   TypeFlagsUnion,
   TypeFlagsUnknown,
@@ -158,14 +161,18 @@ export interface TypePropertyInfo extends TypePropertyHeader {
   readonly mapped?: TypeMappedPropertyInfo;
 }
 
-export type TypePropertyRead<Stop extends object> =
-  | { readonly kind: "complete"; readonly value: TypePropertyInfo }
-  | { readonly kind: "refused"; readonly stop: Stop }
-  | { readonly kind: "unavailable" };
+export type TypePropertyRead<Stop extends object> = NativeCheckerResult<TypePropertyInfo, Stop>;
 
 export interface TypePropertyInventory {
   readonly length: number;
-  readonly read: <Stop extends object>(index: number, admit: () => Stop | null) => TypePropertyRead<Stop>;
+  readonly read: <Stop extends object>(index: number, admit: NativeCheckerAdmission<Stop>) => TypePropertyRead<Stop>;
+}
+
+export interface StructuredTypeInventory {
+  readonly signatures: readonly GoPtr<Signature>[];
+  readonly callSignatureCount: number;
+  readonly indexes: readonly TypeIndexInfo[];
+  readonly properties: TypePropertyInventory;
 }
 
 export interface TypeTupleElementInfo {
@@ -258,7 +265,7 @@ export interface TypeShapeQueries {
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
   readonly forEachObjectPropertyHeader: (type: GoPtr<Type>, admit: () => boolean,
     visit: (header: TypePropertyHeader) => boolean) => "complete" | "stopped" | undefined;
-  readonly getPropertyInventory: (type: GoPtr<Type>) => TypePropertyInventory | undefined;
+  readonly getStructuredInventory: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<StructuredTypeInventory, Stop>;
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
@@ -440,7 +447,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     getObjectPropertyInfo: (type, name) => withObject(type, (checker, object) => readObjectPropertyInfo(checker, object, name)),
     forEachObjectPropertyHeader: (type, admit, visit) => withObject(type, (checker, object) =>
       walkObjectPropertyHeaders(checker, object, admit, visit)),
-    getPropertyInventory: type => getTypePropertyInventory(program, type, defaultOptions),
+    getStructuredInventory: (type, admit) => getStructuredTypeInventory(program, type, defaultOptions, admit),
     getCallSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindCall)) ?? [],
     getConstructSignatures: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetSignaturesOfType(checker, type, SignatureKindConstruct)) ?? [],
     getSignatureInfos: (type, kind) => {
@@ -535,30 +542,47 @@ function readTypeConditionalComponents(
     falseBranch: readConditionalBranch(checker, syntax.FalseType, falseType) });
 }
 
-function getTypePropertyInventory(
+function getStructuredTypeInventory<Stop extends object>(
   program: GoPtr<Program>,
   type: GoPtr<Type>,
   options: CreateTypeShapeQueriesOptions,
-): TypePropertyInventory | undefined {
+  admit: NativeCheckerAdmission<Stop>,
+): NativeCheckerResult<StructuredTypeInventory, Stop> {
   const source = options.sourceFile;
   const context = options.context ?? Background();
   const owner = type?.checker;
-  return withOwnedChecker(program, source, owner, context, checker => {
-    const properties = Checker_GetPropertiesOfType(checker, type);
+  return withOwnedCheckerAcquisition(program, source, owner, context, admit, checker => {
+    const effective = Checker_getReducedApparentType(checker, type);
+    if (effective === undefined) throw new Error("A checked type requires its actual reduced apparent type.");
+    const structured = (effective.flags & TypeFlagsStructuredType) === 0 ? undefined
+      : Checker_resolveStructuredTypeMembers(checker, effective);
+    const indexInfos = structured?.indexInfos ?? [];
+    admitNativeChecker(checker, "retained");
+    const indexes: TypeIndexInfo[] = [];
+    for (let index = 0; index < indexInfos.length; index += 1) {
+      admitNativeChecker(checker, "work");
+      const info = indexInfos[index];
+      admitNativeChecker(checker, "retained");
+      indexes.push(readTypeIndexInfo(checker, type, info));
+    }
+    const properties = (effective.flags & (TypeFlagsUnion | TypeFlagsIntersection)) !== 0
+      ? Checker_getPropertiesOfUnionOrIntersectionType(checker, effective)
+      : (effective.flags & TypeFlagsObject) !== 0 ? StructuredType_Properties(structured) ?? [] : [];
     const length = properties.length;
+    admitNativeChecker(checker, "retained", 2);
     const inventory: TypePropertyInventory = {
       length,
-      read: (index, admit) => {
+      read: (index, admitRow) => {
         if (!Number.isSafeInteger(index) || index < 0 || Object.is(index, -0) || index >= length)
           throw new RangeError("A property read requires an actual inventory ordinal.");
-        const stop = admit();
+        const stop = admitRow("work", 1);
         if (stop !== null) return { kind: "refused", stop };
-        return withOwnedChecker(program, source, checker, context, current => ({
-          kind: "complete", value: readTypePropertyInfo(current, type, properties[index]),
-        })) ?? { kind: "unavailable" };
+        return withOwnedCheckerAcquisition(program, source, checker, context, admitRow, current =>
+          readTypePropertyInfo(current, type, properties[index]));
       },
     };
-    return Object.freeze(inventory);
+    return Object.freeze({ signatures: structured?.signatures ?? [], callSignatureCount: structured?.callSignatureCount ?? 0,
+      indexes: Object.freeze(indexes), properties: Object.freeze(inventory) });
   });
 }
 
@@ -726,7 +750,7 @@ function withCheckerForNode<T>(
   callback: (checker: GoPtr<Checker>) => T,
 ): T | undefined {
   const sourceFile = GetSourceFileOfNode(node);
-  if (program === undefined || sourceFile === undefined ||
+  if (program === undefined || sourceFile === undefined || !Program_HasUsableCheckerSession(program) ||
     Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
     Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) {
     return undefined;

@@ -3730,6 +3730,15 @@ export class ExtensionHost {
   } | undefined;
   #sourceAnalysisState: "pending" | "running" | "completed" | "failed" = "pending";
   #semanticFinalizationState: "open" | "finalized" | "failed" = "open";
+  #checkerSessionTerminal = false;
+
+  get checkerSessionTerminal(): boolean {
+    return this.#checkerSessionTerminal;
+  }
+
+  terminateCheckerSession(): void {
+    this.#checkerSessionTerminal = true;
+  }
 
   [extensionHostSetFact]<T>(
     subject: ExtensionFactSubject,

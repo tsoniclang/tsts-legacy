@@ -7,9 +7,11 @@ import { Background } from "../go/context.js";
 import { Program_GetTypeChecker } from "../internal/compiler/program.js";
 import { Node_Text, Node_Type } from "../internal/ast/ast.js";
 import { KindTypeAliasDeclaration } from "../internal/ast/generated/kinds.js";
-import { attachExtensionHost, attachExtensionHostToProgram } from "../extensions/host.js";
+import { attachExtensionHost, attachExtensionHostToProgram, getExtensionHost } from "../extensions/host.js";
+import type { NativeCheckerCost } from "../internal/checker/resource-admission.js";
 import { withOwnedChecker } from "./checker-ownership.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
+import { createTypeShapeQueries } from "./type-shape.js";
 
 function open(checkers: number) {
   const session = createCompilerSessionFromFiles({ currentDirectory: "/case", rootFiles: ["/case/first.mts", "/case/second.mts"],
@@ -157,4 +159,96 @@ test("shared-host queries acquire their actual originating program lease", () =>
     requestPool.GetCheckerById = requestById;
     ownerPool.GetCheckerById = ownerById;
   }
+});
+
+test("cold structured admission returns the original stop and retires the actual cohort before releasing it", () => {
+  const prepare = () => {
+    const { program, index } = createProgram(`
+      interface First { head: string; tail: bigint; }
+      interface Second { head: number; tail: string; }
+      interface Third { head: boolean; tail: number; }
+      type Combined = First | Second | Third;
+    `);
+    assert.ok(program !== undefined && index !== undefined);
+    attachExtensionHost(program);
+    const checker = createTypeCheckerQueries(program, { sourceFile: index });
+    const shape = createTypeShapeQueries(program, { sourceFile: index });
+    const alias = findNodesByKind(index, KindTypeAliasDeclaration)[0];
+    const annotation = Node_Type(alias);
+    const type = checker.getTypeFromTypeNode(annotation)?.type;
+    assert.ok(type !== undefined && type.checker !== undefined);
+    return { program, shape, checker, annotation, type };
+  };
+  type Charge = readonly [NativeCheckerCost, number];
+  const cold = prepare();
+  const trace: Charge[] = [];
+  const complete = cold.shape.getStructuredInventory(cold.type, (cost, units) => { trace.push([cost, units]); return null; });
+  assert.equal(complete.kind, "complete");
+  assert.equal(complete.value.properties.length, 2);
+  const warm: Charge[] = [];
+  const repeated = cold.shape.getStructuredInventory(cold.type, (cost, units) => { warm.push([cost, units]); return null; });
+  assert.equal(repeated.kind, "complete");
+  assert.ok(trace.length > warm.length, "an independently completed native cache does not replay cold preparation");
+  const rowCosts: Charge[] = [];
+  const row = complete.value.properties.read(0, (cost, units) => { rowCosts.push([cost, units]); return null; });
+  assert.ok(row.kind === "complete" && row.value.name === "head" && rowCosts.length > 1);
+  const otherRow = repeated.value.properties.read(0, () => null);
+  assert.ok(otherRow.kind === "complete" && otherRow.value.symbol === row.value.symbol);
+
+  let terminalCuts = 0;
+  let cleanCuts = 0;
+  for (const dimension of ["work", "retained"] as const) {
+    const cuts: number[] = [];
+    let used = 0;
+    for (const [cost, units] of trace) {
+      if (cost !== dimension) continue;
+      cuts.push(used);
+      used += units;
+    }
+    for (const maximum of cuts) {
+      const subject = prepare();
+      const stop = { dimension, maximum };
+      const pool = subject.program.checkerPool;
+      const host = getExtensionHost(subject.program);
+      assert.ok(pool !== undefined && host !== undefined);
+      const foreign = createProgram("type Member = number;");
+      assert.ok(foreign.program !== undefined && foreign.index !== undefined);
+      attachExtensionHostToProgram(subject.program, foreign.program, { bindCompilerProgram: false });
+      const sibling = createTypeCheckerQueries(foreign.program, { sourceFile: foreign.index });
+      const siblingAnnotation = Node_Type(findNodesByKind(foreign.index, KindTypeAliasDeclaration)[0]);
+      assert.ok(sibling.getTypeFromTypeNode(siblingAnnotation)?.type !== undefined);
+      const acquire = pool.GetCheckerById;
+      const actual: Charge[] = [];
+      let remaining = maximum;
+      let releasedTerminal = false;
+      pool.GetCheckerById = (context, id) => {
+        const [checker, release] = acquire(context, id);
+        return [checker, () => { releasedTerminal = host.checkerSessionTerminal; release(); }];
+      };
+      try {
+        const refused = subject.shape.getStructuredInventory(subject.type, (cost, units) => {
+          actual.push([cost, units]);
+          if (cost !== dimension) return null;
+          if (remaining < units) return stop;
+          remaining -= units;
+          return null;
+        });
+        assert.ok(refused.kind === "refused" && refused.stop === stop, `${dimension} ${maximum}`);
+        assert.deepEqual(actual, trace.slice(0, actual.length), `${dimension} ${maximum}: same reached native prefix`);
+        if (dimension === "work" && maximum === 0) assert.equal(releasedTerminal, false, "a stop before native work cannot have changed its session");
+        if (releasedTerminal) {
+          terminalCuts += 1;
+          assert.equal(subject.checker.getTypeFromTypeNode(subject.annotation), undefined);
+          assert.equal(sibling.getTypeFromTypeNode(siblingAnnotation), undefined);
+          assert.equal(subject.shape.getStructuredInventory(subject.type, () => assert.fail("A terminal view cannot restart acquisition.")).kind, "unavailable");
+        } else {
+          cleanCuts += 1;
+          assert.equal(subject.checker.getTypeFromTypeNode(subject.annotation)?.type === subject.type, true);
+        }
+      } finally {
+        pool.GetCheckerById = acquire;
+      }
+    }
+  }
+  assert.ok(terminalCuts > 0 && cleanCuts > 0);
 });
