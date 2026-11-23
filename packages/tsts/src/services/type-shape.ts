@@ -26,8 +26,8 @@ import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { withOwnedChecker, withCheckerById, withOwnedCheckerAcquisition } from "./checker-ownership.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import { createTypeNormalization } from "./type-normalization.js";
-import { completedAnnotationSource, originalSignatureDeclaration, signatureReturnAnswer, sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
-import { resolveSourceTypeAnswer } from "./source-type-answer.js";
+import { completedAnnotationSource, originalSignatureDeclaration, signatureReturnAnswer } from "../internal/checker/checker/source-type-answers.js";
+import { querySourceType, resolveSourceTypeAnswer } from "./source-type-answer.js";
 import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo, SourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
 import type { Context } from "../go/context.js";
 import { Background } from "../go/context.js";
@@ -38,7 +38,6 @@ import {
   Checker_GetReturnTypeOfSignature,
   Checker_GetSignaturesOfType,
   Checker_GetTypeArguments,
-  Checker_GetTypeFromTypeNode,
   Checker_GetWidenedType,
   Checker_IsArrayLikeType,
   Checker_RemoveMissingOrUndefinedType,
@@ -306,9 +305,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
   };
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
-    getTypeFromTypeNode: (node) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForNode(program, node, defaultOptions, checker =>
-        sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node), defaultOptions.admitsCheckerDiagnostic))),
+    getTypeFromTypeNode: (node) => querySourceType(program, defaultOptions, { kind: "annotation", node }),
     instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
@@ -488,9 +485,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       defaultOptions,
       (checker) => getTypeSignatureThisParameterInfo(checker, signature),
     ),
-    getReturnTypeOfSignature: (signature) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForSignature(program, signature, defaultOptions, checker =>
-        signatureReturnAnswer(checker, signature, Checker_GetReturnTypeOfSignature(checker, signature), defaultOptions.admitsCheckerDiagnostic))),
+    getReturnTypeOfSignature: (signature) => querySourceType(program, defaultOptions, { kind: "signature-return", signature }),
     getIndexInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) =>
       (Checker_GetIndexInfosOfType(checker, type) ?? []).map((info) => readTypeIndexInfo(checker, type, info))) ?? [],
     getApparentType: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_GetApparentType(checker, type)),

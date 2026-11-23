@@ -17,10 +17,13 @@ import { readInvocationReturnType } from "./signature-returns.js";
 import { sourceModuleLink } from "./source-module-link.js";
 import type { ResolvedSourceModuleLink } from "./source-module-link.js";
 export type { ResolvedSourceModuleLink } from "./source-module-link.js";
-import { withOwnedChecker, withCheckerById } from "./checker-ownership.js";
-import { signatureReturnAnswer, sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
-import { admitSourceTypeAnswer, resolveSourceTypeAnswer } from "./source-type-answer.js";
-import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo, SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
+import { withOwnedChecker, withCheckerById, withSourceFileChecker } from "./checker-ownership.js";
+import { sourceTypeAnswer } from "../internal/checker/checker/source-type-answers.js";
+import { admitSourceTypeAnswer, querySourceType, readSourceType, resolveSourceTypeAnswer } from "./source-type-answer.js";
+import type { SourceTypeRequest } from "./source-type-answer.js";
+export type { SourceTypeRequest } from "./source-type-answer.js";
+import type { NativeCheckerAdmission, NativeCheckerResult } from "../internal/checker/resource-admission.js";
+import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 export type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 import type { TypeIndexInfo } from "./type-shape.js";
 import {
@@ -69,17 +72,15 @@ import {
   SkipParentheses,
   type OuterExpressionKinds,
 } from "../internal/ast/utilities.js";
-import { Program_GetSourceFile, Program_GetTypeChecker, Program_GetTypeCheckerForFile, Program_HasUsableCheckerSession, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
-import { CheckerLifetimeAPI, CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
+import { Program_GetSourceFile, Program_GetTypeChecker, Program_HasUsableCheckerSession, Program_IsSourceFileDefaultLibrary } from "../internal/compiler/program.js";
+import { CheckerLifetimeAPI, WithCheckerLifetime } from "../internal/core/context.js";
 import { getExtensionHost } from "../extensions/host.js";
 import type { Program } from "../internal/compiler/program.js";
 import {
   Checker_GetPropertyOfType,
   Checker_GetPropertiesOfType,
   Checker_ResolveName,
-  Checker_GetReturnTypeOfSignature,
   Checker_GetSignaturesOfType,
-  Checker_GetTypeFromTypeNode,
   Checker_GetTypeOfPropertyOfType,
 } from "../internal/checker/exports.js";
 import {
@@ -119,7 +120,6 @@ import type {
 import {
   Checker_getApparentTypeOfContextualType,
   Checker_getAwaitedType,
-  Checker_getContextualType,
   Checker_GetTypeAtLocation,
 } from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
@@ -293,6 +293,8 @@ export interface TypeCheckerQueries {
   readonly getGlobalValueSymbol: (name: string) => GoPtr<Symbol>;
   readonly isDefaultLibraryDeclaration: (node: GoPtr<Node>) => boolean;
   readonly getAwaitedType: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly acquireSourceType: <Stop extends object>(request: SourceTypeRequest,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourceTypeInfo, Stop>;
   readonly getTypeAtLocation: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly getContextualType: (node: GoPtr<Node>, contextFlags?: ContextFlags) => GoPtr<ResolvedSourceTypeInfo>;
@@ -405,20 +407,10 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       return withOwnedChecker(program, defaultOptions.sourceFile, type?.checker,
         defaultOptions.context ?? Background(), owner => Checker_getAwaitedType(owner, type));
     },
-    getTypeAtLocation: (node) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForNode(program, node, defaultOptions, checker =>
-        sourceTypeAnswer(checker, node, Checker_GetTypeAtLocation(checker, node), defaultOptions.admitsCheckerDiagnostic))),
-    getTypeFromTypeNode: (node) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForNode(program, node, defaultOptions, checker =>
-        sourceTypeAnswer(checker, node, Checker_GetTypeFromTypeNode(checker, node), defaultOptions.admitsCheckerDiagnostic))),
-    getContextualType: (node, contextFlags = ContextFlagsNone) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForNode(program, node, defaultOptions, checker => {
-        const output: SourceTypeAnswerOutput = { value: undefined };
-        const type = Checker_getContextualType(checker, node, contextFlags, output);
-        return output.value?.type === type && output.value !== undefined
-          ? admitSourceTypeAnswer(output.value, defaultOptions.admitsCheckerDiagnostic)
-          : type === undefined ? undefined : { type, causes: [] };
-      })),
+    acquireSourceType: (request, admit) => readSourceType(program, defaultOptions, request, admit),
+    getTypeAtLocation: (node) => querySourceType(program, defaultOptions, { kind: "expression", node }),
+    getTypeFromTypeNode: (node) => querySourceType(program, defaultOptions, { kind: "annotation", node }),
+    getContextualType: (node, flags = ContextFlagsNone) => querySourceType(program, defaultOptions, { kind: "contextual", node, flags }),
     getEffectivePropertyName(node) {
       if (node === undefined) return undefined;
       const cached = propertyNames.get(node);
@@ -609,9 +601,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       memoizeResolvedNodeQuery(resourceManagementInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>
           resolveSourceResourceManagementInfo(checker, node))),
-    getReturnTypeOfSignature: (signature) => resolveSourceTypeAnswer(program, defaultOptions,
-      withCheckerForSignature(program, signature, defaultOptions, checker =>
-        signatureReturnAnswer(checker, signature, Checker_GetReturnTypeOfSignature(checker, signature), defaultOptions.admitsCheckerDiagnostic))),
+    getReturnTypeOfSignature: (signature) => querySourceType(program, defaultOptions, { kind: "signature-return", signature }),
     getInvocationReturnTypeOfSignature: (signature) =>
       withCheckerForSignature(program, signature, defaultOptions, (checker) => readInvocationReturnType(checker, signature)),
     getCallSignaturesOfType: (type) =>
@@ -1090,17 +1080,7 @@ function withCheckedFile<T>(
   defaultOptions: CreateTypeCheckerQueriesOptions,
   callback: (checker: GoPtr<Checker>) => GoPtr<T>,
 ): GoPtr<T> {
-  if (program === undefined || sourceFile === undefined || !Program_HasUsableCheckerSession(program) ||
-    Program_GetSourceFile(program, SourceFile_FileName(defaultOptions.sourceFile)) !== defaultOptions.sourceFile ||
-    Program_GetSourceFile(program, SourceFile_FileName(sourceFile)) !== sourceFile) return undefined;
-  const context = defaultOptions.context ?? Background();
-  const [checker, done] = Program_GetTypeCheckerForFile(program,
-    WithCheckerLifetime(context, CheckerLifetimeDiagnostics), sourceFile);
-  try {
-    return callback(checker);
-  } finally {
-    done();
-  }
+  return withSourceFileChecker(program, defaultOptions.sourceFile, sourceFile, defaultOptions.context ?? Background(), callback);
 }
 
 function withChecker<T>(

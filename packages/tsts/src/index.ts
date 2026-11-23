@@ -156,6 +156,7 @@ export type {
   ResolvedSourceModuleLink,
   ResolvedSourceWellKnownSymbolInfo,
   ResolvedSourceYieldInfo,
+  SourceTypeRequest,
   TypeCheckerQueries,
 } from "./services/type-checker.js";
 export { createCompilerHost, createInMemoryFileSystem, getBundledLibraryClosure, getBundledLibraryPath, withBundledLibraries } from "./services/embedding-host.js";

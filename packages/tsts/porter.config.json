@@ -265,6 +265,11 @@
       "reason": "The one public source-Type envelope reads only the matching native paired answer/cause. Actual contextual delegation transports that same completed answer without a cache, query replay or diagnostic matching."
     },
     {
+      "match": "packages/tsts/src/internal/checker/resource-admission.ts",
+      "category": "extension-internal",
+      "reason": "The embedding caller's finite work and retained-growth admission for one native checker acquisition; it owns no upstream Go unit."
+    },
+    {
       "match": "packages/tsts/src/internal/checker/call-declaration-order.ts",
       "category": "extension-internal",
       "reason": "Orders the original signatures of one resolved call by their actual bound declarations (the declaring symbol's Declarations, or the member list of their class, interface or type literal) for selected-call evidence; it reads existing declarations only and owns no upstream Go unit."

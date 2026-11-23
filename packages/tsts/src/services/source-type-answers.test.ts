@@ -1041,6 +1041,27 @@ for (const checkers of [1, 4]) test(`bare alias chains retain the exact defining
   assert.equal(published.includes(original.causes[0]) && original.causes[0].file === origin, true);
   const declarations = useReader.ast.statements(use).filter(useReader.ast.is.IsTypeAliasDeclaration);
   assert.equal(declarations.length, length + 7);
+  const request = { kind: "annotation" as const, node: Node_Type(declarations[0]) };
+  const stop = { reason: "source acquisition limit" };
+  const admitted: { cost: "work" | "retained"; units: number }[] = [];
+  const settled = useReader.checker.acquireSourceType(request, (cost, units) => {
+    admitted.push({ cost, units });
+    return null;
+  });
+  if (settled.kind !== "complete") throw new Error("The paid read must complete its genuine source traversal.");
+  assert.equal(settled.value.causes.length, 1);
+  assert.equal(settled.value.causes[0] === original.causes[0], true);
+  assert.equal(admitted.some(row => row.cost === "retained"), true);
+  assert.equal(admitted.filter(row => row.cost === "work").length > 2, true);
+  for (let cut = 0; cut < admitted.length; cut += 1) {
+    let reached = 0;
+    const result = useReader.checker.acquireSourceType(request, (cost, units) => {
+      assert.deepEqual({ cost, units }, admitted[reached]);
+      return reached++ === cut ? stop : null;
+    });
+    assert.equal(result.kind === "refused" && result.stop === stop, true, String(cut));
+    assert.equal(reached, cut + 1);
+  }
   let useOwner;
   for (const declaration of declarations.slice(0, length)) {
     const rhs = Node_Type(declaration);

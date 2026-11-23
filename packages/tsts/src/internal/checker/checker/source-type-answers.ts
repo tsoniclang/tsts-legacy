@@ -12,6 +12,7 @@ import { IsExpressionNode, IsPartOfTypeNode } from "../../ast/utilities.js";
 import { IsConstructorDeclaration, IsPropertySignatureDeclaration } from "../../ast/generated/predicates.js";
 import { LinkStore_Get, LinkStore_TryGet } from "../../core/linkstore.js";
 import { isSourceModuleBinding, retainedAliasFailure } from "./symbols.js";
+import { admitNativeChecker } from "../resource-admission.js";
 
 export interface ResolvedSourceTypeInfo {
   readonly type: Type;
@@ -48,6 +49,7 @@ export function sourceTypeAnswer(checker: Checker | undefined, node: Node | unde
 
 export function borrowedSourceTypeAnswer(checker: Checker, anchor: Node, type: Type,
   admits: CheckerDiagnosticMembership | undefined): SourceTypeAnswer {
+  admitNativeChecker(checker, "work");
   if (isSourceModuleBinding(anchor)) {
     const symbol = Node_Symbol(anchor);
     return withCause(type, symbol === undefined ? undefined : admittedCause(retainedAliasFailure(checker, anchor, symbol, true), admits));
@@ -126,7 +128,10 @@ export function signatureReturnAnswer(checker: Checker | undefined, signature: S
 }
 
 export function directTypeSource(checker: Checker, node: Node | undefined, type: Type): Node | undefined {
-  while (node?.Kind === KindParenthesizedType) node = Node_Type(node);
+  while (node?.Kind === KindParenthesizedType) {
+    admitNativeChecker(checker, "work");
+    node = Node_Type(node);
+  }
   if (node === undefined) return undefined;
   const retained = LinkStore_TryGet(checker.typeNodeLinks, node);
   const source = retained?.resolvedType === type && retained.resolutionFailure === undefined && retained.grammarFailure === undefined
@@ -144,6 +149,7 @@ function readSourceTypeAnswer(checker: Checker, node: Node, type: Type,
   let current: Node | undefined = node;
   let mayBorrow = true;
   while (current !== undefined) {
+    admitNativeChecker(checker, "work");
     const retained = LinkStore_TryGet(checker.typeNodeLinks, current);
     if (retained?.declarationFailure !== undefined) {
       const cause = admittedCause(retained.declarationFailure, admits);
