@@ -13671,7 +13671,7 @@ export function Checker_getIndexInfosOfIndexSymbol(receiver: GoPtr<Checker>, ind
         const typeNode = Node_Type(parameters[0]);
         if (typeNode !== undefined) {
           const valueType = returnTypeNode !== undefined ? Checker_getTypeFromTypeNode(receiver, returnTypeNode) : receiver!.anyType;
-          forEachType(Checker_getTypeFromTypeNode(receiver, typeNode), (keyType: GoPtr<Type>) => {
+          forEachType(receiver, Checker_getTypeFromTypeNode(receiver, typeNode), (keyType: GoPtr<Type>) => {
             if (Checker_isValidIndexKeyType(receiver, keyType) && findIndexInfo(receiver, indexInfos, keyType) === undefined) {
               indexInfos.push(Checker_newIndexInfo(receiver, keyType, valueType, HasModifier(declaration, ModifierFlagsReadonly), declaration, []));
             }
@@ -14398,6 +14398,7 @@ export function Checker_instantiateSymbol(receiver: GoPtr<Checker>, symbol_: GoP
  * }
  */
 export function Checker_resolveMappedTypeMembers(receiver: GoPtr<Checker>, t: GoPtr<Type>): void {
+  admitNativeChecker(receiver, "retained", 2);
   const members: SymbolTable = new globalThis.Map();
   let indexInfos: GoSlice<GoPtr<IndexInfo>> = [];
   Checker_setStructuredTypeMembers(receiver, t, undefined, undefined, undefined, undefined);
@@ -14416,6 +14417,7 @@ export function Checker_resolveMappedTypeMembers(receiver: GoPtr<Checker>, t: Go
   const addMemberForKeyTypeWorker = (keyType: GoPtr<Type>, propNameType: GoPtr<Type>): void => {
     if (isTypeUsableAsPropertyName(propNameType)) {
       const propName = getPropertyNameFromType(propNameType);
+      admitNativeChecker(receiver, "work", 1 + propName.length);
       const existingProp = members.get(propName);
       if (existingProp !== undefined) {
         const valueLinks = LinkStore_Get(receiver!.valueSymbolLinks, existingProp) as GoPtr<ValueSymbolLinks>;
@@ -14449,6 +14451,7 @@ export function Checker_resolveMappedTypeMembers(receiver: GoPtr<Checker>, t: Go
             prop!.Declarations = modifiersProp!.Declarations;
           }
         }
+        admitNativeChecker(receiver, "retained");
         members.set(propName, prop);
       }
     } else if (Checker_isValidIndexKeyType(receiver, propNameType) || (propNameType!.flags & (TypeFlagsAny | TypeFlagsEnum)) !== 0) {
@@ -14472,7 +14475,7 @@ export function Checker_resolveMappedTypeMembers(receiver: GoPtr<Checker>, t: Go
     if (nameType !== undefined) {
       propNameType = Checker_instantiateType(receiver, nameType, appendTypeMapping(mappedMapper, typeParameter, keyType));
     }
-    forEachType(propNameType, (tt: GoPtr<Type>): void => {
+    forEachType(receiver, propNameType, (tt: GoPtr<Type>): void => {
       addMemberForKeyTypeWorker(keyType, tt);
     });
   };
@@ -14480,7 +14483,7 @@ export function Checker_resolveMappedTypeMembers(receiver: GoPtr<Checker>, t: Go
   if (Checker_isMappedTypeWithKeyofConstraintDeclaration(receiver, t)) {
     Checker_forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType(receiver, modifiersType, include, false, addMemberForKeyType);
   } else {
-    forEachType(Checker_getLowerBoundOfKeyType(receiver, constraintType), addMemberForKeyType);
+    forEachType(receiver, Checker_getLowerBoundOfKeyType(receiver, constraintType), addMemberForKeyType);
   }
   Checker_setStructuredTypeMembers(receiver, t, members, undefined, undefined, indexInfos);
 }
@@ -14735,6 +14738,7 @@ export function Checker_resolveIntersectionTypeMembers(receiver: GoPtr<Checker>,
  */
 export function Checker_appendIndexInfo(receiver: GoPtr<Checker>, indexInfos: GoSlice<GoPtr<IndexInfo>>, newInfo: GoPtr<IndexInfo>, union: bool): GoSlice<GoPtr<IndexInfo>> {
   for (let i = 0; i < indexInfos.length; i++) {
+    admitNativeChecker(receiver, "work");
     const info = indexInfos[i];
     if (info!.keyType === newInfo!.keyType) {
       let valueType: GoPtr<Type>;
@@ -14750,6 +14754,7 @@ export function Checker_appendIndexInfo(receiver: GoPtr<Checker>, indexInfos: Go
       return indexInfos;
     }
   }
+  admitNativeChecker(receiver, "retained");
   indexInfos.push(newInfo);
   return indexInfos;
 }
@@ -17542,7 +17547,7 @@ export function Checker_getIndexTypeForMappedType(receiver: GoPtr<Checker>, t: G
     if (Checker_isMappedTypeWithKeyofConstraintDeclaration(receiver, t)) {
       return Checker_getIndexTypeForGenericType(receiver, t, indexFlags);
     }
-    forEachType(constraintType, addMemberForKeyType);
+    forEachType(receiver, constraintType, addMemberForKeyType);
   } else if (Checker_isMappedTypeWithKeyofConstraintDeclaration(receiver, t)) {
     const modifiersType = Checker_getApparentType(receiver, Checker_getModifiersTypeFromMappedType(receiver, t));
     Checker_forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType(
@@ -17553,7 +17558,7 @@ export function Checker_getIndexTypeForMappedType(receiver: GoPtr<Checker>, t: G
       addMemberForKeyType,
     );
   } else {
-    forEachType(Checker_getLowerBoundOfKeyType(receiver, constraintType), addMemberForKeyType);
+    forEachType(receiver, Checker_getLowerBoundOfKeyType(receiver, constraintType), addMemberForKeyType);
   }
   let result: GoPtr<Type>;
   if ((indexFlags & IndexFlagsNoIndexSignatures) !== 0) {

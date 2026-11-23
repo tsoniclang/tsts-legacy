@@ -161,14 +161,27 @@ test("shared-host queries acquire their actual originating program lease", () =>
   }
 });
 
-test("cold structured admission returns the original stop and retires the actual cohort before releasing it", () => {
+for (const [description, source, expectedProperties, callCount] of [
+  ["union", `
+    interface First { head: string; tail: bigint; }
+    interface Second { head: number; tail: string; }
+    interface Third { head: boolean; tail: number; }
+    type Combined = First | Second | Third;
+  `, ["head", "tail"], 0],
+  ["mapped remapping", 'type Combined = { readonly [Key in "head" | "tail" | "extra" as `field_${Key}`]: Key };', ["field_extra", "field_head", "field_tail"], 0],
+  ["union overload", `
+    interface First { head: string; (value: string): "a"; (value: number): "b"; }
+    interface Second { head: string; (value: string): "c"; (value: number): "d"; }
+    type Combined = First | Second;
+  `, ["head"], 2],
+  ["union combined signature", `
+    interface First { head: string; (value: { left: string }): "a"; }
+    interface Second { head: string; (value: { right: number }): "b"; }
+    type Combined = First | Second;
+  `, ["head"], 1],
+] as const) test(`cold ${description} admission returns the original stop and retires the actual cohort before releasing it`, () => {
   const prepare = () => {
-    const { program, index } = createProgram(`
-      interface First { head: string; tail: bigint; }
-      interface Second { head: number; tail: string; }
-      interface Third { head: boolean; tail: number; }
-      type Combined = First | Second | Third;
-    `);
+    const { program, index } = createProgram(source);
     assert.ok(program !== undefined && index !== undefined);
     attachExtensionHost(program);
     const checker = createTypeCheckerQueries(program, { sourceFile: index });
@@ -184,16 +197,19 @@ test("cold structured admission returns the original stop and retires the actual
   const trace: Charge[] = [];
   const complete = cold.shape.getStructuredInventory(cold.type, (cost, units) => { trace.push([cost, units]); return null; });
   assert.equal(complete.kind, "complete");
-  assert.equal(complete.value.properties.length, 2);
+  assert.equal(complete.value.properties.length, expectedProperties.length);
+  assert.equal(complete.value.callSignatureCount, callCount);
   const warm: Charge[] = [];
   const repeated = cold.shape.getStructuredInventory(cold.type, (cost, units) => { warm.push([cost, units]); return null; });
   assert.equal(repeated.kind, "complete");
+  assert.equal(repeated.value.signatures === complete.value.signatures, true);
   assert.ok(trace.length > warm.length, "an independently completed native cache does not replay cold preparation");
   const rowCosts: Charge[] = [];
   const row = complete.value.properties.read(0, (cost, units) => { rowCosts.push([cost, units]); return null; });
-  assert.ok(row.kind === "complete" && row.value.name === "head" && rowCosts.length > 1);
+  assert.ok(row.kind === "complete" && rowCosts.length > 1);
   const otherRow = repeated.value.properties.read(0, () => null);
   assert.ok(otherRow.kind === "complete" && otherRow.value.symbol === row.value.symbol);
+  assert.deepEqual(propertyRows(cold.shape, cold.type).map(property => property.name).sort(), expectedProperties);
 
   let terminalCuts = 0;
   let cleanCuts = 0;

@@ -4888,12 +4888,15 @@ export function getConstituentCountOfTypes(types: GoSlice<GoPtr<Type>>): int {
  * 	}
  * }
  */
-export function forEachType(t: GoPtr<Type>, f: (t: GoPtr<Type>) => void): void {
+export function forEachType(receiver: GoPtr<Checker>, t: GoPtr<Type>, f: (t: GoPtr<Type>) => void): void {
   if (t!.flags & TypeFlagsUnion) {
-    for (const u of Type_Types(t)) {
-      f(u);
+    const constituents = Type_Types(t);
+    for (let position = 0; position < constituents.length; position += 1) {
+      admitNativeChecker(receiver, "work");
+      f(constituents[position]);
     }
   } else {
+    admitNativeChecker(receiver, "work");
     f(t);
   }
 }

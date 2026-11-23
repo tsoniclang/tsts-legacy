@@ -7059,10 +7059,14 @@ export function Checker_getLowerBoundOfKeyType(receiver: GoPtr<Checker>, t: GoPt
   }
   if ((t!.flags & TypeFlagsIntersection) !== 0) {
     const types = Type_Types(t);
-    if (types.length === 2 && (types[0]!.flags & (TypeFlagsString | TypeFlagsNumber | TypeFlagsBigInt)) !== 0 && types[1] === receiver!.emptyTypeLiteralType) {
-      return t;
+    if (types.length === 2) {
+      admitNativeChecker(receiver, "work");
+      if ((types[0]!.flags & (TypeFlagsString | TypeFlagsNumber | TypeFlagsBigInt)) !== 0) {
+        admitNativeChecker(receiver, "work");
+        if (types[1] === receiver!.emptyTypeLiteralType) return t;
+      }
     }
-    return Checker_getIntersectionType(receiver, core.SameMap(types, (ty: GoPtr<Type>): GoPtr<Type> => Checker_getLowerBoundOfKeyType(receiver, ty)));
+    return Checker_getIntersectionType(receiver, mapNativeTypeMembers(receiver, types, value => Checker_getLowerBoundOfKeyType(receiver, value), () => true));
   }
   return t;
 }
@@ -7347,8 +7351,13 @@ export function Checker_getReducedType(receiver: GoPtr<Checker>, t: GoPtr<Type>)
     if ((t!.objectFlags & ObjectFlagsIsNeverIntersectionComputed) === 0) {
       markNativeCheckerProvisional(receiver);
       t!.objectFlags |= ObjectFlagsIsNeverIntersectionComputed;
-      if (core.Some(Checker_getPropertiesOfUnionOrIntersectionType(receiver, t), (prop) => Checker_isNeverReducedProperty(receiver, prop))) {
-        t!.objectFlags |= ObjectFlagsIsNeverIntersection;
+      const properties = Checker_getPropertiesOfUnionOrIntersectionType(receiver, t);
+      for (let position = 0; position < properties.length; position += 1) {
+        admitNativeChecker(receiver, "work");
+        if (Checker_isNeverReducedProperty(receiver, properties[position])) {
+          t!.objectFlags |= ObjectFlagsIsNeverIntersection;
+          break;
+        }
       }
     }
     if ((t!.objectFlags & ObjectFlagsIsNeverIntersection) !== 0) {
@@ -7375,15 +7384,40 @@ export function Checker_getReducedType(receiver: GoPtr<Checker>, t: GoPtr<Type>)
  * }
  */
 export function Checker_getReducedUnionType(receiver: GoPtr<Checker>, unionType: GoPtr<Type>): GoPtr<Type> {
-  const reducedTypes = core.SameMap(Type_Types(unionType), (t) => Checker_getReducedType(receiver, t));
-  if (core.Same(reducedTypes, Type_Types(unionType))) {
-    return unionType;
-  }
-  const reduced = Checker_getUnionType(receiver, reducedTypes);
+  const constituents = Type_Types(unionType);
+  const changed = mapNativeTypeMembers(receiver, constituents, value => Checker_getReducedType(receiver, value), () => true);
+  if (changed === constituents) return unionType;
+  const reduced = Checker_getUnionType(receiver, changed);
   if ((reduced!.flags & TypeFlagsUnion) !== 0) {
     Type_AsUnionType(reduced)!.resolvedReducedType = reduced;
   }
   return reduced;
+}
+
+function mapNativeTypeMembers(receiver: GoPtr<Checker>, constituents: GoSlice<GoPtr<Type>>,
+  map: (value: GoPtr<Type>) => GoPtr<Type>, keep: (value: GoPtr<Type>) => boolean): GoSlice<GoPtr<Type>> {
+  let changed: GoSlice<GoPtr<Type>> | undefined;
+  for (let position = 0; position < constituents.length; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const original = constituents[position];
+    const mapped = map(original);
+    const retained = keep(mapped);
+    if (changed !== undefined) {
+      if (retained) {
+        admitNativeChecker(receiver, "retained");
+        changed.push(mapped);
+      }
+    } else if (mapped !== original || !retained) {
+      admitNativeChecker(receiver, "retained", 1 + position + (retained ? 1 : 0));
+      changed = [];
+      for (let prefix = 0; prefix < position; prefix += 1) {
+        admitNativeChecker(receiver, "work");
+        changed.push(constituents[prefix]);
+      }
+      if (retained) changed.push(mapped);
+    }
+  }
+  return changed ?? constituents;
 }
 
 /**
@@ -11595,27 +11629,14 @@ export function Checker_mapTypeEx(receiver: GoPtr<Checker>, t: GoPtr<Type>, f: (
   if (u!.origin !== undefined && (u!.origin!.flags & TypeFlagsUnion) !== 0) {
     types = Type_Types(u!.origin);
   }
-  let changed = false;
-  const mappedTypes: GoSlice<GoPtr<Type>> = [];
-  for (const s of (types ?? [])) {
-    let mapped: GoPtr<Type>;
-    if ((s!.flags & TypeFlagsUnion) !== 0) {
-      mapped = Checker_mapTypeEx(receiver, s, f, noReductions);
-    } else {
-      mapped = f(s);
-    }
-    if (mapped !== s) {
-      changed = true;
-    }
-    if (mapped !== undefined) {
-      mappedTypes.push(mapped);
-    }
-  }
-  if (changed) {
+  const original = types ?? [];
+  const mappedTypes = mapNativeTypeMembers(receiver, original, value => (value!.flags & TypeFlagsUnion) !== 0
+    ? Checker_mapTypeEx(receiver, value, f, noReductions) : f(value), value => value !== undefined);
+  if (mappedTypes !== original) {
     if (mappedTypes.length === 0) {
       return undefined;
     }
-    return Checker_getUnionTypeEx(receiver, [...mappedTypes], noReductions ? UnionReductionNone : UnionReductionLiteral, undefined, undefined);
+    return Checker_getUnionTypeEx(receiver, mappedTypes, noReductions ? UnionReductionNone : UnionReductionLiteral, undefined, undefined);
   }
   return t;
 }

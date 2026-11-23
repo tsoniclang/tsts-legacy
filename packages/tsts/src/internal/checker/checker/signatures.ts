@@ -5422,6 +5422,7 @@ export function Checker_getContextualSignature(receiver: GoPtr<Checker>, node: G
  * }
  */
 export function Checker_createUnionSignature(receiver: GoPtr<Checker>, sig: GoPtr<Signature>, unionSignatures: GoSlice<GoPtr<Signature>>): GoPtr<Signature> {
+  admitNativeChecker(receiver, "retained");
   const result = Checker_cloneSignature(receiver, sig, undefined);
   result!.composite = { isUnion: true, signatures: unionSignatures };
   result!.target = undefined;
@@ -9170,74 +9171,99 @@ export function Checker_getArrayMemberCallSignatures(receiver: GoPtr<Checker>, t
  * }
  */
 export function Checker_getUnionSignatures(receiver: GoPtr<Checker>, signatureLists: GoSlice<GoSlice<GoPtr<Signature>>>): GoSlice<GoPtr<Signature>> {
-  let result: GoSlice<GoPtr<Signature>> = [];
+  admitNativeChecker(receiver, "retained");
+  const result: GoSlice<GoPtr<Signature>> = [];
   let indexWithLengthOverOne = 0 as int;
   let countLengthOverOne = 0 as int;
-  for (let i = 0; i < signatureLists.length; i++) {
-    if (signatureLists[i]!.length === 0) {
-      return [];
+  for (let listIndex = 0; listIndex < signatureLists.length; listIndex++) {
+    admitNativeChecker(receiver, "work");
+    const signatures = signatureLists[listIndex]!;
+    if (signatures.length === 0) {
+      result.length = 0;
+      return result;
     }
-    if (signatureLists[i]!.length > 1) {
-      indexWithLengthOverOne = i as int;
+    if (signatures.length > 1) {
+      indexWithLengthOverOne = listIndex as int;
       countLengthOverOne++;
     }
-    for (const signature of signatureLists[i]!) {
+    for (let signatureIndex = 0; signatureIndex < signatures.length; signatureIndex++) {
+      admitNativeChecker(receiver, "work");
+      const signature = signatures[signatureIndex]!;
       // Only process signatures with parameter lists that aren't already in the result list
       if (result.length === 0 || Checker_findMatchingSignature(receiver, result, signature, false, false, true) === undefined) {
-        const unionSignatures = Checker_findMatchingSignatures(receiver, signatureLists, signature, i as int);
+        const unionSignatures = Checker_findMatchingSignatures(receiver, signatureLists, signature, listIndex as int);
         if (unionSignatures !== undefined && unionSignatures.length !== 0) {
-          let s = signature;
+          let s: GoPtr<Signature> = signature;
           // Union the result types when more than one signature matches
           if (unionSignatures.length > 1) {
             let thisParameter = signature!.thisParameter;
-            const firstThisParameterOfUnionSignatures = core.FirstNonNil(unionSignatures, (sig: GoPtr<Signature>): GoPtr<Symbol> => {
-              return sig!.thisParameter;
-            });
+            let firstThisParameterOfUnionSignatures: GoPtr<Symbol>;
+            for (let matchIndex = 0; matchIndex < unionSignatures.length; matchIndex++) {
+              admitNativeChecker(receiver, "work");
+              firstThisParameterOfUnionSignatures = unionSignatures[matchIndex]!.thisParameter;
+              if (firstThisParameterOfUnionSignatures !== undefined) break;
+            }
             if (firstThisParameterOfUnionSignatures !== undefined) {
-              const thisType = Checker_getIntersectionType(receiver, core.MapNonNil(unionSignatures, (sig: GoPtr<Signature>): GoPtr<Type> => {
-                if (sig!.thisParameter !== undefined) {
-                  return Checker_getTypeOfSymbol(receiver, sig!.thisParameter);
+              admitNativeChecker(receiver, "retained");
+              const thisTypes: GoSlice<GoPtr<Type>> = [];
+              for (let matchIndex = 0; matchIndex < unionSignatures.length; matchIndex++) {
+                admitNativeChecker(receiver, "work");
+                const parameter = unionSignatures[matchIndex]!.thisParameter;
+                if (parameter !== undefined) {
+                  const type = Checker_getTypeOfSymbol(receiver, parameter);
+                  if (type !== undefined) {
+                    admitNativeChecker(receiver, "retained");
+                    thisTypes.push(type);
+                  }
                 }
-                return undefined;
-              }));
+              }
+              const thisType = Checker_getIntersectionType(receiver, thisTypes);
               thisParameter = Checker_createSymbolWithType(receiver, firstThisParameterOfUnionSignatures, thisType);
             }
             s = Checker_createUnionSignature(receiver, signature, unionSignatures);
             s!.thisParameter = thisParameter;
           }
-          result = [...result, s];
+          admitNativeChecker(receiver, "retained");
+          result.push(s);
         }
       }
     }
   }
-  if (result.length === 0 && countLengthOverOne <= 1) {
+  if (result.length === 0 && signatureLists.length !== 0 && countLengthOverOne <= 1) {
     // No sufficiently similar signature existed to subsume all the other signatures in the union - time to see if we can make a single
     // signature that handles all of them. We only do this when there are overloads in only one constituent. (Overloads are conditional in
     // nature and having overloads in multiple constituents would necessitate making a power set of signatures from the type, whose
     // ordering would be non-obvious)
+    admitNativeChecker(receiver, "work");
     const masterList = signatureLists[indexWithLengthOverOne]!;
-    let results: GoSlice<GoPtr<Signature>> = slices.Clone(masterList) ?? [];
-    for (const signatures of signatureLists) {
+    admitNativeChecker(receiver, "work", masterList.length);
+    admitNativeChecker(receiver, "retained", masterList.length);
+    for (let masterIndex = 0; masterIndex < masterList.length; masterIndex++) result.push(masterList[masterIndex]!);
+    for (let listIndex = 0; listIndex < signatureLists.length; listIndex++) {
+      admitNativeChecker(receiver, "work");
+      const signatures = signatureLists[listIndex]!;
       if (!core.Same(signatures, masterList)) {
+        admitNativeChecker(receiver, "work");
         const signature = signatures[0];
         if (signature === undefined) {
           throw new globalThis.Error("getUnionSignatures bails early on empty signature lists and should not have empty lists on second pass");
         }
-        if (signature.typeParameters.length !== 0 && core.Some(results, (s: GoPtr<Signature>): bool => {
-          return s!.typeParameters.length !== 0 && !Checker_compareTypeParametersIdentical(receiver, signature.typeParameters, s!.typeParameters);
-        })) {
-          results = [];
-        } else {
-          results = core.Map(results, (sig: GoPtr<Signature>): GoPtr<Signature> => {
-            return Checker_combineUnionOrIntersectionMemberSignatures(receiver, sig, signature, true);
-          });
+        if (signature.typeParameters.length !== 0) {
+          for (let resultIndex = 0; resultIndex < result.length; resultIndex++) {
+            admitNativeChecker(receiver, "work");
+            const parameters = result[resultIndex]!.typeParameters;
+            if (parameters.length !== 0 && !Checker_compareTypeParametersIdentical(receiver, signature.typeParameters, parameters)) {
+              result.length = 0;
+              return result;
+            }
+          }
         }
-        if (results.length === 0) {
-          break;
+        for (let resultIndex = 0; resultIndex < result.length; resultIndex++) {
+          admitNativeChecker(receiver, "work");
+          result[resultIndex] = Checker_combineUnionOrIntersectionMemberSignatures(receiver, result[resultIndex], signature, true);
         }
       }
     }
-    result = results;
   }
   return result;
 }
@@ -9311,6 +9337,8 @@ export function Checker_combineUnionOrIntersectionMemberSignatures(receiver: GoP
   } else {
     leftSignatures = [left];
   }
+  admitNativeChecker(receiver, "work", leftSignatures.length);
+  admitNativeChecker(receiver, "retained", leftSignatures.length + 2);
   result!.composite = { isUnion, signatures: [...leftSignatures, right] };
   if (paramMapper !== undefined) {
     if (left!.composite !== undefined && left!.composite.isUnion === isUnion && left!.mapper !== undefined) {
@@ -9411,8 +9439,10 @@ export function Checker_combineUnionOrIntersectionParameters(receiver: GoPtr<Che
   }
   const eitherHasEffectiveRest = Checker_hasEffectiveRestParameter(receiver, left) || Checker_hasEffectiveRestParameter(receiver, right);
   const needsExtraRestElement = eitherHasEffectiveRest && !Checker_hasEffectiveRestParameter(receiver, longest);
+  admitNativeChecker(receiver, "retained", 1 + longestCount + Number(needsExtraRestElement));
   const params = new Array<GoPtr<Symbol>>(longestCount + core.IfElse(needsExtraRestElement, 1, 0)) as GoSlice<GoPtr<Symbol>>;
   for (let i = 0; i < longestCount; i++) {
+    admitNativeChecker(receiver, "work");
     let longestParamType = Checker_tryGetTypeAtPosition(receiver, longest, i as int);
     if (longest === right) {
       longestParamType = Checker_instantiateType(receiver, longestParamType, mapper);
@@ -9462,6 +9492,7 @@ export function Checker_combineUnionOrIntersectionParameters(receiver: GoPtr<Che
     params[i] = paramSymbol;
   }
   if (needsExtraRestElement) {
+    admitNativeChecker(receiver, "work");
     const restParamSymbol = Checker_newSymbolEx(receiver, SymbolFlagsFunctionScopedVariable as SymbolFlags, "args", CheckFlagsRestParameter);
     const links = LinkStore_Get(receiver!.valueSymbolLinks, restParamSymbol) as GoPtr<ValueSymbolLinks>;
     links!.resolvedType = Checker_createArrayType(receiver, Checker_getTypeAtPosition(receiver, shorter, longestCount));
@@ -10027,13 +10058,19 @@ export function Checker_getTypeParameterFromMappedType(receiver: GoPtr<Checker>,
  * }
  */
 export function Checker_forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType(receiver: GoPtr<Checker>, t: GoPtr<Type>, include: TypeFlags, stringsOnly: bool, cb: (keyType: GoPtr<Type>) => void): void {
-  for (const prop of Checker_getPropertiesOfType(receiver, t)) {
+  const properties = Checker_getPropertiesOfType(receiver, t);
+  for (let position = 0; position < properties.length; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const prop = properties[position];
     cb(Checker_getLiteralTypeFromProperty(receiver, prop, include, false));
   }
   if ((t!.flags & TypeFlagsAny) !== 0) {
     cb(receiver!.stringType);
   } else {
-    for (const info of Checker_getIndexInfosOfType(receiver, t)) {
+    const indices = Checker_getIndexInfosOfType(receiver, t);
+    for (let position = 0; position < indices.length; position += 1) {
+      admitNativeChecker(receiver, "work");
+      const info = indices[position];
       if (!stringsOnly || (info!.keyType!.flags & (TypeFlagsString | TypeFlagsTemplateLiteral)) !== 0) {
         cb(info!.keyType);
       }
@@ -10580,6 +10617,7 @@ export function Checker_newTypeParameter(receiver: GoPtr<Checker>, symbol_: GoPt
  * }
  */
 export function Checker_newSignature(receiver: GoPtr<Checker>, flags: SignatureFlags, declaration: GoPtr<Node>, typeParameters: GoSlice<GoPtr<Type>>, thisParameter: GoPtr<Symbol>, parameters: GoSlice<GoPtr<Symbol>>, resolvedReturnType: GoPtr<Type>, resolvedTypePredicate: GoPtr<TypePredicate>, minArgumentCount: int, constructorClass: GoPtr<Node>): GoPtr<Signature> {
+  admitNativeChecker(receiver, "retained");
   const sig = { checkerId: receiver!.id, constructorClass } as Signature;
   sig!.flags = flags;
   sig!.declaration = declaration;
