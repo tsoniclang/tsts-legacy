@@ -11,6 +11,16 @@ import {
   clearCachedInferences,
 } from "./inference.js";
 import type { Type } from "./types.js";
+import { admitNativeChecker } from "./resource-admission.js";
+
+function mappedSourceOrdinal(sources: GoSlice<GoPtr<Type>>, type: GoPtr<Type>): number {
+  const checker = type?.checker;
+  for (let ordinal = 0; ordinal < sources.length; ordinal += 1) {
+    admitNativeChecker(checker, "work");
+    if (sources[ordinal] === type) return ordinal;
+  }
+  return -1;
+}
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/mapper.go::type::TypeMapperKind","kind":"type","status":"implemented","sigHash":"3af927afc5f2ac6455d13aa4237799729a777fd4ef0b1bc582578d482edf0cb5","bodyHash":"93afd4209ed7acb0c7063285beb2cccdf1426ddedee7dce25c71f2770bdc60d2"}
@@ -280,7 +290,10 @@ function SimpleTypeMapper_as_TypeMapperData(receiver: GoPtr<SimpleTypeMapper>): 
  * }
  */
 export function SimpleTypeMapper_Map(receiver: GoPtr<SimpleTypeMapper>, t: GoPtr<Type>): GoPtr<Type> {
+  const checker = t?.checker;
+  admitNativeChecker(checker, "work");
   if (t === receiver!.source) {
+    admitNativeChecker(checker, "work");
     return receiver!.target;
   }
   return t;
@@ -356,13 +369,10 @@ function ArrayTypeMapper_as_TypeMapperData(receiver: GoPtr<ArrayTypeMapper>): Ty
  * }
  */
 export function ArrayTypeMapper_Map(receiver: GoPtr<ArrayTypeMapper>, t: GoPtr<Type>): GoPtr<Type> {
-  for (let i = 0; i < receiver!.sources.length; i++) {
-    const s = receiver!.sources[i];
-    if (t === s) {
-      return receiver!.targets[i];
-    }
-  }
-  return t;
+  const ordinal = mappedSourceOrdinal(receiver!.sources, t);
+  if (ordinal < 0) return t;
+  admitNativeChecker(t?.checker, "work");
+  return receiver!.targets[ordinal];
 }
 
 /**
@@ -433,10 +443,9 @@ function ArrayToSingleTypeMapper_as_TypeMapperData(receiver: GoPtr<ArrayToSingle
  * }
  */
 export function ArrayToSingleTypeMapper_Map(receiver: GoPtr<ArrayToSingleTypeMapper>, t: GoPtr<Type>): GoPtr<Type> {
-  if (receiver!.sources.includes(t)) {
-    return receiver!.target;
-  }
-  return t;
+  if (mappedSourceOrdinal(receiver!.sources, t) < 0) return t;
+  admitNativeChecker(t?.checker, "work");
+  return receiver!.target;
 }
 
 /**
@@ -497,13 +506,10 @@ function DeferredTypeMapper_as_TypeMapperData(receiver: GoPtr<DeferredTypeMapper
  * }
  */
 export function DeferredTypeMapper_Map(receiver: GoPtr<DeferredTypeMapper>, t: GoPtr<Type>): GoPtr<Type> {
-  for (let i = 0; i < receiver!.sources.length; i++) {
-    const s = receiver!.sources[i];
-    if (t === s) {
-      return receiver!.targets[i]!();
-    }
-  }
-  return t;
+  const ordinal = mappedSourceOrdinal(receiver!.sources, t);
+  if (ordinal < 0) return t;
+  admitNativeChecker(t?.checker, "work");
+  return receiver!.targets[ordinal]!();
 }
 
 /**

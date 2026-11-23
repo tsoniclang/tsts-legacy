@@ -182,7 +182,8 @@ test("a cold native conditional admits its argument, branch and cache before ret
     const current = cold.reads[position];
     assert.ok(previous !== undefined && current !== undefined && previous.after < current.after);
   }
-  assert.deepEqual(cold.charges.slice(0, 3), [["work", 1], ["work", 1], ["retained", 2]]);
+  const admittedArgument: readonly Charge[] = [["work", 1], ["work", 1], ["work", 1], ["work", 1], ["retained", 2]];
+  assert.deepEqual(cold.charges.slice(0, admittedArgument.length), admittedArgument);
   assert.deepEqual(cold.charges.at(-1), ["retained", 1]);
   const trace = cold.charges.slice();
   const readTrace = cold.reads.slice();
@@ -190,7 +191,7 @@ test("a cold native conditional admits its argument, branch and cache before ret
   cold.reads.length = 0;
   const warm = cold.acquire(() => null);
   assert.ok(warm.kind === "complete" && warm.value === result.value);
-  assert.deepEqual(cold.charges, [["work", 1], ["work", 1], ["retained", 2], ["work", 3], ["work", 1]]);
+  assert.deepEqual(cold.charges, [...admittedArgument, ["work", 3], ["work", 1]]);
   assert.deepEqual(cold.reads.map(read => read.field), ["parameter"]);
   assert.equal(cold.root.instantiations.size, initial + 1);
 
