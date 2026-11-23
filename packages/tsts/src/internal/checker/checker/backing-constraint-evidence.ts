@@ -13,6 +13,7 @@ import type {
   Type,
 } from "../types.js";
 import type { Checker } from "./state.js";
+import { admitNativeChecker } from "../resource-admission.js";
 
 type ConstraintBody = ResolvedCheckerBackingConstraint extends infer Constraint
   ? Constraint extends ResolvedCheckerBackingConstraint
@@ -227,66 +228,146 @@ export function retainBackingDiagnosticNotes(checker: Checker, diagnostic: Diagn
   state.revision++;
 }
 
+function* readBackingRows<Row>(checker: Checker, rows: readonly Row[]): IterableIterator<Row> {
+  for (let position = 0; position < rows.length; position += 1) {
+    admitNativeChecker(checker, "work");
+    yield rows[position]!;
+  }
+}
+
+function* readBackingEntries<Row>(checker: Checker, count: number, rows: Iterator<Row>): IterableIterator<Row> {
+  for (let position = 0; position < count; position += 1) {
+    admitNativeChecker(checker, "work");
+    const row = rows.next();
+    if (row.done) throw new Error("A completed backing inventory must retain its actual rows.");
+    yield row.value;
+  }
+}
+
 export function checkerDiagnosticCoverage(checker: Checker, root: Diagnostic): ResolvedCheckerDiagnosticCoverage {
+  admitNativeChecker(checker, "work");
   const state = checker.backingConstraintEvidenceState;
-  const unavailable = (): ResolvedCheckerDiagnosticCoverage => Object.freeze({ kind: "unavailable", root });
+  const unavailable = (): ResolvedCheckerDiagnosticCoverage => {
+    admitNativeChecker(checker, "retained");
+    return Object.freeze({ kind: "unavailable", root });
+  };
   if (state === undefined) return unavailable();
+  admitNativeChecker(checker, "retained", 4);
   const obligations = new Set<ConstraintRecord>();
   const visited = new Set<Diagnostic>();
   const authorized = new Set<Diagnostic>();
   const notes = new Set<Diagnostic>();
-  const same = (actual: readonly (Diagnostic | undefined)[], expected: readonly (Diagnostic | undefined)[]): boolean =>
-    actual.length === expected.length && actual.every((entry, index) => entry === expected[index]);
+  const same = (actual: readonly (Diagnostic | undefined)[], expected: readonly (Diagnostic | undefined)[]): boolean => {
+    if (actual.length !== expected.length) return false;
+    let index = 0;
+    for (const entry of readBackingRows(checker, actual)) if (entry !== expected[index++]) return false;
+    return true;
+  };
   const matches = (diagnostic: Diagnostic, edges: DiagnosticEdges): boolean => {
+    if (!same(diagnostic.messageChain, edges.messages)) return false;
     const notes = state.notes.get(diagnostic) ?? [];
-    return same(diagnostic.messageChain, edges.messages) && same(diagnostic.relatedInformation,
-      [...edges.related, ...notes.filter(note => !edges.related.includes(note))]);
+    if (notes.length === 0) return same(diagnostic.relatedInformation, edges.related);
+    const actual = diagnostic.relatedInformation;
+    if (actual.length < edges.related.length) return false;
+    admitNativeChecker(checker, "retained");
+    const original = new Set<Diagnostic | undefined>();
+    let index = 0;
+    for (const entry of readBackingRows(checker, edges.related)) {
+      if (actual[index++] !== entry) return false;
+      if (!original.has(entry)) {
+        admitNativeChecker(checker, "retained");
+        original.add(entry);
+      }
+    }
+    for (const note of readBackingRows(checker, notes)) {
+      if (!original.has(note) && (index >= actual.length || actual[index++] !== note)) return false;
+    }
+    return index === actual.length;
   };
   const inspectNotes = (diagnostic: Diagnostic): boolean => {
-    for (const note of state.notes.get(diagnostic) ?? []) {
+    for (const note of readBackingRows(checker, state.notes.get(diagnostic) ?? [])) {
       const tree = state.noteTrees.get(note);
       if (tree === undefined) return false;
-      for (const [node, edges] of tree) if (!matches(node, edges)) return false;
-      notes.add(note);
+      for (const [node, edges] of readBackingEntries(checker, tree.size, tree.entries())) if (!matches(node, edges)) return false;
+      if (!notes.has(note)) {
+        admitNativeChecker(checker, "retained");
+        notes.add(note);
+      }
     }
     return true;
   };
   const inspect = (diagnostic: Diagnostic): boolean => {
+    admitNativeChecker(checker, "work");
     if (visited.has(diagnostic)) return false;
+    admitNativeChecker(checker, "retained");
     visited.add(diagnostic);
     const records = state.origins.get(diagnostic);
     if (records !== undefined) {
-      for (const record of records) {
-        for (const [node, edges] of record.tree) {
+      for (const record of readBackingRows(checker, records)) {
+        for (const [node, edges] of readBackingEntries(checker, record.tree.size, record.tree.entries())) {
           if (!matches(node, edges) || !inspectNotes(node)) return false;
-          authorized.add(node);
+          if (!authorized.has(node)) {
+            admitNativeChecker(checker, "retained");
+            authorized.add(node);
+          }
         }
-        obligations.add(record);
+        if (!obligations.has(record)) {
+          admitNativeChecker(checker, "retained");
+          obligations.add(record);
+        }
       }
       return true;
     }
     const envelope = state.envelopes.get(diagnostic);
-    return envelope !== undefined && matches(diagnostic, envelope) && inspectNotes(diagnostic) && envelope.messages.length !== 0
-      && envelope.messages.every(child => child !== undefined && inspect(child))
-      && envelope.related.every(child => child !== undefined
-        && (authorized.has(child) || state.notes.get(diagnostic)?.includes(child)));
+    if (envelope === undefined || !matches(diagnostic, envelope) || !inspectNotes(diagnostic) || envelope.messages.length === 0) return false;
+    for (const child of readBackingRows(checker, envelope.messages)) if (child === undefined || !inspect(child)) return false;
+    for (const child of readBackingRows(checker, envelope.related)) {
+      if (child === undefined) return false;
+      if (authorized.has(child)) continue;
+      let joined = false;
+      for (const note of readBackingRows(checker, state.notes.get(diagnostic) ?? [])) {
+        if (note !== child) continue;
+        joined = true;
+        break;
+      }
+      if (!joined) return false;
+    }
+    return true;
   };
   if (!inspect(root)) return unavailable();
   const invocation = state.applicabilityRoots.get(root);
-  const alternative = invocation !== undefined && obligations.size !== 0 && [...obligations].every(record =>
-    state.applicability.has(record) && record.body.application?.invocation === invocation);
+  const allAlternatives = (): boolean => {
+    for (const record of readBackingEntries(checker, obligations.size, obligations.values()))
+      if (!state.applicability.has(record) || record.body.application?.invocation !== invocation) return false;
+    return true;
+  };
+  const alternative = invocation !== undefined && obligations.size !== 0 && allAlternatives();
   if (alternative) {
-    for (const diagnostic of state.invocationDiagnostics.get(invocation) ?? []) {
+    const diagnostics = state.invocationDiagnostics.get(invocation);
+    if (diagnostics !== undefined) for (const diagnostic of readBackingEntries(checker, diagnostics.size, diagnostics.values())) {
       if (state.applicabilityRoots.get(diagnostic) !== invocation) return unavailable();
       if (diagnostic !== root && !inspect(diagnostic)) return unavailable();
     }
-    if (![...obligations].every(record => state.applicability.has(record) && record.body.application?.invocation === invocation)) return unavailable();
+    if (!allAlternatives()) return unavailable();
   }
-  return Object.freeze({ kind: "complete", root, obligations: Object.freeze([...obligations].map(record =>
-    Object.freeze({ diagnostic: record.diagnostic, application: record.body.application,
-      kind: state.applicability.has(record) ? "applicability" as const : "backing" as const }))),
+  admitNativeChecker(checker, "retained", 3);
+  const delivered: Extract<ResolvedCheckerDiagnosticCoverage, { readonly kind: "complete" }>["obligations"][number][] = [];
+  for (const record of readBackingEntries(checker, obligations.size, obligations.values())) {
+    admitNativeChecker(checker, "retained", 2);
+    delivered.push(Object.freeze({ diagnostic: record.diagnostic, application: record.body.application,
+      kind: state.applicability.has(record) ? "applicability" : "backing" }));
+  }
+  const deliveredNotes: Diagnostic[] = [];
+  if (alternative) {
+    admitNativeChecker(checker, "retained");
+    for (const note of readBackingEntries(checker, notes.size, notes.values())) {
+      admitNativeChecker(checker, "retained");
+      deliveredNotes.push(note);
+    }
+  }
+  return Object.freeze({ kind: "complete", root, obligations: Object.freeze(delivered),
     purpose: alternative
-      ? Object.freeze({ kind: "alternative-applicability", invocation, notes: Object.freeze([...notes]) })
+      ? Object.freeze({ kind: "alternative-applicability", invocation, notes: Object.freeze(deliveredNotes) })
       : Object.freeze({ kind: "other" }) });
 }
 
@@ -381,16 +462,25 @@ export function checkerBackingConstraints(
   checker: Checker,
   application?: ResolvedCallApplicationEvidence,
 ): readonly ResolvedCheckerBackingConstraint[] {
+  admitNativeChecker(checker, "work");
   const state = checker.backingConstraintEvidenceState;
-  if (state === undefined) return Object.freeze([]);
-  const snapshot = (record: ConstraintRecord): ResolvedCheckerBackingConstraint => Object.freeze({ ...record.body,
-    diagnostic: Object.freeze({ diagnostic: record.diagnostic, root: record.root, candidate: record.candidate,
-      rootCoverage: checkerDiagnosticCoverage(checker, record.root) }) });
+  const snapshot = (records: readonly ConstraintRecord[]): readonly ResolvedCheckerBackingConstraint[] => {
+    admitNativeChecker(checker, "retained");
+    const output: ResolvedCheckerBackingConstraint[] = [];
+    for (const record of readBackingRows(checker, records)) {
+      const rootCoverage = checkerDiagnosticCoverage(checker, record.root);
+      admitNativeChecker(checker, "retained", 3);
+      output.push(Object.freeze({ ...record.body,
+        diagnostic: Object.freeze({ diagnostic: record.diagnostic, root: record.root, candidate: record.candidate, rootCoverage }) }));
+    }
+    return Object.freeze(output);
+  };
+  if (state === undefined) return snapshot([]);
   if (application !== undefined) {
-    return Object.freeze((state.invocations.get(application.invocation)?.get(application) ?? []).map(snapshot));
+    return snapshot(state.invocations.get(application.invocation)?.get(application) ?? []);
   }
   if (state.cachedRevision !== state.revision) {
-    state.cached = Object.freeze(state.records.map(snapshot));
+    state.cached = snapshot(state.records);
     state.cachedRevision = state.revision;
   }
   return state.cached;

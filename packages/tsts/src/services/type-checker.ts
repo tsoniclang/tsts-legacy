@@ -85,8 +85,7 @@ import {
   Checker_GetTypeOfPropertyOfType,
 } from "../internal/checker/exports.js";
 import {
-  Checker_finalizeResolvedCallEvidence,
-  Checker_getResolvedCallSelectionEvidence,
+  Checker_getCompletedCallEvidence,
   Checker_getResolvedSignature,
 } from "../internal/checker/checker/signatures.js";
 import { CheckModeNormal, getNumberLiteralValue } from "../internal/checker/checker/state.js";
@@ -328,6 +327,8 @@ export interface TypeCheckerQueries {
   readonly getResolvedSignature: (node: GoPtr<Node>) => GoPtr<Signature>;
   readonly getSignatureFromDeclaration: (declaration: GoPtr<Node>) => GoPtr<Signature>;
   readonly getResolvedCallInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceCallInfo>;
+  readonly acquireResolvedCall: <Stop extends object>(node: GoPtr<Node>,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourceCallInfo, Stop>;
   readonly getResolvedPropertyAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyAccessInfo>;
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
@@ -371,6 +372,33 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     throw new Error("Type-checker queries require one source file from the compiler program.");
   }
   const callInfos = new WeakMap<Node, ResolvedSourceCallInfo>();
+  const readCall = <Stop extends object>(node: GoPtr<Node>, acquisition: { readonly kind: "produce" }
+    | { readonly kind: "ready"; readonly admit: NativeCheckerAdmission<Stop> }):
+    NativeCheckerResult<ResolvedSourceCallInfo, Stop> => {
+    if (node === undefined || !IsCallOrNewExpression(node)) return { kind: "unavailable" };
+    const context = defaultOptions.context ?? Background();
+    const result = withSourceFileChecker(program, defaultOptions.sourceFile, GetSourceFileOfNode(node), context,
+      (checker): NativeCheckerResult<ResolvedSourceCallInfo | undefined, Stop> => {
+        const read = () => {
+          admitNativeChecker(checker, "work");
+          const known = callInfos.get(node);
+          if (known !== undefined) return known;
+          if (acquisition.kind === "produce") Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal);
+          const selected = Checker_getCompletedCallEvidence(checker, node,
+            acquisition.kind === "produce" ? () => Checker_GetTypeAtLocation(checker, node) : null);
+          if (selected !== undefined) {
+            admitNativeChecker(checker, "retained");
+            callInfos.set(node, selected);
+          }
+          return selected;
+        };
+        return acquisition.kind === "produce" ? { kind: "complete", value: read() }
+          : acquireLeasedChecker(checker, WithCheckerLifetime(context, CheckerLifetimeDiagnostics), acquisition.admit, read);
+      });
+    if (result === undefined || result.kind === "unavailable") return { kind: "unavailable" };
+    if (result.kind === "refused") return result;
+    return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+  };
   const propertyNames = new WeakMap<Node, ResolvedSourcePropertyNameInfo | null>();
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
@@ -558,18 +586,11 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       return withCheckedFile(program, sourceFile, defaultOptions,
         checker => Checker_GetSignatureFromDeclaration(checker, declaration));
     },
-    getResolvedCallInfo: (node) =>
-      memoizeResolvedNodeQuery(callInfos, node, () =>
-        withCheckedFile(program, GetSourceFileOfNode(node), defaultOptions, (checker) => {
-          if (!IsCallOrNewExpression(node)) {
-            return undefined;
-          }
-          Checker_getResolvedSignature(checker, node, undefined, CheckModeNormal);
-          const selection = Checker_getResolvedCallSelectionEvidence(checker, node);
-          if (selection?.kind !== "applicable") return selection;
-          const sourceResultType = Checker_GetTypeAtLocation(checker, node);
-          return Checker_finalizeResolvedCallEvidence(checker, node, sourceResultType);
-        })),
+    getResolvedCallInfo: (node) => {
+      const result = readCall(node, { kind: "produce" });
+      return result.kind === "complete" ? result.value : undefined;
+    },
+    acquireResolvedCall: (node, admit) => readCall(node, { kind: "ready", admit }),
     getResolvedPropertyAccessInfo: (node) =>
       memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker): GoPtr<ResolvedSourcePropertyAccessInfo> => {

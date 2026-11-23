@@ -61,6 +61,40 @@ test("checked source exposes exact constructor selection through the direct call
   );
 });
 
+test("a bounded call borrows only the actual completed invocation and original cutoff", () => {
+  const open = () => {
+    const source = checkedQueries("declare function selected(value: boolean): boolean; export const result = selected(true);");
+    const [node] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsCallExpression);
+    assert.ok(node);
+    return { source, node };
+  };
+  const actual = open();
+  const trace: unknown[] = [];
+  const result = actual.source.checker.acquireResolvedCall(actual.node, (cost, units) => {
+    trace.push([cost, units]);
+    return null;
+  });
+  if (result.kind !== "complete" || result.value.kind !== "applicable")
+    assert.fail("The native check completes the exact applicable call before observation.");
+  assert.deepEqual(trace, [["work", 1], ["work", 1], ["retained", 1]]);
+  assert.equal(result.value.call === actual.node && result.value.selection.application.invocation === actual.node, true);
+  assert.equal(result.value.resultType === result.value.selection.application.instantiatedSignature.resolvedReturnType, true);
+  assert.equal(actual.source.checker.getResolvedCallInfo(actual.node) === result.value, true);
+  const original = { resource: "call acquisition" };
+  for (let cap = 0; cap < trace.length; cap += 1) {
+    const trial = open();
+    let reached = 0;
+    const stopped = trial.source.checker.acquireResolvedCall<typeof original>(trial.node, (cost, units): typeof original | null => {
+      assert.deepEqual([cost, units], trace[reached]);
+      return reached++ === cap ? original : null;
+    });
+    assert.equal(reached, cap + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+  assert.equal(open().source.checker.acquireResolvedCall(actual.node,
+    () => assert.fail("a foreign checked call cannot consume the owner account")).kind, "unavailable");
+});
+
 test("checked source exposes operator syntax and checker-owned operand and result types directly", () => {
   const source = checkedQueries(`
     declare let count: number;
