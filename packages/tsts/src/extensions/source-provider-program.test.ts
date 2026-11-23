@@ -471,7 +471,7 @@ test("provider import slices compose one public export identity independent of d
   assert.deepEqual(providerIdentities, ["Consumer", "Reader", "Writer"]);
 });
 
-test("provider parameter modes remain declaration facts keyed by exact signature parameter", () => {
+test("provider parameter modes include the by-value default on the exact signature parameter", () => {
   const moduleSpecifier = "@test/native/ref.js";
   const model: ProviderDeclarationModel = {
     moduleSpecifier,
@@ -482,7 +482,11 @@ test("provider parameter modes remain declaration facts keyed by exact signature
       kind: "function",
       signatures: [{
         id: "update(ref number)",
-        parameters: [{ name: "value", type: { kind: "number" }, passingMode: "byref-readwrite" }],
+        parameters: [
+          { name: "value", type: { kind: "number" }, passingMode: "byref-readwrite" },
+          { name: "input", type: { kind: "number" } },
+          { name: "explicit", type: { kind: "number" }, passingMode: "by-value" },
+        ],
         returnType: { kind: "void" },
       }],
     }],
@@ -490,7 +494,8 @@ test("provider parameter modes remain declaration facts keyed by exact signature
   const checked = providerSession(model, [
     `import { update } from "${moduleSpecifier}";`,
     "let value = 1;",
-    "update(value);",
+    "function unrelated(input: number): number { return input; }",
+    "update(value, 2, 3);",
   ].join("\n")).checkSource();
 
   assertNoDiagnostics(checked);
@@ -502,12 +507,16 @@ test("provider parameter modes remain declaration facts keyed by exact signature
     checked.ast.is.IsCallExpression,
   )[0];
   const call = requireApplicableCallInfo(source.checker.getResolvedCallInfo(callNode));
-  const parameter = call?.selection.parameters[0];
-  assert.equal(parameter?.parameterName, "value");
-  assert.equal(
-    checked.sourceFacts?.getFact(parameter?.parameterDeclaration, argumentPassingFactKey)?.mode,
-    "byref-readwrite",
-  );
+  assert.deepEqual(call?.selection.parameters.map(parameter => [
+    parameter.parameterName, checked.sourceFacts?.getFact(parameter.parameterDeclaration, argumentPassingFactKey),
+  ]), [
+    ["value", { role: "declaration", mode: "byref-readwrite" }],
+    ["input", { role: "declaration", mode: "by-value" }],
+    ["explicit", { role: "declaration", mode: "by-value" }],
+  ]);
+  const [unrelated] = findNodes(sourceFile, checked.ast.children, checked.ast.is.IsParameterDeclaration);
+  assert.equal(unrelated !== undefined, true);
+  assert.equal(checked.sourceFacts?.getFact(unrelated, argumentPassingFactKey), undefined);
 });
 
 test("source-file queries retain checker ownership for instantiated provider signature parameters", () => {

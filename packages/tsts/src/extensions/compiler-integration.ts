@@ -40,6 +40,7 @@ import {
   sourcePrimitiveFactKey,
 } from "./facts.js";
 import type {
+  ArgumentPassingFact,
   ProviderMemberKey,
   ProviderTypeFamilyFact,
   ProviderVirtualDeclarationFact,
@@ -657,15 +658,12 @@ function recordProviderVirtualParameterFacts(
     );
   }
   for (let index = 0; index < parameters.length; index++) {
-    const mode = parameters[index]?.passingMode;
-    if (mode === undefined) {
-      continue;
-    }
+    const parameter = parameters[index];
     const parameterDeclaration = parameterDeclarations[index];
-    if (parameterDeclaration === undefined) {
+    if (parameter === undefined || parameterDeclaration === undefined) {
       throw new Error(`Provider virtual signature lost parameter declaration ${index}.`);
     }
-    const fact = { role: "declaration" as const, mode };
+    const fact: ArgumentPassingFact = { role: "declaration", mode: parameter.passingMode ?? "by-value" };
     extensionHost[extensionHostSetFact](
       parameterDeclaration,
       argumentPassingFactKey,
