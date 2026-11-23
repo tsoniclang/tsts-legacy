@@ -161,24 +161,34 @@ test("shared-host queries acquire their actual originating program lease", () =>
   }
 });
 
-for (const [description, source, expectedProperties, callCount] of [
+for (const [description, source, expectedProperties, callCount, indexReadonly] of [
   ["union", `
     interface First { head: string; tail: bigint; }
     interface Second { head: number; tail: string; }
     interface Third { head: boolean; tail: number; }
     type Combined = First | Second | Third;
-  `, ["head", "tail"], 0],
-  ["mapped remapping", 'type Combined = { readonly [Key in "head" | "tail" | "extra" as `field_${Key}`]: Key };', ["field_extra", "field_head", "field_tail"], 0],
+  `, ["head", "tail"], 0, []],
+  ["mapped remapping", 'type Combined = { readonly [Key in "head" | "tail" | "extra" as `field_${Key}`]: Key };', ["field_extra", "field_head", "field_tail"], 0, []],
   ["union overload", `
     interface First { head: string; (value: string): "a"; (value: number): "b"; }
     interface Second { head: string; (value: string): "c"; (value: number): "d"; }
     type Combined = First | Second;
-  `, ["head"], 2],
+  `, ["head"], 2, []],
   ["union combined signature", `
     interface First { head: string; (value: { left: string }): "a"; }
     interface Second { head: string; (value: { right: number }): "b"; }
     type Combined = First | Second;
-  `, ["head"], 1],
+  `, ["head"], 1, []],
+  ["union compatible index", `
+    interface First { head: string; [key: string]: string; }
+    interface Second { head: number; readonly [key: string]: number; }
+    type Combined = First | Second;
+  `, ["head"], 0, [true]],
+  ["union missing index", `
+    interface First { head: string; [key: string]: string; }
+    interface Second { head: number; [key: number]: number; }
+    type Combined = First | Second;
+  `, ["head"], 0, []],
 ] as const) test(`cold ${description} admission returns the original stop and retires the actual cohort before releasing it`, () => {
   const prepare = () => {
     const { program, index } = createProgram(source);
@@ -199,6 +209,7 @@ for (const [description, source, expectedProperties, callCount] of [
   assert.equal(complete.kind, "complete");
   assert.equal(complete.value.properties.length, expectedProperties.length);
   assert.equal(complete.value.callSignatureCount, callCount);
+  assert.deepEqual(complete.value.indexes.map(index => index.readonly), indexReadonly);
   const warm: Charge[] = [];
   const repeated = cold.shape.getStructuredInventory(cold.type, (cost, units) => { warm.push([cost, units]); return null; });
   assert.equal(repeated.kind, "complete");

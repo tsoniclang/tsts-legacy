@@ -9076,7 +9076,9 @@ export function Checker_getDefaultConstructSignatures(receiver: GoPtr<Checker>, 
 export function Checker_getArrayMemberCallSignatures(receiver: GoPtr<Checker>, t: GoPtr<Type>): GoSlice<GoPtr<Signature>> {
   let memberName = "";
   const types = Type_Types(t);
+  let readonlyArray = false;
   for (let i = 0; i < types.length; i++) {
+    admitNativeChecker(receiver, "work");
     const type_ = types[i]!;
     if ((type_!.objectFlags & ObjectFlagsInstantiated) === 0 || type_!.symbol === undefined || type_!.symbol!.Parent === undefined || !Checker_isArrayOrTupleSymbol(receiver, type_!.symbol!.Parent)) {
       return undefined as unknown as GoSlice<GoPtr<Signature>>;
@@ -9086,12 +9088,14 @@ export function Checker_getArrayMemberCallSignatures(receiver: GoPtr<Checker>, t
     } else if (memberName !== type_!.symbol!.Name) {
       return undefined as unknown as GoSlice<GoPtr<Signature>>;
     }
+    readonlyArray ||= Checker_isReadonlyArraySymbol(receiver, type_!.symbol!.Parent);
   }
   const arrayArg = Checker_mapType(receiver, t, (type_: GoPtr<Type>): GoPtr<Type> => {
+    admitNativeChecker(receiver, "work");
     const arrayTarget = Checker_isReadonlyArraySymbol(receiver, type_!.symbol!.Parent) ? receiver!.globalReadonlyArrayType : receiver!.globalArrayType;
     return TypeMapper_Map(Type_Mapper(type_), InterfaceType_TypeParameters(Type_AsInterfaceType(arrayTarget))[0]!);
   });
-  const arrayType = Checker_createArrayTypeEx(receiver, arrayArg, someType(t, (type_: GoPtr<Type>): bool => Checker_isReadonlyArraySymbol(receiver, type_!.symbol!.Parent)));
+  const arrayType = Checker_createArrayTypeEx(receiver, arrayArg, readonlyArray);
   return Checker_getSignaturesOfType(receiver, Checker_getTypeOfPropertyOfType(receiver, arrayType, memberName), SignatureKindCall);
 }
 
