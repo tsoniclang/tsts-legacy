@@ -126,6 +126,8 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "bindRawPointer", marker: "bind-raw-pointer" },
         { kind: "call-marker", exportName: "equalRawPointer", marker: "equal-raw-pointer" },
         { kind: "call-marker", exportName: "hashRawPointer", marker: "hash-raw-pointer" },
+        { kind: "call-marker", exportName: "memoryLayout", marker: "memory-value-layout" },
+        { kind: "call-marker", exportName: "sizeOf", marker: "memory-size" },
         { kind: "call-marker", exportName: "jsstr", marker: "js-string" },
       ],
     }],
@@ -719,6 +721,24 @@ test("JavaScript string markers follow exact imports and reject same-spelled loc
     extended.extensionHost.facts.get(getCallExpression(index, "convert", 1), sourceMarkerFactKey),
     undefined,
   );
+});
+
+test("static memory roles belong to actual applicable selected calls, not matching names", () => {
+  const { extended, index } = createProgram(`
+    import { memoryLayout as descriptor, sizeOf as measure } from "@example/native/lang.js";
+    const layout = descriptor(true, 8, 8, 8);
+    const size = measure(layout);
+    const failed = measure(false);
+    function local(measure: (layout: number) => number): number { return measure(layout); }
+  `);
+  finalizeSourceSemantics(extended);
+  const facts = extended.extensionHost.facts;
+  assert.deepEqual(facts.get(Node_Initializer(getVariableDeclaration(index, "layout")), sourceMarkerFactKey),
+    { kind: "call-marker", marker: "memory-value-layout" });
+  assert.deepEqual(facts.get(Node_Initializer(getVariableDeclaration(index, "size")), sourceMarkerFactKey),
+    { kind: "call-marker", marker: "memory-size" });
+  assert.equal(facts.get(Node_Initializer(getVariableDeclaration(index, "failed")), sourceMarkerFactKey), undefined);
+  assert.equal(facts.get(getCallExpression(index, "measure", 2), sourceMarkerFactKey), undefined);
 });
 
 test("a conversion call marker does not fabricate a type marker for plain or foreign results", () => {
@@ -1355,6 +1375,8 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function bindRawPointer(identity: object): rawptr;",
       "export declare function equalRawPointer(left: rawptr | undefined, right: rawptr | undefined): boolean;",
       "export declare function hashRawPointer(pointer: rawptr | undefined): number;",
+      "export declare function memoryLayout(abi: boolean, byteSize: number, byteAlignment: number, stride: number): number;",
+      "export declare function sizeOf(layout: number): number;",
       "export declare function jsstr(value: string): import('./types.js').JsString;",
     ].join("\n")],
     ["/src/tsconfig.json", JSON.stringify({
