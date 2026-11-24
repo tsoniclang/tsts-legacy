@@ -3,6 +3,63 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 
+test("a completed selected argument borrows only its actual reached native target slot", () => {
+  const open = () => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `
+interface Matrix<Item, Key> { [index: number]: Item; marker: Key; }
+interface Matrix<Item, Key> { other: Key; }
+declare const receiver: Matrix<boolean, string>;
+function irrelevant<Free>(value: Free): Free { return value; }
+const read = receiver[0];
+const marker = receiver.marker;
+`,
+    }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+    const checked = session.checkSource();
+    assert.deepEqual(checked.diagnostics, []);
+    const file = checked.getSourceFile("/src/index.ts");
+    assert.ok(file !== undefined);
+    const source = checked.getSourceFileQueries(file);
+    const receiver = findNodes(file, source.ast.children, source.ast.is.IsVariableDeclaration)
+      .find(node => source.ast.text(source.ast.name(node)) === "receiver");
+    const type = source.checker.getTypeAtLocation(source.ast.name(receiver))?.type;
+    const parameters = findNodes(file, source.ast.children, source.ast.is.IsTypeParameterDeclaration);
+    const parameter = (name: string) => {
+      const declaration = parameters.find(node => source.ast.text(source.ast.name(node)) === name);
+      return source.checker.getTypeAtLocation(source.ast.name(declaration))?.type;
+    };
+    const item = parameter("Item");
+    const key = parameter("Key");
+    const free = parameter("Free");
+    assert.ok(type && item && key && free);
+    return { source, type, item, key, free };
+  };
+  const actual = open();
+  const trace: unknown[] = [];
+  const selected = actual.source.typeShape.acquireCompletedTypeArgument(actual.type, actual.key,
+    (axis, count) => { trace.push([axis, count]); return null; });
+  assert.ok(selected.kind === "complete" && actual.source.typeShape.isStringLike(selected.value));
+  assert.deepEqual(trace, Array.from({ length: 4 }, () => ["work", 1]));
+  const first = actual.source.typeShape.acquireCompletedTypeArgument(actual.type, actual.item, () => null);
+  assert.ok(first.kind === "complete" && actual.source.typeShape.isBooleanLike(first.value));
+  assert.equal(actual.source.typeShape.acquireCompletedTypeArgument(actual.type, actual.free, () => null).kind, "unavailable");
+  assert.equal(open().source.typeShape.acquireCompletedTypeArgument(actual.type, actual.key,
+    () => assert.fail("a foreign receiver must be refused without a charge")).kind, "unavailable");
+  const original = { resource: "completed argument slot" };
+  for (let cutoff = 0; cutoff < trace.length; cutoff += 1) {
+    const fresh = open();
+    let read = 0;
+    const stopped = fresh.source.typeShape.acquireCompletedTypeArgument(fresh.type, fresh.key,
+      (axis, count): typeof original | null => {
+        assert.deepEqual([axis, count], trace[read]);
+        return read++ === cutoff ? original : null;
+      });
+    assert.equal(read, cutoff + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+});
+
 test("type-reference arguments retain outer and local parameter identities without this", () => {
   const session = createCompilerSessionFromFiles({
     currentDirectory: "/src",

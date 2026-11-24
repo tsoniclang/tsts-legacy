@@ -101,6 +101,7 @@ import {
   Type_TargetTupleType,
   Type_AsConditionalType,
   Type_AsInterfaceType,
+  Type_AsTypeReference,
   Type_AsLiteralType,
   LiteralType_Value,
   InterfaceType_TypeParameters,
@@ -263,6 +264,8 @@ export interface TypeShapeQueries {
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
+  readonly acquireCompletedTypeArgument: <Stop extends object>(type: GoPtr<Type>, parameter: GoPtr<Type>,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<Type, Stop>;
   readonly getInstantiatedBaseTypes: (type: GoPtr<Type>) => readonly Type[] | undefined;
   readonly getKeyOfComponents: (type: GoPtr<Type>) => TypeKeyOfComponents | undefined;
   readonly getSubstitutionComponents: (type: GoPtr<Type>) => TypeSubstitutionComponents | undefined;
@@ -435,6 +438,14 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       }
       return Object.freeze(result);
     }),
+    acquireCompletedTypeArgument: (type, parameter, admit) => {
+      if (type === undefined || parameter === undefined || type.checker !== parameter.checker)
+        return { kind: "unavailable" };
+      const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, type.checker,
+        defaultOptions.context ?? Background(), admit, checker => completedTypeArgument(checker, type, parameter));
+      if (result.kind !== "complete") return result;
+      return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+    },
     getKeyOfComponents: (type) => withOwnedChecker(
       program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeKeyOfComponents(checker, type),
@@ -505,6 +516,27 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
 
 function hasFlags(type: GoPtr<Type>, flags: number): boolean {
   return type !== undefined && (type.flags & flags) !== 0;
+}
+
+function completedTypeArgument(checker: Checker, type: Type, parameter: Type): GoPtr<Type> {
+  admitNativeChecker(checker, "work");
+  if (!hasFlags(type, TypeFlagsObject) || (type.objectFlags & ObjectFlagsReference) === 0) return undefined;
+  const target = Type_Target(type);
+  const arguments_ = Type_AsTypeReference(type)?.resolvedTypeArguments;
+  if (target === undefined || target.checker !== checker || (target.objectFlags & ObjectFlagsClassOrInterface) === 0 ||
+    arguments_ === undefined) return undefined;
+  const definition = Type_AsInterfaceType(target);
+  const parameters = definition?.allTypeParameters;
+  if (definition === undefined || parameters === undefined || parameters.length === 0) return undefined;
+  const count = parameters.length - 1;
+  if (arguments_.length < count || arguments_.length > count + (definition.thisType === undefined ? 0 : 1)) return undefined;
+  for (let index = 0; index < count; index += 1) {
+    admitNativeChecker(checker, "work");
+    if (parameters[index] !== parameter) continue;
+    admitNativeChecker(checker, "work");
+    return arguments_[index];
+  }
+  return undefined;
 }
 
 function enumOwnerDeclaration(type: GoPtr<Type>): GoPtr<Node> {
