@@ -25,11 +25,12 @@ import {
   KindTypeAliasDeclaration,
   KindVariableDeclaration,
 } from "../internal/ast/generated/kinds.js";
-import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString } from "../internal/checker/types.js";
+import { TypeFlagsNumber, TypeFlagsNumberLiteral, TypeFlagsString, Type_AsUnionOrIntersectionType } from "../internal/checker/types.js";
 import { Checker_GetPropertiesOfType } from "../internal/checker/exports.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
 import { createTypeCheckerQueries } from "./type-checker.js";
 import { createTypeShapeQueries } from "./type-shape.js";
+import type { TypePropertyInfo, TypePropertyRead } from "./type-shape.js";
 import {
   assertCleanSemanticDiagnostics,
   createProgram,
@@ -930,28 +931,113 @@ test("an acquired union inventory admits only the reached effective property", (
   assert.ok(first && later);
   const resolved = () => symbols.map(symbol => LinkStore_TryGet(owner.valueSymbolLinks, symbol)?.resolvedType !== undefined);
   assert.deepEqual(resolved(), [false, false]);
-  const structured = shape.getStructuredInventory(type, () => null);
+  const original = { dimension: "work", maximum: 0 };
+  let stop: typeof original | null = null;
+  const structured = shape.getStructuredInventory<typeof original>(type, () => stop);
   assert.equal(structured.kind, "complete");
   const inventory = structured.value.properties;
-  assert.equal(inventory.length, 2);
+  assert.equal(inventory.mayHaveRows, true);
   assert.deepEqual(resolved(), [false, false]);
-  const original = { dimension: "work", maximum: 0 };
-  assert.equal(inventory.read(0, () => original).kind, "refused");
+  const initial = shape.getStructuredInventory<typeof original>(type, () => stop);
+  assert.equal(initial.kind, "complete");
+  stop = original;
+  assert.deepEqual(initial.value.properties.next(), { kind: "refused", stop: original });
   assert.deepEqual(resolved(), [false, false]);
-  const admitted = inventory.read(0, () => null);
-  assert.ok(admitted.kind === "complete");
+  stop = null;
+  const admitted = inventory.next();
+  assert.ok(admitted.kind === "complete" && admitted.value !== null);
   assert.equal(admitted.value.symbol, first);
   assert.deepEqual(resolved(), [true, false]);
-  const refused = inventory.read(1, () => original);
+  stop = original;
+  const refused = inventory.next();
   assert.ok(refused.kind === "refused");
   assert.equal(refused.stop, original);
+  stop = null;
+  assert.deepEqual(inventory.next(), { kind: "refused", stop: original });
   assert.deepEqual(resolved(), [true, false]);
   const foreign = createProgram("declare const foreign: boolean;");
   const crossed = createTypeShapeQueries(foreign.program, { sourceFile: foreign.index });
   assert.equal(crossed.getStructuredInventory(type, () => assert.fail("A foreign acquisition is not charged.")).kind, "unavailable");
   const emptyInventory = shape.getStructuredInventory(checker.getTypeAtLocation(empty)?.type, () => null);
-  assert.ok(emptyInventory.kind === "complete" && emptyInventory.value.properties.length === 0);
-  assert.throws(() => inventory.read(2, () => assert.fail("An invalid ordinal reads no row.")), RangeError);
+  assert.ok(emptyInventory.kind === "complete" && !emptyInventory.value.properties.mayHaveRows);
+  assert.deepEqual(emptyInventory.value.properties.next(), { kind: "complete", value: null });
+});
+
+for (const width of [64, 512]) test(`wide native property inventory leaves ${width - 1} unreached values untouched`, context => {
+  const open = (width: number, selected: boolean) => {
+    const fields = Array.from({ length: width }, (_, index) => `field${index}: T;`).join(" ");
+    const { program, index } = createProgram(`
+      interface Left<T> { ${fields} left: T; }
+      interface Right<T> { ${fields} right: T; }
+      type Joined = Left<string> | Right<number>;
+      ${selected ? "declare const joined: Joined; export const value = joined.field0;" : ""}
+    `);
+    assertCleanSemanticDiagnostics(program, index);
+    const checker = createTypeCheckerQueries(program, { sourceFile: index });
+    const shape = createTypeShapeQueries(program, { sourceFile: index });
+    const [joined] = findNodesByKind(index, KindTypeAliasDeclaration);
+    const type = checker.getTypeFromTypeNode(Node_Type(joined))?.type;
+    const owner = type?.checker;
+    assert.ok(type && owner);
+    const [access] = findNodesByKind(index, KindPropertyAccessExpression);
+    return { checker, shape, type, owner, access };
+  };
+  const cold = open(width, false);
+  const native = Type_AsUnionOrIntersectionType(cold.type);
+  assert.ok(native);
+  const completedValues = () => [...(native.propertyCache?.entries() ?? [])]
+    .filter(([, symbol]) => LinkStore_TryGet(cold.owner.valueSymbolLinks, symbol)?.resolvedType !== undefined).map(([name]) => name);
+  assert.deepEqual(completedValues(), []);
+  const header = { work: 0, retained: 0 };
+  const row = { work: 0, retained: 0 };
+  let receipt = header;
+  let stop: { readonly resource: string } | null = null;
+  const offered = cold.shape.getStructuredInventory(cold.type, (cost, units) => {
+    receipt[cost] += units;
+    return stop;
+  });
+  assert.ok(offered.kind === "complete" && offered.value.properties.mayHaveRows);
+  const inventory = offered.value.properties;
+  assert.deepEqual(completedValues(), [], "an inventory must not complete the unopened native property values");
+  assert.equal(native.resolvedProperties, undefined);
+  receipt = row;
+  const first = inventory.next();
+  assert.ok(first.kind === "complete" && first.value?.name === "field0");
+  assert.deepEqual(completedValues(), ["field0"]);
+  const original = { resource: "next actual property" };
+  stop = original;
+  const refused = inventory.next();
+  assert.ok(refused.kind === "refused" && refused.stop === original);
+  const beforeRetry = { ...row };
+  stop = null;
+  assert.deepEqual(inventory.next(), { kind: "refused", stop: original });
+  assert.deepEqual(row, beforeRetry);
+  assert.deepEqual(completedValues(), ["field0"]);
+  assert.equal(native.resolvedProperties, undefined, "a partial cursor is not a completed native vector");
+
+  const whole = open(width, false);
+  const full = { work: 0, retained: 0 };
+  const complete = whole.shape.getStructuredInventory<never>(whole.type, (cost, units) => { full[cost] += units; return null; });
+  assert.ok(complete.kind === "complete");
+  const selected: TypePropertyInfo[] = [];
+  while (true) {
+    const next: TypePropertyRead<never> = complete.value.properties.next();
+    assert.equal(next.kind, "complete");
+    if (next.value === null) break;
+    selected.push(next.value);
+  }
+  assert.deepEqual(selected.map(property => property.name), Array.from({ length: width }, (_, index) => `field${index}`));
+  const ordinary = Checker_GetPropertiesOfType(whole.owner, whole.type);
+  assert.equal(ordinary.length, width);
+  assert.equal(selected.every((property, index) => ordinary[index] === property.symbol), true);
+
+  const named = open(width, true);
+  assert.ok(named.access);
+  const namedCost = { work: 0, retained: 0 };
+  const read = named.checker.acquireResolvedPropertyAccess(named.access, (cost, units) => { namedCost[cost] += units; return null; });
+  assert.ok(read.kind === "complete" && read.value.kind === "member" && read.value.property?.name === "field0");
+  assert.ok(full.work > header.work + row.work && full.work > namedCost.work);
+  context.diagnostic(`${width} properties: setup ${header.work}/${header.retained}, first value ${row.work}/${row.retained}, full ${full.work}/${full.retained}, named ${namedCost.work}/${namedCost.retained} work/retained`);
 });
 
 test("spread iteration subjects expose the checker's own element type in arrays and calls", () => {

@@ -30,11 +30,13 @@ export function propertyRows(shape: TypeShapeQueries, type: GoPtr<Type>): readon
   const selected = shape.getStructuredInventory(type, () => null);
   assert.equal(selected.kind, "complete", "An actual property query has its owning checker.");
   const inventory = selected.value.properties;
-  return Array.from({ length: inventory.length }, (_, index) => {
-    const row = inventory.read(index, () => null);
+  const rows: TypePropertyInfo[] = [];
+  while (true) {
+    const row = inventory.next();
     assert.equal(row.kind, "complete");
-    return row.value;
-  });
+    if (row.value === null) return rows;
+    rows.push(row.value);
+  }
 }
 
 export function propertyAccess(checker: TypeCheckerQueries, node: GoPtr<Node>): GoPtr<ResolvedSourcePropertyAccessInfo> {

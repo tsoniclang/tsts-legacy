@@ -48,7 +48,7 @@ import {
   Checker_getInstantiatedBaseTypes,
   Checker_resolveStructuredTypeMembers,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfObjectType, Checker_getPropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfObjectType, Checker_iteratePropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
@@ -102,6 +102,7 @@ import {
   Type_AsConditionalType,
   Type_AsInterfaceType,
   Type_AsTypeReference,
+  Type_AsUnionOrIntersectionType,
   Type_AsLiteralType,
   LiteralType_Value,
   InterfaceType_TypeParameters,
@@ -164,21 +165,24 @@ export interface TypePropertyInfo extends TypePropertyHeader {
   readonly mapped?: TypeMappedPropertyInfo;
 }
 
-export type TypePropertyRead<Stop extends object> = NativeCheckerResult<TypePropertyInfo, Stop>;
+export type TypePropertyRead<Stop extends object> = NativeCheckerResult<TypePropertyInfo | null, Stop>;
 
 interface NativePropertyInventory<Value> {
   readonly length: number;
   readonly read: <Stop extends object>(index: number, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<Value, Stop>;
 }
 
-export type TypePropertyInventory = NativePropertyInventory<TypePropertyInfo>;
+export interface TypePropertyInventory<Stop extends object> {
+  readonly mayHaveRows: boolean;
+  readonly next: () => TypePropertyRead<Stop>;
+}
 export type TypePropertyHeaderInventory = NativePropertyInventory<TypePropertyHeader>;
 
-export interface StructuredTypeInventory {
+export interface StructuredTypeInventory<Stop extends object> {
   readonly signatures: readonly GoPtr<Signature>[];
   readonly callSignatureCount: number;
   readonly indexes: readonly TypeIndexInfo[];
-  readonly properties: TypePropertyInventory;
+  readonly properties: TypePropertyInventory<Stop>;
 }
 
 export interface TypeTupleElementInfo {
@@ -273,7 +277,7 @@ export interface TypeShapeQueries {
   readonly getObjectPropertyInfo: (type: GoPtr<Type>, name: string) => TypePropertyInfo | null | undefined;
   readonly getEnumOwnerDeclaration: (type: GoPtr<Type>) => GoPtr<Node>;
   readonly getObjectPropertyHeaders: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<TypePropertyHeaderInventory, Stop>;
-  readonly getStructuredInventory: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<StructuredTypeInventory, Stop>;
+  readonly getStructuredInventory: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<StructuredTypeInventory<Stop>, Stop>;
   readonly getCallSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getConstructSignatures: (type: GoPtr<Type>) => readonly GoPtr<Signature>[];
   readonly getSignatureInfos: (type: GoPtr<Type>, kind: "call" | "construct") => readonly TypeSignatureInfo[];
@@ -596,7 +600,7 @@ function getStructuredTypeInventory<Stop extends object>(
   type: GoPtr<Type>,
   options: CreateTypeShapeQueriesOptions,
   admit: NativeCheckerAdmission<Stop>,
-): NativeCheckerResult<StructuredTypeInventory, Stop> {
+): NativeCheckerResult<StructuredTypeInventory<Stop>, Stop> {
   const source = options.sourceFile;
   const context = options.context ?? Background();
   const owner = type?.checker;
@@ -614,12 +618,42 @@ function getStructuredTypeInventory<Stop extends object>(
       admitNativeChecker(checker, "retained");
       indexes.push(readTypeIndexInfo(checker, type, info));
     }
-    const properties = (effective.flags & (TypeFlagsUnion | TypeFlagsIntersection)) !== 0
-      ? Checker_getPropertiesOfUnionOrIntersectionType(checker, effective)
-      : (effective.flags & TypeFlagsObject) !== 0 ? StructuredType_Properties(structured) ?? [] : [];
     admitNativeChecker(checker, "retained", 2);
-    const inventory = propertyInventory(program, source, checker, context, properties,
-      (current, symbol) => readTypePropertyInfo(current, type, symbol));
+    const composite = Type_AsUnionOrIntersectionType(effective);
+    const direct = composite === undefined
+      ? (effective.flags & TypeFlagsObject) !== 0 ? StructuredType_Properties(structured) ?? [] : []
+      : composite.resolvedProperties;
+    if (direct === undefined) admitNativeChecker(checker, "retained");
+    const pending = composite !== undefined && direct === undefined
+      ? Checker_iteratePropertiesOfUnionOrIntersectionType(checker, effective, composite) : null;
+    let position = 0;
+    let ended = false;
+    let stopped: Stop | null = null;
+    const inventory: TypePropertyInventory<Stop> = Object.freeze({
+      mayHaveRows: direct === undefined || direct.length !== 0,
+      next: (): TypePropertyRead<Stop> => {
+        if (stopped !== null) return { kind: "refused", stop: stopped };
+        if (ended || direct !== undefined && position === direct.length) return { kind: "complete", value: null };
+        const read = withOwnedCheckerAcquisition(program, source, checker, context, admit, owner => {
+          let symbol: GoPtr<Symbol>;
+          if (direct !== undefined) {
+            admitNativeChecker(owner, "work");
+            symbol = direct[position];
+          } else {
+            if (pending === null) throw new Error("A cold composite requires its actual native property traversal.");
+            const reached = pending.next();
+            if (reached.done) return null;
+            symbol = reached.value;
+          }
+          const value = readTypePropertyInfo(owner, type, symbol);
+          position += 1;
+          return value;
+        });
+        if (read.kind === "complete" && read.value === null) ended = true;
+        if (read.kind === "refused") stopped = read.stop;
+        return read;
+      },
+    });
     return Object.freeze({ signatures: structured?.signatures ?? [], callSignatureCount: structured?.callSignatureCount ?? 0,
       indexes: Object.freeze(indexes), properties: inventory });
   });

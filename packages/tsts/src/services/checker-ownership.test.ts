@@ -375,9 +375,9 @@ for (const [description, source, expectedProperties, callCount, indexReadonly] o
   type Charge = readonly [NativeCheckerCost, number];
   const cold = prepare();
   const trace: Charge[] = [];
-  const complete = cold.shape.getStructuredInventory(cold.type, (cost, units) => { trace.push([cost, units]); return null; });
+  let receipt = trace;
+  const complete = cold.shape.getStructuredInventory(cold.type, (cost, units) => { receipt.push([cost, units]); return null; });
   assert.equal(complete.kind, "complete");
-  assert.equal(complete.value.properties.length, expectedProperties.length);
   assert.equal(complete.value.callSignatureCount, callCount);
   assert.deepEqual(complete.value.indexes.map(index => index.readonly), indexReadonly);
   const warm: Charge[] = [];
@@ -386,10 +386,11 @@ for (const [description, source, expectedProperties, callCount, indexReadonly] o
   assert.equal(repeated.value.signatures === complete.value.signatures, true);
   assert.ok(trace.length > warm.length, "an independently completed native cache does not replay cold preparation");
   const rowCosts: Charge[] = [];
-  const row = complete.value.properties.read(0, (cost, units) => { rowCosts.push([cost, units]); return null; });
-  assert.ok(row.kind === "complete" && rowCosts.length > 1);
-  const otherRow = repeated.value.properties.read(0, () => null);
-  assert.ok(otherRow.kind === "complete" && otherRow.value.symbol === row.value.symbol);
+  receipt = rowCosts;
+  const row = complete.value.properties.next();
+  assert.ok(row.kind === "complete" && row.value !== null && rowCosts.length > 1);
+  const otherRow = repeated.value.properties.next();
+  assert.ok(otherRow.kind === "complete" && otherRow.value?.symbol === row.value.symbol);
   assert.deepEqual(propertyRows(cold.shape, cold.type).map(property => property.name).sort(), expectedProperties);
 
   let terminalCuts = 0;

@@ -6312,36 +6312,60 @@ export function Checker_getPropertiesOfUnionOrIntersectionType(receiver: GoPtr<C
   admitNativeChecker(receiver, "work");
   const d = Type_AsUnionOrIntersectionType(t);
   if (d!.resolvedProperties === undefined) {
-    admitNativeChecker(receiver, "retained", 4);
+    admitNativeChecker(receiver, "retained");
     markNativeCheckerProvisional(receiver);
-    const checked: orderedSet<string> = { valuesByKey: new globalThis.Map(), values: [] };
     const props: GoSlice<GoPtr<Symbol>> = [];
-    const constituents = d!.types;
-    for (let constituent = 0; constituent < constituents.length; constituent += 1) {
-      admitNativeChecker(receiver, "work");
-      const current = constituents[constituent];
-      const currentProperties = Checker_getPropertiesOfType(receiver, current);
-      for (let index = 0; index < currentProperties.length; index += 1) {
-        admitNativeChecker(receiver, "work");
-        const name = currentProperties[index]!.Name;
-        admitNativeChecker(receiver, "work", name.length);
-        if (!orderedSet_contains(checked, name)) {
-          admitNativeChecker(receiver, "retained", 2);
-          orderedSet_add(checked, name);
-          const combinedProp = Checker_getPropertyOfUnionOrIntersectionType(receiver, t, name, (t!.flags & TypeFlagsIntersection) !== 0);
-          if (combinedProp !== undefined) {
-            admitNativeChecker(receiver, "retained");
-            props.push(combinedProp);
-          }
-        }
-      }
-      if ((t!.flags & TypeFlagsUnion) !== 0 && Checker_getIndexInfosOfType(receiver, current).length === 0) {
-        break;
-      }
+    for (const property of Checker_iteratePropertiesOfUnionOrIntersectionType(receiver, t, d!)) {
+      admitNativeChecker(receiver, "retained");
+      props.push(property);
     }
     d!.resolvedProperties = props;
   }
   return d!.resolvedProperties;
+}
+
+function* borrowPropertySymbols(receiver: GoPtr<Checker>, properties: readonly GoPtr<Symbol>[]): Generator<Symbol, void> {
+  for (let position = 0; position < properties.length; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const property = properties[position];
+    if (property === undefined) throw new Error("A native property inventory requires an actual symbol at each ordinal.");
+    yield property;
+  }
+}
+
+function* iteratePropertiesOfType(receiver: GoPtr<Checker>, type: GoPtr<Type>): Generator<Symbol, void> {
+  admitNativeChecker(receiver, "work");
+  const effective = Checker_getReducedApparentType(receiver, type);
+  const composite = Type_AsUnionOrIntersectionType(effective);
+  if (composite === undefined) yield* borrowPropertySymbols(receiver, Checker_getPropertiesOfObjectType(receiver, effective));
+  else yield* Checker_iteratePropertiesOfUnionOrIntersectionType(receiver, effective, composite);
+}
+
+export function* Checker_iteratePropertiesOfUnionOrIntersectionType(receiver: GoPtr<Checker>, type: GoPtr<Type>,
+  composite: UnionOrIntersectionType): Generator<Symbol, void> {
+  const completed = composite.resolvedProperties;
+  if (completed !== undefined) {
+    yield* borrowPropertySymbols(receiver, completed);
+    return;
+  }
+  admitNativeChecker(receiver, "retained", 3);
+  const seen: orderedSet<string> = { valuesByKey: new globalThis.Map(), values: [] };
+  const constituents = composite.types;
+  for (let position = 0; position < constituents.length; position += 1) {
+    admitNativeChecker(receiver, "work");
+    const constituent = constituents[position];
+    for (const property of iteratePropertiesOfType(receiver, constituent)) {
+      const name = property.Name;
+      admitNativeChecker(receiver, "work", name.length);
+      if (orderedSet_contains(seen, name)) continue;
+      admitNativeChecker(receiver, "retained", 2);
+      orderedSet_add(seen, name);
+      markNativeCheckerProvisional(receiver);
+      const selected = Checker_getPropertyOfUnionOrIntersectionType(receiver, type, name, (type!.flags & TypeFlagsIntersection) !== 0);
+      if (selected !== undefined) yield selected;
+    }
+    if ((type!.flags & TypeFlagsUnion) !== 0 && Checker_getIndexInfosOfType(receiver, constituent).length === 0) break;
+  }
 }
 
 /**
