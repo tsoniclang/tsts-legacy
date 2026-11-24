@@ -588,6 +588,29 @@ test("type-shape separates the real keyof target from the substituted branch par
   assert.equal(checker.getTypeAtLocation(key)?.type === keys, true);
 });
 
+test("type-shape retains the owned template-literal constraint of a mapped tuple key", () => {
+  const text = "type Resolved<T extends readonly unknown[]> = { [P in keyof T]: T[P] };";
+  const { typeShape, ast, sourceFile } = checkedQueries(text);
+  const [access] = findNodes(sourceFile, ast.children, ast.is.IsIndexedAccessTypeNode);
+  const indexed = typeShape.getIndexedAccessComponents(typeShape.getTypeFromTypeNode(access)?.type);
+  assert.ok(indexed !== undefined);
+  const selected = typeShape.getSubstitutionComponents(indexed.indexType);
+  assert.ok(selected !== undefined);
+  const operands = typeShape.getUnionOrIntersectionTypes(selected.constraint);
+  const [number, numericText] = operands;
+  assert.equal(operands.length, 2);
+  assert.equal(typeShape.isNumberLike(number), true);
+  const pattern = typeShape.getTemplateLiteralComponents(numericText);
+  assert.ok(pattern !== undefined);
+  assert.deepEqual(pattern.texts, ["", ""]);
+  assert.equal(pattern.types.length, 1);
+  assert.equal(pattern.types[0] === number, true);
+  assert.equal(typeShape.getTemplateLiteralComponents(number), undefined);
+  assert.ok(numericText !== undefined);
+  assert.equal(typeShape.getTemplateLiteralComponents({ ...numericText }), undefined);
+  assert.equal(checkedQueries(text).typeShape.getTemplateLiteralComponents(numericText), undefined);
+});
+
 test("type-shape signature evidence expands inferred tuple-rest parameters exactly", () => {
   const source = checkedQueries(`
     type ThisParameterType<T> = T extends (this: infer U, ...args: never) => any ? U : unknown;
