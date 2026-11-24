@@ -5,7 +5,7 @@ import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./
 import { readTypeKeyOfComponents, readTypeSubstitutionComponents, readTypeTemplateLiteralComponents } from "./type-dependent-operands.js";
 import type { TypeKeyOfComponents, TypeSubstitutionComponents, TypeTemplateLiteralComponents } from "./type-dependent-operands.js";
 import { readCompletedTupleFormal, type CompletedTupleFormal } from "./signature-formal-evidence.js";
-import { readConditionalApplication, readTypeAliasApplication, resolveTypeAliasApplication,
+import { readConditionalApplication, readDeferredTypeAliasApplication, readTypeAliasApplication, resolveTypeAliasApplication,
   type RetainedTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Symbol, Node_Type, SourceFile_FileName } from "../internal/ast/ast.js";
@@ -246,6 +246,8 @@ export interface TypeShapeQueries {
   readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
   readonly acquireTypeAliasApplication: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
     NativeCheckerResult<RetainedTypeAliasApplication, Stop>;
+  readonly acquireDeferredTypeAliasApplication: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
+    NativeCheckerResult<RetainedTypeAliasApplication, Stop>;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
@@ -327,6 +329,15 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       checker === undefined || checker.program.SourceFiles() !== Program_SourceFiles(program)
         ? undefined : read(checker, type));
   };
+  const acquireAliasApplication = <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>,
+    read: (checker: Checker, type: Type) => RetainedTypeAliasApplication | undefined):
+    NativeCheckerResult<RetainedTypeAliasApplication, Stop> => {
+    if (type === undefined) return { kind: "unavailable" };
+    const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, type.checker,
+      defaultOptions.context ?? Background(), admit, checker => read(checker, type));
+    if (result.kind !== "complete") return result;
+    return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+  };
   const queries: TypeShapeQueries = {
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getTypeFromTypeNode: (node) => querySourceType(program, defaultOptions, { kind: "annotation", node }),
@@ -334,13 +345,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
     ),
-    acquireTypeAliasApplication: (type, admit) => {
-      if (type === undefined) return { kind: "unavailable" };
-      const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, type.checker,
-        defaultOptions.context ?? Background(), admit, checker => readTypeAliasApplication(checker, type));
-      if (result.kind !== "complete") return result;
-      return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
-    },
+    acquireTypeAliasApplication: (type, admit) => acquireAliasApplication(type, admit, readTypeAliasApplication),
+    acquireDeferredTypeAliasApplication: (type, admit) => acquireAliasApplication(type, admit, readDeferredTypeAliasApplication),
     getIndexedAccessComponents: (type) => withOwnedChecker(
       program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeIndexedAccessComponents(checker, type),

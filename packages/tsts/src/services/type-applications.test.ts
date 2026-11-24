@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { createExtensionConditionalCapture, type ExtensionConditionalCapture, type ExtensionConditionalStep } from "../extensions/conditional-type-evidence.js";
-import { Type_AsConditionalType } from "../internal/checker/types.js";
+import { Type_AsConditionalType, Type_AsTypeReference } from "../internal/checker/types.js";
 import { Checker_instantiateType } from "../internal/checker/checker/types.js";
 import { Checker_getConditionalTypeInstantiationWithCapture, Checker_popActiveMapper, Checker_pushActiveMapper } from "../internal/checker/checker/inference.js";
 import { Checker_combineTypeMappers, newTypeMapper } from "../internal/checker/mapper.js";
@@ -31,9 +31,11 @@ export type Relayed<Value> = Preserve<Value>;
 export type Tail<T> = T extends Stored<infer S> ? S : T extends string ? boolean : T;
 export type Default<T = string> = T[];
 export type DependentDefault<T = string, Next = T[]> = { first: T; next: Next };
+export type Table<K extends string, Value> = { [Key in K]: Value };
+export type Patch<Values> = { [Key in keyof Values]?: Values[Key] };
 `,
       "/src/index.ts": `
-import type { Stored, Storage, Default, DependentDefault, Constrained } from "./storage.js";
+import type { Stored, Storage, Default, DependentDefault, Constrained, Table, Patch } from "./storage.js";
 export type Text = string;
 export type Scalar = number;
 export type Wrapped = Stored<{ value: number }>;
@@ -50,6 +52,9 @@ export declare function indexed<T extends { value: number }>(value: Constrained<
 export declare function partial(value: DependentDefault<number>): void;
 export type Family<T> = { chosen: DependentDefault<T> };
 export declare function applied(value: Family<boolean>): void;
+export declare function openKey<K extends string, T>(value: Patch<Table<K, T[]>>): void;
+export declare function openValue<T>(value: Patch<Table<"slot", T[]>>): void;
+export declare function closed(value: Patch<Table<"slot", number[]>>): void;
 `,
     },
     compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" },
@@ -89,6 +94,66 @@ function functionParameterType(source: SourceFileQueries, name: string): Type {
   assert.ok(type);
   return type;
 }
+
+test("a retained mapped application needs a reached unresolved argument, not a mapped result flag", () => {
+  const { source, definitions } = applicationSource();
+  const openKey = functionParameterType(source, "openKey");
+  const openValue = functionParameterType(source, "openValue");
+  const closed = functionParameterType(source, "closed");
+  const query = source.typeShape.acquireDeferredTypeAliasApplication;
+  const patch = alias(definitions, "Patch");
+  assert.equal(aliasApplication(source.typeShape, closed)?.declaration === patch, true);
+  assert.equal(query(closed, () => null).kind, "unavailable");
+  assert.equal(query({ ...openKey }, () => null).kind, "unavailable");
+  const argumentOf = (type: Type): Type => {
+    const argument = aliasApplication(source.typeShape, type)?.bindings[0]?.argument;
+    assert.ok(argument);
+    return argument;
+  };
+  const keyArguments = argumentOf(openKey).alias?.typeArguments;
+  const valueArguments = argumentOf(openValue).alias?.typeArguments;
+  const valueArray = valueArguments?.[1];
+  const array = valueArray === undefined ? undefined : Type_AsTypeReference(valueArray)?.resolvedTypeArguments;
+  assert.ok(keyArguments !== undefined && array !== undefined);
+  assert.equal(keyArguments.length, 2);
+  assert.equal(array.length, 1);
+  const laterKey = Object.getOwnPropertyDescriptor(keyArguments, "1");
+  const arraySlot = Object.getOwnPropertyDescriptor(array, "0");
+  const element = array[0];
+  assert.ok(laterKey && arraySlot && element);
+  let reads = 0;
+  try {
+    Object.defineProperty(keyArguments, "1", { configurable: true, get: () => {
+      throw new Error("The array after the already open key must stay unread.");
+    } });
+    const key = query(openKey, () => null);
+    assert.ok(key.kind === "complete" && key.value.declaration === patch && key.value.result === openKey);
+    Object.defineProperty(array, "0", { configurable: true, get: () => {
+      ++reads;
+      return element;
+    } });
+    const costs: (readonly [NativeCheckerCost, number])[] = [];
+    const value = query(openValue, (cost, units) => { costs.push([cost, units]); return null; });
+    assert.ok(value.kind === "complete" && value.value.declaration === patch && value.value.result === openValue);
+    assert.equal(reads, 1);
+    assert.equal(costs.at(-1)?.[0], "work");
+    const stop = {};
+    for (let cut = 0; cut < costs.length; ++cut) {
+      reads = 0;
+      const reached: (readonly [NativeCheckerCost, number])[] = [];
+      const stopped = query(openValue, (cost, units) => {
+        reached.push([cost, units]);
+        return reached.length > cut ? stop : null;
+      });
+      assert.deepEqual(reached, costs.slice(0, cut + 1));
+      assert.ok(stopped.kind === "refused" && stopped.stop === stop);
+      assert.equal(reads, 0);
+    }
+  } finally {
+    Object.defineProperty(keyArguments, "1", laterKey);
+    Object.defineProperty(array, "0", arraySlot);
+  }
+});
 
 test("retained alias applications expose inferred conditional arguments without type-reference syntax", () => {
   const { source, definitions } = applicationSource();
