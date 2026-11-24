@@ -96,6 +96,7 @@ test("selected signatures retain the actual passive mapping of a direct paramete
     if (result.kind !== "complete") throw new Error("The selected method has its actual native return.");
     const { type: selected, projectedReturn } = result.value;
     assert.ok(projectedReturn);
+    assert.equal(projectedReturn.kind, "parameter");
     assert.equal(projectedReturn.declaration === actualMethod && projectedReturn.annotation === annotation, true);
     assert.equal(projectedReturn.original === originals?.type && projectedReturn.selected === selected && selected !== originals?.type, true);
     assert.equal(result.value.typeSource, undefined, "the original annotation is not the selected parameter's source");
@@ -103,6 +104,59 @@ test("selected signatures retain the actual passive mapping of a direct paramete
     returned.push(selected);
   }
   assert.equal(returned[0] !== returned[1], true, "equal method syntax is not a single selected binder");
+});
+
+test("a tuple receiver result retains the actual passive mapping of its own written this", () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/self-result", includeBundledLibraries: false,
+    files: { "/self-result/core.d.ts": testCoreDeclarations,
+      "/self-result/source.ts": `
+        interface Array<T> {
+          move(target: number, start: number): this;
+          unchanged(): [];
+        }
+        declare const empty: [];
+        declare const populated: [number];
+        const first = empty.move(0, 0);
+        const second = populated.move(0, 0);
+        const other = populated.unchanged();
+      ` }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const file = checked.getSourceFile("/self-result/source.ts");
+  assert.ok(file);
+  const { ast, checker } = checked.getSourceFileQueries(file);
+  const methods = findNodes(file, ast.children, node => ast.kindName(node) === "KindMethodSignature");
+  const declaration = methods.find(node => ast.text(ast.name(node)) === "move");
+  assert.ok(declaration);
+  const calls = findNodes(file, ast.children, ast.is.IsCallExpression);
+  assert.equal(calls.length, 3);
+  for (let index = 0; index < calls.length; ++index) {
+    const invocation = calls[index];
+    const signature = checker.getResolvedSignature(invocation);
+    const request = { kind: "signature-return", signature } as const;
+    const trace: [string, number][] = [];
+    const result = checker.acquireSourceType(request, (axis, count) => { trace.push([axis, count]); return null; });
+    assert.equal(result.kind, "complete");
+    if (result.kind !== "complete") throw new Error("A selected method requires its actual native result.");
+    const projected = result.value.projectedReturn;
+    if (index === 2) assert.equal(projected, undefined);
+    else {
+      assert.equal(projected?.kind, "receiver");
+      assert.equal(projected?.declaration === declaration && projected.annotation === Node_Type(declaration), true);
+      assert.equal(projected?.selected === result.value.type && projected.selected !== projected.original, true);
+      assert.equal(checked.getSourceFileQueries(file).typeShape.getTupleInfo(result.value.type)?.elements.length, index);
+      const stop = { cap: "selected receiver tuple" };
+      for (let cut = 0; cut < trace.length; ++cut) {
+        let reached = 0;
+        const refused = checker.acquireSourceType(request, (axis, count): typeof stop | null => {
+          assert.deepEqual([axis, count], trace[reached]);
+          return reached++ === cut ? stop : null;
+        });
+        assert.equal(refused.kind === "refused" && refused.stop === stop, true);
+        assert.equal(reached, cut + 1);
+      }
+    }
+  }
 });
 
 test("paid source typing retains genuine primitive binary results in their owning checker and reuses them linearly", () => {
