@@ -127,6 +127,8 @@ function createExampleSourceSemanticsExtension() {
         { kind: "call-marker", exportName: "equalRawPointer", marker: "equal-raw-pointer" },
         { kind: "call-marker", exportName: "hashRawPointer", marker: "hash-raw-pointer" },
         { kind: "call-marker", exportName: "memoryLayout", marker: "memory-value-layout" },
+        { kind: "call-marker", exportName: "bindMemoryField", marker: "memory-field-binding" },
+        { kind: "call-marker", exportName: "bindMemoryRecord", marker: "memory-record-binding" },
         { kind: "call-marker", exportName: "sizeOf", marker: "memory-size" },
         { kind: "call-marker", exportName: "jsstr", marker: "js-string" },
       ],
@@ -739,6 +741,31 @@ test("static memory roles belong to actual applicable selected calls, not matchi
     { kind: "call-marker", marker: "memory-size" });
   assert.equal(facts.get(Node_Initializer(getVariableDeclaration(index, "failed")), sourceMarkerFactKey), undefined);
   assert.equal(facts.get(getCallExpression(index, "measure", 2), sourceMarkerFactKey), undefined);
+});
+
+test("memory bindings require the actual applicable provider declaration", () => {
+  const { extended, index } = createProgram(`
+    import { bindMemoryField as field, bindMemoryRecord as record } from "@example/native/lang.js";
+    import type { ptr } from "@example/native/types.js";
+    let pointer!: ptr<number>;
+    const bound = field(8, pointer);
+    const view = record(true, bound);
+    const empty = record(true);
+    const wrongPointer = field<number>(8, false);
+    const wrongLayout = record(0, bound);
+    function local(field: (size: number, address: ptr<number>) => number, record: (layout: boolean) => number): void {
+      const localField = field(8, pointer);
+      const localRecord = record(true);
+    }
+  `);
+  finalizeSourceSemantics(extended);
+  const facts = extended.extensionHost.facts;
+  const marker = (name: string) => facts.get(Node_Initializer(getVariableDeclaration(index, name)), sourceMarkerFactKey);
+  assert.deepEqual(marker("bound"), { kind: "call-marker", marker: "memory-field-binding" });
+  for (const name of ["view", "empty"])
+    assert.deepEqual(marker(name), { kind: "call-marker", marker: "memory-record-binding" });
+  for (const name of ["wrongPointer", "wrongLayout", "localField", "localRecord"])
+    assert.equal(marker(name), undefined, name);
 });
 
 test("a conversion call marker does not fabricate a type marker for plain or foreign results", () => {
@@ -1376,6 +1403,8 @@ function createProgram(indexText: string, extraFiles: ReadonlyMap<string, string
       "export declare function equalRawPointer(left: rawptr | undefined, right: rawptr | undefined): boolean;",
       "export declare function hashRawPointer(pointer: rawptr | undefined): number;",
       "export declare function memoryLayout(abi: boolean, byteSize: number, byteAlignment: number, stride: number): number;",
+      "export declare function bindMemoryField<T>(field: number, pointer: ptr<T>): ptr<T>;",
+      "export declare function bindMemoryRecord<T>(layout: boolean, ...fields: ptr<T>[]): number;",
       "export declare function sizeOf(layout: number): number;",
       "export declare function jsstr(value: string): import('./types.js').JsString;",
     ].join("\n")],

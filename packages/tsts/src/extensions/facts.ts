@@ -88,6 +88,8 @@ export type SourceCallMarkerKind =
   | "memory-value-layout"
   | "memory-array-layout"
   | "memory-field-layout"
+  | "memory-field-binding"
+  | "memory-record-binding"
   | "memory-size"
   | "memory-alignment"
   | "memory-stride"
@@ -1190,6 +1192,8 @@ const sourceCallMarkerKinds = new Set<SourceCallMarkerKind>([
   "memory-value-layout",
   "memory-array-layout",
   "memory-field-layout",
+  "memory-field-binding",
+  "memory-record-binding",
   "memory-size",
   "memory-alignment",
   "memory-stride",
