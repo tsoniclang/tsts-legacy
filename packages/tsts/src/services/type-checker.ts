@@ -12,7 +12,7 @@ import { Node_Name } from "../internal/ast/spine.js";
 import type { Symbol } from "../internal/ast/symbol.js";
 import type { Diagnostic } from "../internal/ast/diagnostic.js";
 import type { Expression } from "../internal/ast/generated/unions.js";
-import { readTypeIndexInfo } from "./type-members.js";
+import { readTypeIndexInfo, readTypePropertyHeader } from "./type-members.js";
 import { readInvocationReturnType } from "./signature-returns.js";
 import { sourceModuleLink } from "./source-module-link.js";
 import type { ResolvedSourceModuleLink } from "./source-module-link.js";
@@ -25,7 +25,7 @@ export type { SourceTypeRequest } from "./source-type-answer.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 export type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
-import type { TypeIndexInfo } from "./type-shape.js";
+import type { TypeIndexInfo, TypePropertyHeader } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
   SymbolFlagsAlias,
@@ -213,6 +213,7 @@ export type ResolvedSourcePropertyAccessInfo =
   | (PublicSelectedPropertyAccess<CheckerResolvedSourcePropertyAccessInfo> & {
       readonly kind: "member";
       readonly receiver: CheckerResolvedSourcePropertyAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
+      readonly property: TypePropertyHeader | null;
     })
   | { readonly kind: "module-exported-value"; readonly target: Symbol | undefined };
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
@@ -329,7 +330,8 @@ export interface TypeCheckerQueries {
   readonly getResolvedCallInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceCallInfo>;
   readonly acquireResolvedCall: <Stop extends object>(node: GoPtr<Node>,
     admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourceCallInfo, Stop>;
-  readonly getResolvedPropertyAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourcePropertyAccessInfo>;
+  readonly acquireResolvedPropertyAccess: <Stop extends object>(node: GoPtr<Node>,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourcePropertyAccessInfo, Stop>;
   readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
   readonly getResolvedObjectLiteralElementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceObjectLiteralElementInfo>;
@@ -401,6 +403,32 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
   };
   const propertyNames = new WeakMap<Node, ResolvedSourcePropertyNameInfo | null>();
   const propertyAccessInfos = new WeakMap<Node, ResolvedSourcePropertyAccessInfo>();
+  const readProperty = <Stop extends object>(node: GoPtr<Node>, admit: NativeCheckerAdmission<Stop>):
+    NativeCheckerResult<ResolvedSourcePropertyAccessInfo, Stop> => {
+    if (node === undefined || !IsPropertyAccessExpression(node)) return { kind: "unavailable" };
+    const context = defaultOptions.context ?? Background();
+    const result = withSourceFileChecker(program, defaultOptions.sourceFile, GetSourceFileOfNode(node), context, checker =>
+      acquireLeasedChecker(checker, WithCheckerLifetime(context, CheckerLifetimeDiagnostics), admit, () => {
+        admitNativeChecker(checker, "work");
+        const known = propertyAccessInfos.get(node);
+        if (known !== undefined) return known;
+        const selected = Checker_getResolvedSourcePropertyAccessInfo(checker, node);
+        if (selected === undefined) return undefined;
+        const exported = isSyntheticDefaultMember(checker, selected.sourceSymbol);
+        if (exported) admitNativeChecker(checker, "retained");
+        const offered: ResolvedSourcePropertyAccessInfo | undefined = exported
+          ? { kind: "module-exported-value", target: exportedValueBoundary(checker, node) }
+          : withResolvedPropertyAccessEvidence(checker, selected);
+        if (offered !== undefined) {
+          admitNativeChecker(checker, "retained");
+          propertyAccessInfos.set(node, Object.freeze(offered));
+        }
+        return offered;
+      }));
+    if (result === undefined || result.kind === "unavailable") return { kind: "unavailable" };
+    if (result.kind === "refused") return result;
+    return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+  };
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
@@ -532,7 +560,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     getAliasedSymbol: (symbol) =>
       withCheckerForSymbol(program, symbol, defaultOptions, (checker) => {
         // The made default member of a module's exported value is shared between modules: its alias target is the
-        // first module's and is not handed out. Its boundary is asked by occurrence (getResolvedPropertyAccessInfo).
+        // first module's and is not handed out. Its boundary is asked by occurrence (acquireResolvedPropertyAccess).
         if (isSyntheticDefaultMember(checker, symbol)) return undefined;
         const target = Checker_GetAliasedSymbol(checker, symbol);
         return target === checker?.unknownSymbol ? undefined : target;
@@ -591,14 +619,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
       return result.kind === "complete" ? result.value : undefined;
     },
     acquireResolvedCall: (node, admit) => readCall(node, { kind: "ready", admit }),
-    getResolvedPropertyAccessInfo: (node) =>
-      memoizeResolvedNodeQuery(propertyAccessInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker): GoPtr<ResolvedSourcePropertyAccessInfo> => {
-          const selected = Checker_getResolvedSourcePropertyAccessInfo(checker, node);
-          return isSyntheticDefaultMember(checker, selected?.sourceSymbol)
-            ? { kind: "module-exported-value", target: exportedValueBoundary(checker, node) }
-            : withResolvedPropertyAccessEvidence(checker, selected);
-        })),
+    acquireResolvedPropertyAccess: readProperty,
     getResolvedElementAccessInfo: (node) =>
       memoizeResolvedNodeQuery(elementAccessInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) => {
@@ -985,16 +1006,22 @@ function withResolvedPropertyAccessEvidence(
   selected: GoPtr<CheckerResolvedSourcePropertyAccessInfo>,
 ): GoPtr<ResolvedSourcePropertyAccessInfo> {
   if (checker === undefined || selected === undefined) return undefined;
+  admitNativeChecker(checker, "work");
   const { selectedIndex, ...access } = selected;
   const resolved = withResolvedSourceReceiverValueEvidence(checker, access);
   if (resolved === undefined) return undefined;
-  return Object.freeze({
-    kind: "member" as const,
+  const property = selectedIndex !== undefined || selected.sourceSymbol === undefined || selected.selectedSymbol === undefined
+    ? null : Object.freeze(readTypePropertyHeader(checker, selected.sourceSymbol));
+  admitNativeChecker(checker, "retained", selectedIndex === undefined ? 1 : 3);
+  const value: ResolvedSourcePropertyAccessInfo = {
+    kind: "member",
     ...resolved,
+    property,
     ...(selectedIndex === undefined ? {} : {
       selectedIndex: Object.freeze(readTypeIndexInfo(checker, selected.receiver.type, selectedIndex)),
     }),
-  });
+  };
+  return value;
 }
 
 function withResolvedSourceReceiverValueEvidence<

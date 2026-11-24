@@ -1,3 +1,4 @@
+import { propertyAccess } from "../services/type-checker-test-support.js";
 import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -74,7 +75,7 @@ test("namespace reserved names, export aliases and renderer collisions retain ex
   ]);
   const properties = findNodes(sourceFile, source.ast.children, source.ast.is.IsPropertyAccessExpression);
   const propertyFacts = properties.map(property => checked.sourceFacts?.getFact(
-    memberAccess(source.checker.getResolvedPropertyAccessInfo(property))?.selectedDeclaration, providerVirtualDeclarationFactKey,
+    memberAccess(propertyAccess(source.checker, property))?.selectedDeclaration, providerVirtualDeclarationFactKey,
   ));
   assert.ok(propertyFacts.some(fact => fact?.memberId === "factory::class"));
 });

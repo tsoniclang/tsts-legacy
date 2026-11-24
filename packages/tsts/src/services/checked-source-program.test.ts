@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -191,7 +192,7 @@ test("checked source program exposes one exact AST and direct checker decision s
 
   const propertyInfos = properties.map((property) => ({
     property,
-    info: memberAccess(source.checker.getResolvedPropertyAccessInfo(property)),
+    info: memberAccess(propertyAccess(source.checker, property)),
   }));
   const ordinaryProperty = propertyInfos.find(({ info }) => info?.optionalChain === false);
   const optionalProperty = propertyInfos.find(({ info }) => info?.optionalChain === true);

@@ -1,3 +1,4 @@
+import { propertyAccess } from "../services/type-checker-test-support.js";
 import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -120,7 +121,7 @@ test("provider enum and namespace members retain exact declaration identities", 
   );
   assert.deepEqual(
     properties.map((property) => {
-      const selected = memberAccess(source.checker.getResolvedPropertyAccessInfo(property));
+      const selected = memberAccess(propertyAccess(source.checker, property));
       const fact = checked.sourceFacts?.getFact(
         selected?.selectedDeclaration,
         providerVirtualDeclarationFactKey,

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { ResolvedSourceCallInfo } from "./type-checker.js";
+import type { ResolvedSourceCallInfo, ResolvedSourcePropertyAccessInfo, TypeCheckerQueries } from "./type-checker.js";
 import type { TypePropertyInfo, TypeShapeQueries } from "./type-shape.js";
 import type { Type } from "../internal/checker/types.js";
 import type { bool } from "../go/scalars.js";
@@ -35,6 +35,12 @@ export function propertyRows(shape: TypeShapeQueries, type: GoPtr<Type>): readon
     assert.equal(row.kind, "complete");
     return row.value;
   });
+}
+
+export function propertyAccess(checker: TypeCheckerQueries, node: GoPtr<Node>): GoPtr<ResolvedSourcePropertyAccessInfo> {
+  const result = checker.acquireResolvedPropertyAccess(node, () => null);
+  assert.notEqual(result.kind, "refused");
+  return result.kind === "complete" ? result.value : undefined;
 }
 
 export function createProgram(

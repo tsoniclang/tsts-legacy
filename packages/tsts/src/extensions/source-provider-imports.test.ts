@@ -1,3 +1,4 @@
+import { propertyAccess } from "../services/type-checker-test-support.js";
 import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -146,7 +147,7 @@ test("provider default imports retain member identity beside same-named module e
     assert.equal(accesses.length, 2);
     assert.deepEqual(
       accesses.map((access) => {
-        const selected = memberAccess(source.checker.getResolvedPropertyAccessInfo(access));
+        const selected = memberAccess(propertyAccess(source.checker, access));
         return checked.sourceFacts?.getFact(
           selected?.selectedWriteDeclaration ?? selected?.selectedReadDeclaration ?? selected?.selectedDeclaration,
           providerVirtualDeclarationFactKey,

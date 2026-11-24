@@ -6949,6 +6949,9 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
   if (receiver === undefined || node === undefined || node.Kind !== KindPropertyAccessExpression) {
     return undefined;
   }
+  admitNativeChecker(receiver, "work");
+  admitNativeChecker(receiver, "retained");
+  markNativeCheckerProvisional(receiver);
   const selected: SelectedPropertyAccessCheck = {
     selected: false,
     selectionMode: "read",
@@ -7022,6 +7025,7 @@ export function Checker_getResolvedSourcePropertyAccessInfo(
   const selectedWriteDeclaration = accessMode === "write" || accessMode === "read-write"
     ? selectedPropertyAccessDeclaration(selected, "write")
     : undefined;
+  admitNativeChecker(receiver, "retained", 3);
   return Object.freeze({
     expression: node,
     receiver: Object.freeze({

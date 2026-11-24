@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -132,7 +133,7 @@ test("direct source queries are canonical and side-effect free across query orde
   const queries = [
     () => source.checker.getResolvedCallInfo(construction),
     () => source.checker.getResolvedCallInfo(call),
-    () => source.checker.getResolvedPropertyAccessInfo(property),
+    () => propertyAccess(source.checker, property),
     () => source.checker.getResolvedElementAccessInfo(element),
     () => source.checker.getTypeAtLocation(assertion)?.type,
     () => source.checker.getTypeAtLocation(binary)?.type,

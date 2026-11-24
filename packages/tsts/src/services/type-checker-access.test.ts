@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import { propertyRows, requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -314,8 +315,8 @@ test("property selection uses the selected symbol with distinct read and write t
   const readAccess = valueAccesses[0];
   const writeAccess = valueAccesses[1];
   const selectedSymbol = queries.getSymbolAtLocation(Node_Name(readAccess));
-  const readInfo = memberAccess(queries.getResolvedPropertyAccessInfo(readAccess));
-  const writeInfo = memberAccess(queries.getResolvedPropertyAccessInfo(writeAccess));
+  const readInfo = memberAccess(propertyAccess(queries, readAccess));
+  const writeInfo = memberAccess(propertyAccess(queries, writeAccess));
 
   assert.equal(queries.getSymbolName(selectedSymbol), "value");
   assert.equal((queries.getTypeOfSymbol(selectedSymbol)?.flags ?? 0) & TypeFlagsString, TypeFlagsString);
@@ -334,7 +335,7 @@ test("property selection uses the selected symbol with distinct read and write t
   assert.equal(readInfo?.selectedWriteDeclaration, undefined);
   assert.equal(writeInfo?.selectedReadDeclaration, undefined);
   assert.equal(writeInfo?.selectedWriteDeclaration?.Kind, KindSetAccessor);
-  const repeatedRead = memberAccess(queries.getResolvedPropertyAccessInfo(readAccess));
+  const repeatedRead = memberAccess(propertyAccess(queries, readAccess));
   assert.ok(
     repeatedRead === readInfo,
     "Repeated property queries must retain the exact resolved access result.",
@@ -375,9 +376,9 @@ test("receiver evidence identifies the intrinsic global object without spelling 
   assert.equal(properties.length, 4);
   const expected = ["global-object", "global-object", undefined, undefined];
   for (const [index, node] of properties.entries()) {
-    const info = memberAccess(queries.getResolvedPropertyAccessInfo(node));
+    const info = memberAccess(propertyAccess(queries, node));
     assert.equal(info?.receiver.intrinsic, expected[index]);
-    assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(node)) === info, "a repeated read returns the cached record");
+    assert.ok(memberAccess(propertyAccess(queries, node)) === info, "a repeated read returns the cached record");
     assert.ok(Object.isFrozen(info?.receiver));
   }
   const element = findNodesByKind(index, KindElementAccessExpression)[0];
@@ -401,8 +402,8 @@ test("property access info preserves compound read-write and optional-chain role
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const valueAccess = findPropertyAccessByName(index, "value", () => true);
   const advanceAccess = findPropertyAccessByName(index, "advance", () => true);
-  const valueInfo = memberAccess(queries.getResolvedPropertyAccessInfo(valueAccess));
-  const advanceInfo = memberAccess(queries.getResolvedPropertyAccessInfo(advanceAccess));
+  const valueInfo = memberAccess(propertyAccess(queries, valueAccess));
+  const advanceInfo = memberAccess(propertyAccess(queries, advanceAccess));
 
   assert.equal(valueInfo?.accessMode, "read-write");
   assert.equal((valueInfo?.sourceReadType?.flags ?? 0) & TypeFlagsNumber, TypeFlagsNumber);
@@ -427,8 +428,8 @@ test("property access info distinguishes the exact receiver value from its selec
   const accesses = findNodesByKind(index, KindPropertyAccessExpression)
     .filter((node) => Node_Text(Node_Name(node)) === "value");
   assert.equal(accesses.length, 2);
-  const direct = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0]));
-  const aliased = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[1]));
+  const direct = memberAccess(propertyAccess(queries, accesses[0]));
+  const aliased = memberAccess(propertyAccess(queries, accesses[1]));
 
   assert.equal(direct?.receiver.valueDeclaration?.Kind, KindClassDeclaration);
   assert.equal(aliased?.receiver.valueDeclaration?.Kind, KindVariableDeclaration);
@@ -459,7 +460,7 @@ test("property access info retains both exact accessor declarations for read-wri
   `);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const access = findPropertyAccessByName(index, "value", () => true);
-  const selected = memberAccess(queries.getResolvedPropertyAccessInfo(access));
+  const selected = memberAccess(propertyAccess(queries, access));
 
   assert.equal(selected?.accessMode, "read-write");
   assert.equal(selected?.selectedReadDeclaration?.Kind, KindGetAccessor);
@@ -557,7 +558,7 @@ test("named index access retains the exact index, writability and immutable sele
   `, { noLib: false });
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const accesses = findNodesByKind(index, KindPropertyAccessExpression);
-  const mapped = accesses.slice(0, 3).map(access => memberAccess(queries.getResolvedPropertyAccessInfo(access)));
+  const mapped = accesses.slice(0, 3).map(access => memberAccess(propertyAccess(queries, access)));
   assert.deepEqual(mapped.map(selection => selection?.accessMode), ["write", "read-write", "read"]);
   for (const selection of mapped) {
     assert.ok(selection?.selectedIndex);
@@ -567,18 +568,18 @@ test("named index access retains the exact index, writability and immutable sele
     assert.ok(Object.isFrozen(selection) && Object.isFrozen(selection.selectedIndex));
     assert.ok(Object.isFrozen(selection.selectedIndex.components));
   }
-  const dynamic = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[3]));
+  const dynamic = memberAccess(propertyAccess(queries, accesses[3]));
   assert.ok(dynamic?.selectedIndex?.declaration);
   assert.equal(dynamic.selectedIndex.readonly, false);
-  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[4]))?.selectedIndex === undefined, "a fixed member selects no index signature");
-  const immutable = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[5]));
+  assert.ok(memberAccess(propertyAccess(queries, accesses[4]))?.selectedIndex === undefined, "a fixed member selects no index signature");
+  const immutable = memberAccess(propertyAccess(queries, accesses[5]));
   assert.ok(immutable?.selectedIndex);
   assert.equal(immutable.selectedIndex.readonly, true);
   assert.equal(immutable.writable, false);
-  const pattern = memberAccess(queries.getResolvedPropertyAccessInfo(accesses[6]));
+  const pattern = memberAccess(propertyAccess(queries, accesses[6]));
   assert.ok(pattern?.selectedIndex?.valueType);
   assert.equal(pattern.selectedIndex.valueType.flags & TypeFlagsNumber, TypeFlagsNumber);
-  assert.ok(memberAccess(queries.getResolvedPropertyAccessInfo(accesses[0])) === mapped[0], "a repeated read returns the cached record");
+  assert.ok(memberAccess(propertyAccess(queries, accesses[0])) === mapped[0], "a repeated read returns the cached record");
   assertCleanSemanticDiagnostics(program, index);
 });
 

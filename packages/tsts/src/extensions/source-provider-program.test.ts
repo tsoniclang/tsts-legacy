@@ -1,3 +1,4 @@
+import { propertyAccess } from "../services/type-checker-test-support.js";
 import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -91,7 +92,7 @@ test("source provider declarations bind through normal checking and retain exact
   );
 
   const valueProperty = properties
-    .map((property) => memberAccess(source.checker.getResolvedPropertyAccessInfo(property)))
+    .map((property) => memberAccess(propertyAccess(source.checker, property)))
     .find((info) =>
       checked.sourceFacts?.getFact(info?.selectedDeclaration, providerVirtualDeclarationFactKey)?.memberId
       === "Counter::value");

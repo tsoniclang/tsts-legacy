@@ -95,6 +95,47 @@ test("a bounded call borrows only the actual completed invocation and original c
     () => assert.fail("a foreign checked call cannot consume the owner account")).kind, "unavailable");
 });
 
+test("bounded property acquisition retains the actual named receiver and member under one native lease", () => {
+  const open = () => {
+    const source = checkedQueries("interface Header { tag: boolean; payload: number } declare const value: Header; export const selected = value.payload;");
+    const [node] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsPropertyAccessExpression);
+    assert.ok(node);
+    return { source, node };
+  };
+  const actual = open();
+  const trace: unknown[] = [];
+  const completed = actual.source.checker.acquireResolvedPropertyAccess(actual.node, (axis, units) => {
+    trace.push([axis, units]);
+    return null;
+  });
+  assert.ok(completed.kind === "complete" && completed.value.kind === "member");
+  const { value } = completed;
+  assert.equal(value.expression === actual.node && value.property?.symbol === value.sourceSymbol, true);
+  assert.equal(value.property?.name, "payload");
+  assert.equal(value.property?.rootSymbols.some(symbol =>
+    actual.source.checker.getSymbolDeclarations(symbol).some(declaration => declaration === value.selectedDeclaration)), true);
+  const warmTrace: unknown[] = [];
+  const warm = actual.source.checker.acquireResolvedPropertyAccess(actual.node, (axis, units) => {
+    warmTrace.push([axis, units]);
+    return null;
+  });
+  assert.deepEqual(warmTrace, [["work", 1]]);
+  assert.equal(warm.kind === "complete" && warm.value === value, true);
+  const original = { resource: "property acquisition" };
+  for (let cap = 0; cap < trace.length; cap += 1) {
+    const trial = open();
+    let reached = 0;
+    const stopped = trial.source.checker.acquireResolvedPropertyAccess<typeof original>(trial.node, (axis, units): typeof original | null => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === cap ? original : null;
+    });
+    assert.equal(reached, cap + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+  assert.equal(open().source.checker.acquireResolvedPropertyAccess(actual.node,
+    () => assert.fail("foreign property access cannot consume the owner account")).kind, "unavailable");
+});
+
 test("checked source exposes operator syntax and checker-owned operand and result types directly", () => {
   const source = checkedQueries(`
     declare let count: number;

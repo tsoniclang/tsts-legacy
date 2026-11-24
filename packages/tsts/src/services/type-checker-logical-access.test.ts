@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Background } from "../go/context.js";
@@ -45,7 +46,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
       assert.ok(node);
       const query = () => bracket
         ? queries.getResolvedElementAccessInfo(node)
-        : memberAccess(queries.getResolvedPropertyAccessInfo(node));
+        : memberAccess(propertyAccess(queries, node));
       const selected = query();
       assert.ok(selected);
       assert.equal(selected.accessMode, operator === "=" ? "write" : "read-write");
@@ -58,7 +59,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
       assert.equal(query(), selected);
       assert.ok(Object.isFrozen(selected));
       if (!bracket) {
-        const property = memberAccess(queries.getResolvedPropertyAccessInfo(node));
+        const property = memberAccess(propertyAccess(queries, node));
         assert.equal(property?.selectedReadDeclaration?.Kind, operator === "=" ? undefined : KindGetAccessor);
         assert.equal(property?.selectedWriteDeclaration?.Kind, KindSetAccessor);
       }

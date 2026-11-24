@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -80,7 +81,7 @@ function open() {
 test("an access to the made default member through the import's own namespace binding gives the module's boundary: the step of that binding, for each module although the member symbol is shared", () => {
   const program = open();
   assert.equal(program.diagnostics, 0);
-  const access = (text: string) => program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", text));
+  const access = (text: string) => propertyAccess(program.checker, program.only("PropertyAccessExpression", text));
   for (const [text, binding] of [["n1.default", "* as n1"], ["n2.default", "* as n2"], ["(n2).default", "* as n2"], ["fn.default", "* as fn"], ["lib.default", "* as lib"]] as const) {
     const info = access(text);
     assert.equal(info?.kind, "module-exported-value", text);
@@ -106,7 +107,7 @@ test("an access to the made default member through any other receiver says that 
   const program = open();
   // In each of these the value may be the namespace of two.cjs while the receiver's static type is the one of one.cjs.
   for (const text of ["reassigned.default", "copied.default", "chosen.default", "typed.default", "resolved.default"]) {
-    const info = program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", text));
+    const info = propertyAccess(program.checker, program.only("PropertyAccessExpression", text));
     assert.ok(info?.kind === "module-exported-value" && info.target === undefined, `${text}: a module's exported value, no module`);
     assert.ok(isDeepStrictEqual(info, { kind: "module-exported-value", target: undefined }), `${text}: the closed record { kind: module-exported-value, target: undefined }`);
   }
@@ -114,9 +115,9 @@ test("an access to the made default member through any other receiver says that 
 
 test("a really declared default export and an ordinary member are members; the made default member is handed out by no other query", () => {
   const program = open();
-  const real = program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", "real.default"));
+  const real = propertyAccess(program.checker, program.only("PropertyAccessExpression", "real.default"));
   assert.equal(real?.kind, "member");
-  const ordinary = program.checker.getResolvedPropertyAccessInfo(program.only("PropertyAccessExpression", "lib.a"));
+  const ordinary = propertyAccess(program.checker, program.only("PropertyAccessExpression", "lib.a"));
   assert.equal(ordinary?.kind, "member");
   assert.deepEqual(program.declarationsOf(ordinary?.kind === "member" ? ordinary.selectedSymbol : undefined), ["/case/lib.cts:KindVariableDeclaration"]);
 

@@ -1,3 +1,4 @@
+import { propertyAccess } from "./type-checker-test-support.js";
 import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -441,7 +442,7 @@ for (const checkers of [1, 4]) test(`a missing property retains its exact origin
     if (range.kind !== "authored") throw new Error("A written property retains its original range.");
     assert.equal(Diagnostic_Pos(answer.causes[0]), range.start);
     assert.equal(Diagnostic_End(answer.causes[0]), range.end);
-    assert.equal(checker.getResolvedPropertyAccessInfo(node) === undefined, true);
+    assert.equal(propertyAccess(checker, node) === undefined, true);
     assert.equal(checker.getTypeAtLocation(node)?.causes[0] === answer.causes[0], true);
     actual.push(answer.causes[0]);
   }
@@ -452,7 +453,7 @@ for (const checkers of [1, 4]) test(`a missing property retains its exact origin
   const healthy = checker.getTypeAtLocation(selected[codes.length]);
   assert.ok(healthy);
   assert.equal(!typeShape.isError(healthy.type) && healthy.causes[0] === undefined, true);
-  assert.equal(checker.getResolvedPropertyAccessInfo(selected[codes.length])?.kind, "member");
+  assert.equal(propertyAccess(checker, selected[codes.length])?.kind, "member");
   const filtered = checker.getTypeAtLocation(selected[codes.length + 1]);
   assert.ok(filtered);
   assert.equal(typeShape.isError(filtered.type) && filtered.causes[0] === undefined, true);
@@ -499,7 +500,7 @@ for (const checkers of [1, 4]) test(`a failed property receiver retains one orig
     assert.equal(answer?.type === originalType && answer.causes[0] === original.causes[0], true);
     assert.equal(LinkStore_TryGet(owner.typeNodeLinks, node)?.resolvedTypeSource === terminal, true,
       "every dependent read points to the same native source without replaying the chain");
-    assert.equal(checker.getResolvedPropertyAccessInfo(node) === undefined, true);
+    assert.equal(propertyAccess(checker, node) === undefined, true);
   }
   const [outer, inner] = findNodes(wrapped, ast.children, ast.is.IsPropertyAccessExpression);
   const wrappedOriginal = checker.getTypeAtLocation(inner);
