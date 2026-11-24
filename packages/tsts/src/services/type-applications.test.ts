@@ -1,4 +1,4 @@
-import { propertyRows } from "./type-checker-test-support.js";
+import { aliasApplication, propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
@@ -9,6 +9,7 @@ import { Checker_instantiateType } from "../internal/checker/checker/types.js";
 import { Checker_getConditionalTypeInstantiationWithCapture, Checker_popActiveMapper, Checker_pushActiveMapper } from "../internal/checker/checker/inference.js";
 import { Checker_combineTypeMappers, newTypeMapper } from "../internal/checker/mapper.js";
 import { Checker_instantiateTypeWithAliasAndCapture } from "../internal/checker/checker/symbols.js";
+import type { NativeCheckerCost } from "../internal/checker/resource-admission.js";
 
 function applicationSource() {
   const checked = createCompilerSessionFromFiles({
@@ -93,7 +94,7 @@ test("retained alias applications expose inferred conditional arguments without 
   const { source, definitions } = applicationSource();
   const type = functionParameterType(source, "read");
   assert.deepEqual(source.typeShape.getTypeArguments(type), []);
-  const selected = source.typeShape.getTypeAliasApplication(type);
+  const selected = aliasApplication(source.typeShape, type);
   assert.ok(selected);
   assert.equal(selected.declaration, alias(definitions, "Storage"));
   assert.equal(selected.result, type);
@@ -107,16 +108,16 @@ test("retained alias applications expose inferred conditional arguments without 
   assert.equal(Object.isFrozen(selected.bindings), true);
   assert.equal(selected.bindings.every(Object.isFrozen), true);
   for (const queries of [source, definitions]) {
-    const repeated = queries.typeShape.getTypeAliasApplication(type);
+    const repeated = aliasApplication(queries.typeShape, type);
     assert.ok(repeated);
     assert.equal(repeated.result, type);
     assert.equal(repeated.bindings[0]?.argument, selected.bindings[0]?.argument);
   }
-  const defaulted = source.typeShape.getTypeAliasApplication(functionParameterType(source, "defaulted"));
+  const defaulted = aliasApplication(source.typeShape, functionParameterType(source, "defaulted"));
   assert.ok(defaulted);
   assert.equal(defaulted.declaration, alias(definitions, "Default"));
   assert.equal(source.typeShape.isStringLike(defaulted.bindings[0]?.argument), true);
-  const partial = source.typeShape.getTypeAliasApplication(functionParameterType(source, "partial"));
+  const partial = aliasApplication(source.typeShape, functionParameterType(source, "partial"));
   assert.equal(partial?.declaration === alias(definitions, "DependentDefault"), true);
   assert.equal(source.typeShape.isNumberLike(partial?.bindings[0]?.argument), true);
   assert.equal(source.typeShape.getTypeArguments(partial?.bindings[1]?.argument)[0] === partial?.bindings[0]?.argument, true);
@@ -127,14 +128,14 @@ test("retained indexed alias inputs come from the native application, not the al
   const type = functionParameterType(source, "indexed");
   const template = aliasType(definitions, "Constrained");
   const templateOperands = definitions.typeShape.getIndexedAccessComponents(template);
-  const selected = source.typeShape.getTypeAliasApplication(type);
+  const selected = aliasApplication(source.typeShape, type);
   const actual = source.typeShape.getIndexedAccessComponents(type);
   assert.equal(selected?.result === type && selected.declaration === alias(definitions, "Constrained"), true);
   assert.equal(selected?.bindings[0]?.argument === actual?.objectType, true);
   assert.equal(selected?.bindings[0]?.parameter === templateOperands?.objectType, true);
   assert.equal(actual?.objectType === templateOperands?.objectType, false);
   const copied = { ...type };
-  assert.equal(source.typeShape.getTypeAliasApplication(copied) === undefined, true);
+  assert.equal(aliasApplication(source.typeShape, copied) === undefined, true);
   assert.equal(source.typeShape.getIndexedAccessComponents(copied) === undefined, true);
 });
 
@@ -143,7 +144,7 @@ test("a retained default follows the actual enclosing native instantiation", () 
   const receiver = functionParameterType(source, "applied");
   const selected = propertyRows(source.typeShape, receiver).find(property => property.name === "chosen")?.type;
   assert.equal(selected !== undefined, true);
-  const evidence = source.typeShape.getTypeAliasApplication(selected);
+  const evidence = aliasApplication(source.typeShape, selected);
   assert.equal(evidence !== undefined && evidence.result === selected, true);
   assert.equal(evidence?.declaration === alias(definitions, "DependentDefault"), true);
   assert.equal(evidence?.bindings.length, 2);
@@ -154,18 +155,70 @@ test("a retained default follows the actual enclosing native instantiation", () 
   assert.equal(element !== undefined && element === argument, true);
 });
 
+test("retained alias acquisition stops before the next supplied or defaulted native slot", () => {
+  const { source, definitions } = applicationSource();
+  const native = functionParameterType(source, "partial");
+  const descriptor = native.alias;
+  const supplied = descriptor?.typeArguments;
+  const defaults = descriptor?.defaultTypeArguments;
+  assert.ok(supplied !== undefined && defaults !== undefined);
+  assert.equal(supplied.length, 1);
+  assert.equal(defaults.length, 1);
+  const reads: string[] = [];
+  const cells = [{ name: "supplied", vector: supplied }, { name: "default", vector: defaults }];
+  const original = cells.map(({ vector }) => Object.getOwnPropertyDescriptor(vector, "0"));
+  const expected: readonly (readonly [NativeCheckerCost, number])[] = [
+    ["work", 1], ["work", 1], ["work", 1], ["retained", 2],
+    ["work", 1], ["retained", 1], ["work", 1], ["retained", 1],
+  ];
+  const stop = { reason: "admission cut" };
+  try {
+    for (const { name, vector } of cells) {
+      const value = vector[0];
+      Object.defineProperty(vector, "0", { configurable: true, get: () => {
+        reads.push(name);
+        return value;
+      } });
+    }
+    for (let cut = 0; cut <= expected.length; ++cut) {
+      reads.length = 0;
+      const reached: (readonly [NativeCheckerCost, number])[] = [];
+      const result = definitions.typeShape.acquireTypeAliasApplication(native, (cost, units) => {
+        reached.push([cost, units]);
+        return reached.length > cut ? stop : null;
+      });
+      assert.deepEqual(reached, expected.slice(0, cut + 1));
+      assert.deepEqual(reads, cut < 6 ? [] : cut < 8 ? ["supplied"] : ["supplied", "default"]);
+      if (cut < expected.length) {
+        assert.equal(result.kind === "refused" && result.stop === stop, true, String(cut));
+      } else {
+        assert.equal(result.kind, "complete");
+        assert.equal(result.value.result === native, true);
+        assert.equal(result.value.declaration === alias(definitions, "DependentDefault"), true);
+        assert.equal(result.value.bindings[0]?.argument === original[0]?.value, true);
+        assert.equal(result.value.bindings[1]?.argument === original[1]?.value, true);
+      }
+    }
+  } finally {
+    for (const [index, { vector }] of cells.entries()) {
+      const cell = original[index];
+      if (cell !== undefined) Object.defineProperty(vector, "0", cell);
+    }
+  }
+});
+
 test("alias result queries reject foreign programs and do not invent erased provenance", () => {
   const { source, definitions } = applicationSource();
   const foreign = applicationSource();
   const local = functionParameterType(source, "read");
-  assert.equal(foreign.source.typeShape.getTypeAliasApplication(local), undefined);
-  assert.equal(source.typeShape.getTypeAliasApplication(functionParameterType(foreign.source, "read")), undefined);
-  assert.equal(source.typeShape.getTypeAliasApplication(undefined), undefined);
+  assert.equal(aliasApplication(foreign.source.typeShape, local), undefined);
+  assert.equal(aliasApplication(source.typeShape, functionParameterType(foreign.source, "read")), undefined);
+  assert.equal(aliasApplication(source.typeShape, undefined), undefined);
   const scalar = aliasType(source, "Scalar");
   const application = source.typeShape.instantiateTypeAlias(alias(definitions, "Preserve"), [scalar]);
   assert.ok(application);
   assert.equal(application.result, scalar);
-  assert.equal(source.typeShape.getTypeAliasApplication(scalar), undefined);
+  assert.equal(aliasApplication(source.typeShape, scalar), undefined);
 });
 
 test("default alias arguments retain dependent substitutions and exact supplied arity", () => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { ResolvedSourceCallInfo, ResolvedSourcePropertyAccessInfo, TypeCheckerQueries } from "./type-checker.js";
 import type { TypePropertyInfo, TypeShapeQueries } from "./type-shape.js";
+import type { RetainedTypeAliasApplication } from "./type-applications.js";
 import type { Type } from "../internal/checker/types.js";
 import type { bool } from "../go/scalars.js";
 import type { GoPtr } from "../go/compat.js";
@@ -37,6 +38,12 @@ export function propertyRows(shape: TypeShapeQueries, type: GoPtr<Type>): readon
     if (row.value === null) return rows;
     rows.push(row.value);
   }
+}
+
+export function aliasApplication(shape: TypeShapeQueries, type: GoPtr<Type>): RetainedTypeAliasApplication | undefined {
+  const result = shape.acquireTypeAliasApplication(type, () => null);
+  assert.notEqual(result.kind, "refused");
+  return result.kind === "complete" ? result.value : undefined;
 }
 
 export function propertyAccess(checker: TypeCheckerQueries, node: GoPtr<Node>): GoPtr<ResolvedSourcePropertyAccessInfo> {

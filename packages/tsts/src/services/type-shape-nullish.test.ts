@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles, type SourceFileQueries, type Type } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import { aliasApplication } from "./type-checker-test-support.js";
 
 function parameterTypes(source: SourceFileQueries): ReadonlyMap<string, Type> {
   return new Map(findNodes(source.sourceFile, source.ast.children, source.ast.is.IsParameterDeclaration).map(node => {
@@ -30,12 +31,12 @@ test("non-nullable selection preserves checked generic aliases and exact payload
     assert.equal(file !== undefined, true);
     const shape = checked.getSourceFileQueries(file!).typeShape;
     const direct = types.get("Direct");
-    const expected = shape.getTypeAliasApplication(direct);
+    const expected = aliasApplication(shape, direct);
     assert.equal(expected !== undefined, true);
     for (const name of ["Direct", "Optional", "Nullable", "Mixed"]) {
       const selected = shape.getNonNullableType(types.get(name));
       assert.equal(shape.isTypeIdenticalTo(selected, direct), true, name);
-      const application = shape.getTypeAliasApplication(selected);
+      const application = aliasApplication(shape, selected);
       assert.equal(application?.declaration === expected!.declaration, true, name);
       assert.equal(application?.bindings.length, expected!.bindings.length, name);
       assert.equal(application?.bindings[0]?.argument === expected!.bindings[0]?.argument, true, name);

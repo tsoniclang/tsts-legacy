@@ -19,7 +19,7 @@ import { getConditionalTypeKey } from "../internal/checker/checker/state.js";
 import type { ConditionalType, Type } from "../internal/checker/types.js";
 import { Type_AsConditionalType, TypeFlagsConditional, TypeFlagsIndexedAccess, TypeFlagsTypeParameter } from "../internal/checker/types.js";
 import { LinkStore_TryGet } from "../internal/core/linkstore.js";
-import { getExtensionHost } from "../extensions/host.js";
+import { admitNativeChecker } from "../internal/checker/resource-admission.js";
 import { createTypeNormalization, type TypeNormalization } from "./type-normalization.js";
 import { readOwnedIndexedAccess } from "./type-indexed-access.js";
 import { flatTypeMapperInputs } from "./type-mapper-inputs.js";
@@ -79,17 +79,16 @@ export function readConditionalApplication(checker: Checker, result: Type, data:
 }
 
 export function readTypeAliasApplication(
-  queryChecker: GoPtr<Checker>,
-  type: GoPtr<Type>,
+  checker: Checker,
+  type: Type,
 ): RetainedTypeAliasApplication | undefined {
-  const symbol = type?.alias?.symbol;
-  if (queryChecker === undefined || type?.checker === undefined || symbol === undefined) return undefined;
-  const checker = type.checker;
-  if (checker !== queryChecker) {
-    const owner = getExtensionHost(queryChecker.program);
-    if (owner === undefined || getExtensionHost(checker.program) !== owner) return undefined;
-  }
+  if (type.checker !== checker || type.data.AsType() !== type) return undefined;
+  admitNativeChecker(checker, "work");
+  const alias = type.alias;
+  if (alias?.symbol === undefined) return undefined;
+  const symbol = alias.symbol;
   if ((type.flags & TypeFlagsIndexedAccess) !== 0 && readOwnedIndexedAccess(checker, type) === undefined) return undefined;
+  admitNativeChecker(checker, "work");
   const declarations = symbol.Declarations;
   const declaration = declarations?.[0];
   if (declarations?.length !== 1 || declaration === undefined || !IsTypeAliasDeclaration(declaration)) return undefined;
@@ -98,15 +97,20 @@ export function readTypeAliasApplication(
   if (file === undefined || !checker.fileIndexMap.has(file) || typeNode === undefined) return undefined;
   const links = LinkStore_TryGet(checker.typeAliasLinks, symbol);
   if (links?.declaredType?.checker !== checker || links.declaredType === checker.errorType) return undefined;
+  admitNativeChecker(checker, "work");
   const parameters = Node_TypeParameters(declaration) ?? [];
   const sourceParameters = links.typeParameters ?? [];
-  const arguments_ = type.alias?.typeArguments ?? [];
-  const defaults = type.alias?.defaultTypeArguments ?? [];
-  if (sourceParameters.length !== parameters.length || arguments_.length + defaults.length !== parameters.length) return undefined;
+  const arguments_ = alias.typeArguments;
+  const defaults = alias.defaultTypeArguments;
+  if (sourceParameters.length !== parameters.length || arguments_.length + (defaults?.length ?? 0) !== parameters.length) return undefined;
+  admitNativeChecker(checker, "retained", 2);
   const bindings: RetainedTypeAliasApplication["bindings"][number][] = [];
-  for (const [index, source] of parameters.entries()) {
+  for (let index = 0; index < parameters.length; ++index) {
+    admitNativeChecker(checker, "work");
+    admitNativeChecker(checker, "retained");
+    const source = parameters[index];
     const parameter = sourceParameters[index];
-    const argument = index < arguments_.length ? arguments_[index] : defaults[index - arguments_.length];
+    const argument = index < arguments_.length ? arguments_[index] : defaults?.[index - arguments_.length];
     if (source === undefined || parameter?.checker !== checker || (parameter.flags & TypeFlagsTypeParameter) === 0
       || parameter.symbol?.Declarations?.length !== 1 || parameter.symbol.Declarations[0] !== source
       || argument?.checker !== checker || argument === checker.errorType) return undefined;

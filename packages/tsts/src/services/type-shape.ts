@@ -244,7 +244,8 @@ export interface TypeShapeQueries {
   readonly typeToString: (type: GoPtr<Type>) => string;
   readonly getTypeFromTypeNode: (node: GoPtr<Node>) => GoPtr<ResolvedSourceTypeInfo>;
   readonly instantiateTypeAlias: (declaration: GoPtr<Node>, arguments_: readonly Type[]) => TypeAliasApplicationInfo | undefined;
-  readonly getTypeAliasApplication: (type: GoPtr<Type>) => RetainedTypeAliasApplication | undefined;
+  readonly acquireTypeAliasApplication: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
+    NativeCheckerResult<RetainedTypeAliasApplication, Stop>;
   readonly getConstantValue: (node: GoPtr<Node>) => unknown;
   readonly getNumericLiteralTypeValue: (type: GoPtr<Type>) => number | bigint | undefined;
   readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
@@ -333,10 +334,13 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       program, declaration, defaultOptions,
       checker => resolveTypeAliasApplication(checker, declaration, arguments_),
     ),
-    getTypeAliasApplication: (type) => withOwnedChecker(
-      program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
-      checker => readTypeAliasApplication(checker, type),
-    ),
+    acquireTypeAliasApplication: (type, admit) => {
+      if (type === undefined) return { kind: "unavailable" };
+      const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, type.checker,
+        defaultOptions.context ?? Background(), admit, checker => readTypeAliasApplication(checker, type));
+      if (result.kind !== "complete") return result;
+      return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+    },
     getIndexedAccessComponents: (type) => withOwnedChecker(
       program, defaultOptions.sourceFile, type?.checker, defaultOptions.context ?? Background(),
       checker => readTypeIndexedAccessComponents(checker, type),

@@ -1,4 +1,4 @@
-import { createProgram, findNodesByKind, propertyRows } from "./type-checker-test-support.js";
+import { aliasApplication, createProgram, findNodesByKind, propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
@@ -255,7 +255,7 @@ for (const checkers of [1, 4]) test(`type consumers admit actual program pool me
       assert.equal(reader.typeShape.getNumericLiteralTypeValue(components.indexType) === 0, true,
         "the native deferred indexed key is unchanged");
       const alias = current.annotation(fileName, "alias");
-      const application = reader.typeShape.getTypeAliasApplication(alias);
+      const application = aliasApplication(reader.typeShape, alias);
       assert.equal(application !== undefined && application.result === alias &&
         reader.checker.typeToString(application.bindings[0]?.argument) === expected, true,
       "the unary alias reader retains the actual input's native owner, result and supplied argument");
@@ -273,7 +273,7 @@ for (const checkers of [1, 4]) test(`type consumers admit actual program pool me
     : foreign.view("/case/first.mts").typeShape.getTypeReferenceArgumentInfos(foreignBase)?.[0]?.argument;
   assert.equal(foreignPayload !== undefined && reader.typeShape.getIndexedAccessComponents(foreignPayload) === undefined, true,
     "a genuine foreign indexed type cannot borrow this Program's checker membership");
-  assert.equal(reader.typeShape.getTypeAliasApplication(foreign.annotation("/case/first.mts", "alias")) === undefined, true,
+  assert.equal(aliasApplication(reader.typeShape, foreign.annotation("/case/first.mts", "alias")) === undefined, true,
     "a foreign alias application remains unavailable without actual Program ownership");
   assert.equal(reader.typeShape.getInstantiatedBaseTypes(undefined) === undefined && reader.checker.getAwaitedType(undefined) === undefined, true,
     "absence does not acquire an owner");
