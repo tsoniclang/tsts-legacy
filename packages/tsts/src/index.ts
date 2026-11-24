@@ -173,10 +173,12 @@ export { createCompilerSession, createCompilerSessionFromFiles, createCompilerSe
 export type { CompilerDiagnosticKind, CompilerSession, CompilerSessionOptions, InMemoryCompilerSessionOptions } from "./services/compiler-session.js";
 export type { NativeCheckerAdmission } from "./internal/checker/resource-admission.js";
 export type {
+  CompletedTupleFormal,
   StructuredTypeInventory,
   TypeConditionalComponents,
   TypeConditionalBranch,
   TypeIndexInfo,
+  TypeInterfaceApplication,
   TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
   TypePropertyHeader,

@@ -4,13 +4,14 @@ import { readTypeIndexedAccessComponents, selectTypeIndexedAccess } from "./type
 import type { TypeIndexedAccessComponents, TypeIndexedAccessSelection } from "./type-indexed-access.js";
 import { readTypeKeyOfComponents, readTypeSubstitutionComponents } from "./type-dependent-operands.js";
 import type { TypeKeyOfComponents, TypeSubstitutionComponents } from "./type-dependent-operands.js";
+import { readCompletedTupleFormal, type CompletedTupleFormal } from "./signature-formal-evidence.js";
 import { readConditionalApplication, readTypeAliasApplication, resolveTypeAliasApplication,
   type RetainedTypeAliasApplication, type TypeAliasApplicationInfo } from "./type-applications.js";
 import type { Node, SourceFile } from "../internal/ast/ast.js";
 import { Node_Symbol, Node_Type, SourceFile_FileName } from "../internal/ast/ast.js";
 import { AsConditionalTypeNode } from "../internal/ast/generated/casts.js";
 import { IsLiteralTypeNode } from "../internal/ast/generated/predicates.js";
-import { KindEnumDeclaration } from "../internal/ast/generated/kinds.js";
+import { KindEnumDeclaration, KindInterfaceDeclaration } from "../internal/ast/generated/kinds.js";
 import { Node_AsNode } from "../internal/ast/spine.js";
 import { GetSourceFileOfNode, IsFunctionLike } from "../internal/ast/utilities.js";
 import type { Symbol } from "../internal/ast/symbol.js";
@@ -70,6 +71,7 @@ import {
   ElementFlagsVariadic,
   ObjectFlagsReference,
   ObjectFlagsClassOrInterface,
+  ObjectFlagsInterface,
   SignatureKindCall,
   SignatureKindConstruct,
   StructuredType_Properties,
@@ -105,11 +107,12 @@ import {
   Type_AsUnionOrIntersectionType,
   Type_AsLiteralType,
   LiteralType_Value,
-  InterfaceType_TypeParameters,
   Type_Types,
   Signature_ThisParameter,
 } from "../internal/checker/types.js";
 import type { Signature, Type } from "../internal/checker/types.js";
+
+export type { CompletedTupleFormal } from "./signature-formal-evidence.js";
 
 export interface TypeIndexInfo {
   readonly keyType: GoPtr<Type>;
@@ -175,6 +178,12 @@ interface NativePropertyInventory<Value> {
 export interface TypePropertyInventory<Stop extends object> {
   readonly mayHaveRows: boolean;
   readonly next: () => TypePropertyRead<Stop>;
+}
+
+export interface TypeInterfaceApplication {
+  readonly target: Type;
+  readonly declarations: readonly [Node, ...Node[]];
+  readonly arguments: readonly TypeReferenceArgumentInfo[];
 }
 export type TypePropertyHeaderInventory = NativePropertyInventory<TypePropertyHeader>;
 
@@ -268,6 +277,8 @@ export interface TypeShapeQueries {
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
+  readonly acquireInterfaceApplication: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
+    NativeCheckerResult<TypeInterfaceApplication, Stop>;
   readonly acquireCompletedTypeArgument: <Stop extends object>(type: GoPtr<Type>, parameter: GoPtr<Type>,
     admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<Type, Stop>;
   readonly getInstantiatedBaseTypes: (type: GoPtr<Type>) => readonly Type[] | undefined;
@@ -287,6 +298,8 @@ export interface TypeShapeQueries {
   ) => readonly TypeSignatureParameterInfo[];
   readonly acquireSignatureParameters: <Stop extends object>(signature: GoPtr<Signature>,
     admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<readonly TypeSignatureParameterInfo[], Stop>;
+  readonly acquireCompletedTupleFormal: <Stop extends object>(signature: Signature, ordinal: number, selected: Type,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<CompletedTupleFormal, Stop>;
   readonly getSignatureThisParameterInfo: (
     signature: GoPtr<Signature>,
   ) => TypeSignatureThisParameterInfo | undefined;
@@ -418,30 +431,15 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     },
     getTypeReferenceArgumentInfos: (type) => withCheckerForType(program, type, defaultOptions, (checker) => {
       if (type === undefined || checker === undefined || !hasFlags(type, TypeFlagsObject)) return undefined;
-      const target = Type_Target(type) ?? type;
-      if ((target.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
-      const definition = Type_AsInterfaceType(target);
-      if (definition === undefined) return undefined;
-      const parameters = InterfaceType_TypeParameters(definition);
-      if ((type.objectFlags & ObjectFlagsReference) === 0) {
-        return parameters.length === 0 && definition.outerTypeParameterCount === 0
-          ? Object.freeze([])
-          : undefined;
-      }
-      const arguments_ = Checker_GetTypeArguments(checker, type);
-      if (!Number.isSafeInteger(definition.outerTypeParameterCount) ||
-        definition.outerTypeParameterCount < 0 || definition.outerTypeParameterCount > parameters.length ||
-        arguments_.length < parameters.length ||
-        arguments_.length > parameters.length + (definition.thisType === undefined ? 0 : 1)) return undefined;
-      const result: TypeReferenceArgumentInfo[] = [];
-      for (const [index, parameter] of parameters.entries()) {
-        const argument = arguments_[index];
-        if (parameter === undefined || argument === undefined) return undefined;
-        result.push(Object.freeze({ parameter, argument,
-          scope: index < definition.outerTypeParameterCount ? "outer" : "local" }));
-      }
-      return Object.freeze(result);
+      return referenceArguments(checker, type, Type_Target(type) ?? type);
     }),
+    acquireInterfaceApplication: (type, admit) => {
+      if (type === undefined) return { kind: "unavailable" };
+      const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, type.checker,
+        defaultOptions.context ?? Background(), admit, owner => interfaceApplication(owner, type));
+      if (result.kind !== "complete") return result;
+      return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+    },
     acquireCompletedTypeArgument: (type, parameter, admit) => {
       if (type === undefined || parameter === undefined || type.checker !== parameter.checker)
         return { kind: "unavailable" };
@@ -500,6 +498,14 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       withCheckerById(program, defaultOptions.sourceFile, signature.checkerId, defaultOptions.context ?? Background(), checker =>
         acquireLeasedChecker(checker, WithCheckerLifetime(defaultOptions.context ?? Background(), CheckerLifetimeAPI), admit,
           () => getTypeSignatureParameterInfos(checker, signature))) ?? { kind: "unavailable" },
+    acquireCompletedTupleFormal: (signature, ordinal, selected, admit) => {
+      if (!Number.isSafeInteger(ordinal) || ordinal < 0 || selected.checker?.id !== signature.checkerId)
+        return { kind: "unavailable" };
+      const result = withOwnedCheckerAcquisition(program, defaultOptions.sourceFile, selected.checker,
+        defaultOptions.context ?? Background(), admit, owner => readCompletedTupleFormal(owner, signature, ordinal, selected));
+      if (result.kind !== "complete") return result;
+      return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+    },
     getSignatureThisParameterInfo: (signature) => withCheckerForSignature(
       program,
       signature,
@@ -520,6 +526,59 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
 
 function hasFlags(type: GoPtr<Type>, flags: number): boolean {
   return type !== undefined && (type.flags & flags) !== 0;
+}
+
+function referenceArguments(checker: Checker, type: Type, target: Type): readonly TypeReferenceArgumentInfo[] | undefined {
+  if ((target.objectFlags & ObjectFlagsClassOrInterface) === 0) return undefined;
+  const definition = Type_AsInterfaceType(target);
+  if (definition === undefined) return undefined;
+  const parameters = definition.allTypeParameters;
+  const count = Math.max(0, parameters.length - 1);
+  if ((type.objectFlags & ObjectFlagsReference) === 0) {
+    if (count !== 0 || definition.outerTypeParameterCount !== 0) return undefined;
+    admitNativeChecker(checker, "retained");
+    return Object.freeze([]);
+  }
+  const arguments_ = Checker_GetTypeArguments(checker, type);
+  const outer = definition.outerTypeParameterCount;
+  if (!Number.isSafeInteger(outer) || outer < 0 || outer > count ||
+    arguments_.length < count ||
+    arguments_.length > count + (definition.thisType === undefined ? 0 : 1)) return undefined;
+  admitNativeChecker(checker, "retained");
+  const result: TypeReferenceArgumentInfo[] = [];
+  for (let index = 0; index < count; ++index) {
+    admitNativeChecker(checker, "work");
+    const parameter = parameters[index];
+    const argument = arguments_[index];
+    if (parameter === undefined || argument === undefined) return undefined;
+    admitNativeChecker(checker, "retained", 2);
+    result.push(Object.freeze({ parameter, argument, scope: index < outer ? "outer" : "local" }));
+  }
+  return Object.freeze(result);
+}
+
+function interfaceApplication(checker: Checker, type: Type): TypeInterfaceApplication | undefined {
+  admitNativeChecker(checker, "work");
+  if (!hasFlags(type, TypeFlagsObject)) return undefined;
+  const target = Type_Target(type) ?? type;
+  if (target.checker !== checker || (target.objectFlags & ObjectFlagsInterface) === 0) return undefined;
+  const declarations = target.symbol?.Declarations;
+  if (declarations === undefined) return undefined;
+  let fragments: [Node, ...Node[]] | undefined;
+  for (let index = 0; index < declarations.length; ++index) {
+    admitNativeChecker(checker, "work");
+    const declaration = declarations[index];
+    if (declaration === undefined) return undefined;
+    if (declaration.Kind !== KindInterfaceDeclaration) continue;
+    admitNativeChecker(checker, "retained", fragments === undefined ? 2 : 1);
+    if (fragments === undefined) fragments = [declaration];
+    else fragments.push(declaration);
+  }
+  if (fragments === undefined) return undefined;
+  const arguments_ = referenceArguments(checker, type, target);
+  if (arguments_ === undefined) return undefined;
+  admitNativeChecker(checker, "retained");
+  return Object.freeze({ target, declarations: Object.freeze(fragments), arguments: arguments_ });
 }
 
 function completedTypeArgument(checker: Checker, type: Type, parameter: Type): GoPtr<Type> {

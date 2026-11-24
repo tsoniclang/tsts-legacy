@@ -3,6 +3,93 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 
+test("the completed native mapping authenticates only its exact required tuple formal", () => {
+  function open() {
+    const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+      "/src/core.d.ts": testCoreDeclarations,
+      "/src/index.ts": `
+        interface Grid<Cell> {
+          with(index: number, value: Cell): Grid<Cell>;
+          sort(compare: (value: Cell) => boolean): void;
+          maybe(value?: Cell): void;
+        }
+        interface Grid<Cell> { flag: boolean; }
+        type First = Grid<[string, boolean]>;
+        type Other = Grid<[number, boolean]>;
+        type ThroughAlias = First;
+      `,
+    }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } }).checkSource();
+    assert.equal(checked.diagnostics.length, 0);
+    const file = checked.getSourceFile("/src/index.ts");
+    assert.ok(file);
+    const { ast, checker, typeShape: shape } = checked.getSourceFileQueries(file);
+    const aliases = ast.statements(file).filter(ast.is.IsTypeAliasDeclaration);
+    const type = (name: string) => shape.getTypeFromTypeNode(ast.typeNode(
+      aliases.find(node => ast.text(ast.name(node)) === name)))?.type;
+    const property = (name: string, key: string) => {
+      const row = shape.getObjectPropertyInfo(type(name), key);
+      assert.ok(row);
+      const signature = shape.getCallSignatures(row.type)[0];
+      assert.ok(signature);
+      return signature;
+    };
+    function signatures(name: string) {
+      const direct = property(name, "with");
+      const order = shape.getSignatureParameterInfos(property(name, "sort"))[0]?.type;
+      const callback = shape.getCallSignatures(order)[0];
+      assert.ok(callback);
+      return [direct, callback] as const;
+    }
+    return { checker, shape, signatures, property };
+  }
+  const actual = open();
+  const foreign = open();
+  const primary = actual.signatures("First");
+  const alias = actual.signatures("ThroughAlias");
+  const other = actual.signatures("Other");
+  const optional = actual.property("First", "maybe");
+  const optionalParameter = actual.shape.getSignatureParameterInfos(optional)[0];
+  assert.ok(optionalParameter?.acceptsOmission);
+  const optionalTuple = actual.shape.getUnionOrIntersectionTypes(optionalParameter.type).find(actual.shape.isTuple);
+  assert.ok(optionalTuple);
+  assert.equal(actual.shape.acquireCompletedTupleFormal(optional, 0, optionalTuple, () => null).kind, "unavailable");
+  for (const [position, signature] of primary.entries()) {
+    const ordinal = position === 0 ? 1 : 0;
+    const parameter = actual.shape.getSignatureParameterInfos(signature)[ordinal];
+    assert.ok(parameter);
+    assert.equal(signature === alias[position], true, "native receipt does not identify the authored receiver occurrence");
+    const selected = parameter.type;
+    const trace: [string, number][] = [];
+    const read = actual.shape.acquireCompletedTupleFormal(signature, ordinal, selected,
+      (axis, count) => { trace.push([axis, count]); return null; });
+    assert.equal(read.kind, "complete");
+    assert.ok(read.kind === "complete" && signature.target !== undefined);
+    assert.equal(read.value.selected === selected && read.value.original === signature.target
+      && read.value.declaration === parameter.declaration, true);
+    const original = actual.shape.getSignatureParameterInfos(read.value.original)[ordinal];
+    assert.ok(original);
+    assert.equal(read.value.binder === original.type, true);
+    assert.equal(actual.checker.getSymbolDeclarations(actual.checker.getTypeSymbol(read.value.binder)).length, 2);
+    const wrongSignature = other[position];
+    assert.ok(wrongSignature);
+    assert.equal(actual.shape.acquireCompletedTupleFormal(wrongSignature, ordinal, selected, () => null).kind, "unavailable");
+    assert.equal(actual.shape.acquireCompletedTupleFormal(signature, ordinal + 1, selected, () => null).kind, "unavailable");
+    assert.equal(actual.shape.acquireCompletedTupleFormal(read.value.original, ordinal, selected, () => null).kind, "unavailable");
+    assert.equal(foreign.shape.acquireCompletedTupleFormal(signature, ordinal, selected,
+      () => assert.fail("a crossed session cannot reach native evidence")).kind, "unavailable");
+    const originalStop = { limit: "actual formal" };
+    for (let cut = 0; cut < trace.length; ++cut) {
+      let reads = 0;
+      const stopped = actual.shape.acquireCompletedTupleFormal(signature, ordinal, selected, (axis, units): typeof originalStop | null => {
+        assert.deepEqual([axis, units], trace[reads]);
+        return reads++ === cut ? originalStop : null;
+      });
+      assert.equal(reads, cut + 1);
+      assert.equal(stopped.kind === "refused" && stopped.stop === originalStop, true);
+    }
+  }
+});
+
 test("type-derived signature queries retain their checker owner across imports and re-exports", () => {
   const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
     "/src/core.d.ts": testCoreDeclarations,

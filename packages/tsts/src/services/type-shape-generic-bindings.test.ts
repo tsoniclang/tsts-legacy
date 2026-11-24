@@ -3,6 +3,75 @@ import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 
+test("interface applications retain the actual neutral target and complete interface facets separately from ordered arguments", () => {
+  const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/core.d.ts": testCoreDeclarations,
+    "/src/index.ts": `
+      interface Matrix<Item, Key> { left: Item; }
+      interface Matrix<Item, Key> { right: Key; }
+      declare const Matrix: { readonly label: "Matrix" };
+      interface Distinct<Item, Key> { left: Item; }
+      interface Distinct<Item, Key> { right: Key; }
+      type Read = Matrix<string, boolean>;
+      type Write = Matrix<boolean, string>;
+      type Foreign = Distinct<string, boolean>;
+    `,
+  }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } }).checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file);
+  const { ast, checker, typeShape: shape } = checked.getSourceFileQueries(file);
+  const statements = ast.statements(file);
+  const type = (name: string) => shape.getTypeFromTypeNode(ast.typeNode(statements.find(node => ast.is.IsTypeAliasDeclaration(node)
+    && ast.text(ast.name(node)) === name)))?.type;
+  const read = type("Read");
+  const write = type("Write");
+  const foreign = type("Foreign");
+  const receiver = statements.flatMap(statement => findNodes(statement, ast.children, ast.is.IsVariableDeclaration))
+    .find(node => ast.text(ast.name(node)) === "Matrix");
+  const value = checker.getTypeAtLocation(ast.name(receiver))?.type;
+  const cold: [string, number][] = [];
+  const acquired = shape.acquireInterfaceApplication(read, (axis, count) => { cold.push([axis, count]); return null; });
+  const crossed = shape.acquireInterfaceApplication(write, () => null);
+  const distinct = shape.acquireInterfaceApplication(foreign, () => null);
+  assert.equal(acquired.kind === "complete" && crossed.kind === "complete" && distinct.kind === "complete", true);
+  assert.ok(acquired.kind === "complete" && crossed.kind === "complete" && distinct.kind === "complete");
+  const matrix = statements.filter(node => ast.kindName(node) === "KindInterfaceDeclaration" && ast.text(ast.name(node)) === "Matrix");
+  assert.equal(acquired.value.target === crossed.value.target && acquired.value.target === shape.getTypeReferenceTarget(read), true);
+  assert.equal(acquired.value.target === distinct.value.target, false);
+  assert.equal(acquired.value.declarations.length, matrix.length);
+  assert.equal(acquired.value.declarations.every((row, position) => row === matrix[position]), true);
+  assert.equal(crossed.value.declarations.every((row, position) => row === matrix[position]), true);
+  assert.equal(distinct.value.declarations.every(row => !matrix.includes(row)), true);
+  assert.equal(shape.acquireInterfaceApplication(value, () => null).kind, "unavailable", "the value facet is not the interface");
+  const argumentKinds = (values: typeof acquired.value.arguments) =>
+    values.map(row => [row.scope, shape.isStringLike(row.argument), shape.isBooleanLike(row.argument)]);
+  assert.deepEqual(argumentKinds(acquired.value.arguments), [["local", true, false], ["local", false, true]]);
+  assert.deepEqual(argumentKinds(crossed.value.arguments), [["local", false, true], ["local", true, false]]);
+  for (const [position, slot] of acquired.value.arguments.entries()) {
+    assert.equal(slot.parameter === crossed.value.arguments[position]?.parameter, true);
+    const selected = shape.acquireCompletedTypeArgument(read, slot.parameter, () => null);
+    assert.equal(selected.kind === "complete" && selected.value === slot.argument, true);
+    const sources = checker.getSymbolDeclarations(checker.getTypeSymbol(slot.parameter));
+    assert.equal(sources.length, matrix.length);
+    assert.equal(sources.every((row, fragment) => row === ast.typeParameters(matrix[fragment])[position]), true);
+  }
+  const cost: [string, number][] = [];
+  const warm = shape.acquireInterfaceApplication(read, (axis, count) => { cost.push([axis, count]); return null; });
+  assert.equal(warm.kind === "complete" && warm.value.target === acquired.value.target, true);
+  assert.equal(cold.filter(([axis]) => axis === "work").length > cost.filter(([axis]) => axis === "work").length, true);
+  const original = { budget: "interface application" };
+  for (let cutoff = 0; cutoff < cost.length; ++cutoff) {
+    let reached = 0;
+    const stopped = shape.acquireInterfaceApplication(read, (axis, count): typeof original | null => {
+      assert.deepEqual([axis, count], cost[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(reached, cutoff + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+});
+
 test("a completed selected argument borrows only its actual reached native target slot", () => {
   const open = () => {
     const session = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
