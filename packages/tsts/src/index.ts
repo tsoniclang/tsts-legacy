@@ -178,7 +178,6 @@ export type {
   TypeConditionalComponents,
   TypeConditionalBranch,
   TypeIndexInfo,
-  TypeInterfaceApplication,
   TypeIntrinsicNullishFlags,
   TypeMappedPropertyInfo,
   TypePropertyHeader,

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCompilerSessionFromFiles } from "../index.js";
+import type { Node, TypeReferenceArgumentInfo } from "../index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
+import type { NativeCheckerResult } from "../internal/checker/resource-admission.js";
 
 test("interface applications retain the actual neutral target and complete interface facets separately from ordered arguments", () => {
   const checked = createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
@@ -30,26 +32,30 @@ test("interface applications retain the actual neutral target and complete inter
   const receiver = statements.flatMap(statement => findNodes(statement, ast.children, ast.is.IsVariableDeclaration))
     .find(node => ast.text(ast.name(node)) === "Matrix");
   const value = checker.getTypeAtLocation(ast.name(receiver))?.type;
+  const target = shape.getTypeReferenceTarget(read);
+  const different = shape.getTypeReferenceTarget(foreign);
+  assert.ok(target && different);
+  assert.equal(shape.getTypeReferenceTarget(write) === target && different !== target, true);
+  const declared = shape.acquireInterfaceDeclarations(target, () => null);
+  const otherDeclared = shape.acquireInterfaceDeclarations(different, () => null);
   const cold: [string, number][] = [];
-  const acquired = shape.acquireInterfaceApplication(read, (axis, count) => { cold.push([axis, count]); return null; });
-  const crossed = shape.acquireInterfaceApplication(write, () => null);
-  const distinct = shape.acquireInterfaceApplication(foreign, () => null);
-  assert.equal(acquired.kind === "complete" && crossed.kind === "complete" && distinct.kind === "complete", true);
-  assert.ok(acquired.kind === "complete" && crossed.kind === "complete" && distinct.kind === "complete");
+  const acquired = shape.acquireInterfaceArguments(read, target, (axis, count) => { cold.push([axis, count]); return null; });
+  const crossed = shape.acquireInterfaceArguments(write, target, () => null);
+  assert.ok(declared.kind === "complete" && otherDeclared.kind === "complete" && acquired.kind === "complete" && crossed.kind === "complete");
   const matrix = statements.filter(node => ast.kindName(node) === "KindInterfaceDeclaration" && ast.text(ast.name(node)) === "Matrix");
-  assert.equal(acquired.value.target === crossed.value.target && acquired.value.target === shape.getTypeReferenceTarget(read), true);
-  assert.equal(acquired.value.target === distinct.value.target, false);
-  assert.equal(acquired.value.declarations.length, matrix.length);
-  assert.equal(acquired.value.declarations.every((row, position) => row === matrix[position]), true);
-  assert.equal(crossed.value.declarations.every((row, position) => row === matrix[position]), true);
-  assert.equal(distinct.value.declarations.every(row => !matrix.includes(row)), true);
-  assert.equal(shape.acquireInterfaceApplication(value, () => null).kind, "unavailable", "the value facet is not the interface");
-  const argumentKinds = (values: typeof acquired.value.arguments) =>
+  assert.equal(declared.value.length, matrix.length);
+  assert.equal(declared.value.every((row, position) => row === matrix[position]), true);
+  assert.equal(otherDeclared.value.every(row => !matrix.includes(row)), true);
+  assert.equal(shape.acquireInterfaceDeclarations(value, () => null).kind, "unavailable", "the value facet is not the interface");
+  assert.equal(shape.acquireInterfaceDeclarations(read, () => null).kind, "unavailable", "an application is not its target");
+  assert.equal(shape.acquireInterfaceArguments(foreign, target, () => null).kind, "unavailable");
+  assert.equal(shape.acquireInterfaceArguments(read, { ...target }, () => null).kind, "unavailable");
+  const argumentKinds = (values: typeof acquired.value) =>
     values.map(row => [row.scope, shape.isStringLike(row.argument), shape.isBooleanLike(row.argument)]);
-  assert.deepEqual(argumentKinds(acquired.value.arguments), [["local", true, false], ["local", false, true]]);
-  assert.deepEqual(argumentKinds(crossed.value.arguments), [["local", false, true], ["local", true, false]]);
-  for (const [position, slot] of acquired.value.arguments.entries()) {
-    assert.equal(slot.parameter === crossed.value.arguments[position]?.parameter, true);
+  assert.deepEqual(argumentKinds(acquired.value), [["local", true, false], ["local", false, true]]);
+  assert.deepEqual(argumentKinds(crossed.value), [["local", false, true], ["local", true, false]]);
+  for (const [position, slot] of acquired.value.entries()) {
+    assert.equal(slot.parameter === crossed.value[position]?.parameter, true);
     const selected = shape.acquireCompletedTypeArgument(read, slot.parameter, () => null);
     assert.equal(selected.kind === "complete" && selected.value === slot.argument, true);
     const sources = checker.getSymbolDeclarations(checker.getTypeSymbol(slot.parameter));
@@ -57,18 +63,55 @@ test("interface applications retain the actual neutral target and complete inter
     assert.equal(sources.every((row, fragment) => row === ast.typeParameters(matrix[fragment])[position]), true);
   }
   const cost: [string, number][] = [];
-  const warm = shape.acquireInterfaceApplication(read, (axis, count) => { cost.push([axis, count]); return null; });
-  assert.equal(warm.kind === "complete" && warm.value.target === acquired.value.target, true);
+  const warm = shape.acquireInterfaceArguments(read, target, (axis, count) => { cost.push([axis, count]); return null; });
+  assert.equal(warm.kind === "complete" && warm.value[0]?.argument === acquired.value[0]?.argument, true);
   assert.equal(cold.filter(([axis]) => axis === "work").length > cost.filter(([axis]) => axis === "work").length, true);
   const original = { budget: "interface application" };
   for (let cutoff = 0; cutoff < cost.length; ++cutoff) {
     let reached = 0;
-    const stopped = shape.acquireInterfaceApplication(read, (axis, count): typeof original | null => {
+    const stopped: NativeCheckerResult<readonly TypeReferenceArgumentInfo[], { readonly budget: string }> =
+      shape.acquireInterfaceArguments(read, target, (axis, count) => {
       assert.deepEqual([axis, count], cost[reached]);
       return reached++ === cutoff ? original : null;
     });
     assert.equal(reached, cutoff + 1);
     assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+  const declarationCost: [string, number][] = [];
+  const again = shape.acquireInterfaceDeclarations(target, (axis, count) => { declarationCost.push([axis, count]); return null; });
+  assert.ok(again.kind === "complete" && again.value.every((fragment, index) => fragment === declared.value[index]));
+  for (let cutoff = 0; cutoff < declarationCost.length; ++cutoff) {
+    let reached = 0;
+    const stopped: NativeCheckerResult<readonly [Node, ...Node[]], { readonly budget: string }> =
+      shape.acquireInterfaceDeclarations(target, (axis, count) => {
+      assert.deepEqual([axis, count], declarationCost[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(reached, cutoff + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+  const fragments = target.symbol?.Declarations;
+  assert.ok(fragments);
+  const laterIndex = fragments.findIndex(node => node === matrix[1]);
+  const later = String(laterIndex);
+  const descriptor = Object.getOwnPropertyDescriptor(fragments, later);
+  const actualLater = fragments[laterIndex];
+  assert.ok(laterIndex > 0 && descriptor && actualLater);
+  let reads = 0;
+  try {
+    Object.defineProperty(fragments, later, { configurable: true, get: () => { ++reads; return actualLater; } });
+    assert.equal(shape.acquireInterfaceArguments(write, target, () => null).kind, "complete");
+    assert.equal(shape.acquireInterfaceArguments(foreign, target, () => null).kind, "unavailable");
+    assert.equal(reads, 0);
+    let work = 0;
+    const stopped = shape.acquireInterfaceDeclarations<typeof original>(target, axis =>
+      axis === "work" && ++work === laterIndex + 2 ? original : null);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+    assert.equal(reads, 0);
+    assert.equal(shape.acquireInterfaceDeclarations(target, () => null).kind, "complete");
+    assert.equal(reads, 1);
+  } finally {
+    Object.defineProperty(fragments, later, descriptor);
   }
 });
 
