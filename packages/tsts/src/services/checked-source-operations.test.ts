@@ -95,6 +95,58 @@ test("a bounded call borrows only the actual completed invocation and original c
     () => assert.fail("a foreign checked call cannot consume the owner account")).kind, "unavailable");
 });
 
+test("bounded call acquisition borrows the originally completed contextual inner call", () => {
+  const open = () => {
+    const source = checkedQueries(`
+      export function wanted(flag: boolean): boolean { return selected(helper(flag)); }
+      const selected = hidden;
+      export declare function hidden(value: boolean): boolean;
+      function helper(flag: boolean): boolean { return flag; }
+    `);
+    const [outer, inner] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsCallExpression);
+    assert.ok(outer && inner && source.ast.as.AsCallExpression(outer)?.Arguments?.Nodes[0] === inner);
+    return { source, outer, inner };
+  };
+  const { source, outer, inner } = open();
+  const trace: unknown[] = [];
+  const resolved = source.checker.acquireResolvedCall(inner, (axis, units) => { trace.push([axis, units]); return null; });
+  assert.ok(resolved.kind === "complete" && resolved.value.kind === "applicable", "only originally completed native evidence can be borrowed");
+  assert.equal(resolved.value.call === inner && resolved.value.selection.application.invocation === inner, true);
+  assert.equal(resolved.value.resultType === resolved.value.selection.application.instantiatedSignature.resolvedReturnType, true);
+  assert.deepEqual(trace, [["work", 1], ["work", 1], ["retained", 1]]);
+  const parent = source.checker.acquireResolvedCall(outer, () => null);
+  assert.ok(parent.kind === "complete" && parent.value.kind === "applicable");
+  assert.equal(parent.value.selection.argumentValues[0]?.expression === inner, true);
+  const original = { resource: "nested call acquisition" };
+  for (let cutoff = 0; cutoff < trace.length; cutoff += 1) {
+    const fixture = open();
+    let reached = 0;
+    const stopped = fixture.source.checker.acquireResolvedCall(fixture.inner, (axis, units): typeof original | null => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(reached, cutoff + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+});
+
+test("a rejected preliminary overload cannot own the completed contextual result", () => {
+  const source = checkedQueries(`
+    declare function overloaded(value: boolean, tag: "discard"): "discard";
+    declare function overloaded(value: boolean, tag: "keep"): "keep";
+    function helper(value: boolean): boolean { return value; }
+    export const result = overloaded(helper(true), "keep");
+  `);
+  const [outer, inner] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsCallExpression);
+  const chosen = source.checker.acquireResolvedCall(outer, () => null);
+  assert.ok(chosen.kind === "complete" && chosen.value.kind === "applicable");
+  assert.equal(source.checker.typeToString(chosen.value.resultType), '"keep"');
+  const nested = source.checker.acquireResolvedCall(inner, () => null);
+  assert.ok(nested.kind === "complete" && nested.value.kind === "applicable");
+  const argument = chosen.value.selection.argumentValues[0];
+  assert.equal(argument?.expression === nested.value.call && argument.type === nested.value.resultType, true);
+});
+
 test("bounded property acquisition retains the actual named receiver and member under one native lease", () => {
   const open = () => {
     const source = checkedQueries("interface Header { tag: boolean; payload: number } declare const value: Header; export const selected = value.payload;");

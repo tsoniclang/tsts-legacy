@@ -39,7 +39,7 @@ import {
 } from "./iteration-evidence.js";
 import type { ExtensionCheckedIterationSelection } from "./iteration-evidence.js";
 import {
-  CheckModeInferential, CheckModeIsForSignatureHelp, CheckModeNormal, CheckModeSkipContextSensitive, CheckModeSkipGenericFunctions, InferenceFlagsSkippedGenericFunction, IterationTypeKindReturn, IterationTypeKindYield,
+  CheckModeContextual, CheckModeInferential, CheckModeIsForSignatureHelp, CheckModeNormal, CheckModeSkipContextSensitive, CheckModeSkipGenericFunctions, InferenceFlagsSkippedGenericFunction, IterationTypeKindReturn, IterationTypeKindYield,
   IterationTypeKindNext, IterationUseForOf, IterationUseForAwaitOf, IterationUseSpread,
   IterationUseYieldStar, IterationUseAsyncYieldStar,
   TypeFactsIsUndefined, TypeFactsTruthy, TypeFactsFalsy, UnusedKindLocal, UnusedKindParameter,
@@ -1433,7 +1433,7 @@ export function Checker_checkExpressionEx(receiver: GoPtr<Checker>, node: GoPtr<
   if (isConstEnumObjectType(t)) {
     Checker_checkConstEnumAccess(receiver, node, t);
   }
-  if (checkMode === CheckModeNormal && receiver!.flowLoopStack.length === 0 && IsCallOrNewExpression(node)) {
+  if ((checkMode === CheckModeNormal || checkMode === CheckModeContextual) && receiver!.flowLoopStack.length === 0 && IsCallOrNewExpression(node)) {
     Checker_finalizeResolvedCallEvidence(receiver, node, t);
   }
   receiver!.currentNode = saveCurrentNode;
