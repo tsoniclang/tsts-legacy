@@ -11,6 +11,35 @@ function aliases(source: SourceFileQueries): ReadonlyMap<string, Type> {
   }));
 }
 
+test("an intrinsic alias body retains the native marker, not its any flag or application result", () => {
+  const open = () => createCompilerSessionFromFiles({ currentDirectory: "/src", files: {
+    "/src/core.d.ts": testCoreDeclarations,
+    "/src/index.ts": 'type Uppercase<Text extends string> = intrinsic; type Any = any; type Applied = Uppercase<"mixed">;',
+  }, compilerOptions: { ...testNoLibCompilerOptions, strict: true, target: "es2022" } }).checkSource();
+  const first = open();
+  const independent = open();
+  assert.deepEqual(first.diagnostics, []);
+  assert.deepEqual(independent.diagnostics, []);
+  const firstFile = first.getSourceFile("/src/index.ts");
+  const independentFile = independent.getSourceFile("/src/index.ts");
+  assert.ok(firstFile && independentFile);
+  const owner = first.getSourceFileQueries(firstFile);
+  const differentOwner = independent.getSourceFileQueries(independentFile);
+  const values = aliases(owner);
+  const marker = values.get("Uppercase");
+  const any = values.get("Any");
+  const applied = values.get("Applied");
+  assert.ok(marker && any && applied);
+  assert.equal(owner.typeShape.isAny(marker), true);
+  assert.equal(owner.typeShape.isAny(any), true);
+  assert.equal(owner.typeShape.isIntrinsicAliasMarker(marker), true);
+  assert.equal(owner.typeShape.isIntrinsicAliasMarker(any), false);
+  assert.equal(owner.typeShape.isIntrinsicAliasMarker(undefined), false);
+  assert.equal(differentOwner.typeShape.isIntrinsicAliasMarker(marker), false);
+  assert.equal(owner.typeShape.isIntrinsicAliasMarker(applied), false);
+  assert.equal(owner.typeShape.getStringLiteralTypeValue(applied), "MIXED");
+});
+
 test("string literal values remain exact across source query owners without widening or text recovery", () => {
   const declarations = `export type Text = "value";
     export type Empty = ""; export type Escaped = "line\\n\\u0000\\u{1f600}";

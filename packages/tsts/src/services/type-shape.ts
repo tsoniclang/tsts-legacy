@@ -248,6 +248,7 @@ export interface TypeShapeQueries {
   readonly getStringLiteralTypeValue: (type: GoPtr<Type>) => string | undefined;
   readonly getBooleanLiteralTypeValue: (type: GoPtr<Type>) => boolean | undefined;
   readonly isAny: (type: GoPtr<Type>) => boolean;
+  readonly isIntrinsicAliasMarker: (type: GoPtr<Type>) => boolean;
   readonly isError: (type: GoPtr<Type>) => boolean;
   readonly isUnknown: (type: GoPtr<Type>) => boolean;
   readonly isNever: (type: GoPtr<Type>) => boolean;
@@ -370,6 +371,8 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
       return typeof value === "boolean" ? value : undefined;
     }),
     isAny: (type) => hasFlags(type, TypeFlagsAny),
+    isIntrinsicAliasMarker: (type) => type !== undefined
+      && withCheckerForType(program, type, defaultOptions, checker => type === checker?.intrinsicMarkerType) === true,
     isError: (type) => type !== undefined && type.checker !== undefined && type === type.checker.errorType,
     isUnknown: (type) => hasFlags(type, TypeFlagsUnknown),
     isNever: (type) => hasFlags(type, TypeFlagsNever),
