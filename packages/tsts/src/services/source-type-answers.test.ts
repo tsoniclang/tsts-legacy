@@ -314,7 +314,7 @@ test("a selected declared index provides its actual parameter result without bor
     trace.push([axis, units]);
     return null;
   });
-  assert.ok(read.kind === "complete" && read.value.indexedRead?.kind === "index-parameter-read");
+  assert.ok(read.kind === "complete" && read.value.indexedRead?.kind === "declared-index-read");
   const retained = read.value.indexedRead;
   const actual = source.ast.as.AsIndexedAccessTypeNode(selected);
   assert.ok(actual);
@@ -334,6 +334,49 @@ test("a selected declared index provides its actual parameter result without bor
     });
     assert.equal(reached, cutoff + 1);
     assert.equal(result.kind === "refused" && result.stop === original, true);
+  }
+});
+
+test("a selected declared index retains its actual tuple result and not another slot or property", () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/indexed-tuple", includeBundledLibraries: false,
+    files: { "/indexed-tuple/core.d.ts": testCoreDeclarations, "/indexed-tuple/use.ts": `
+      interface Matrix<Key, Value> { [index: number]: Value; marker: Key; }
+      export type Selected = Matrix<readonly [boolean, number], readonly [number, boolean]>[number];
+      export type Property = Matrix<readonly [boolean, number], readonly [number, boolean]>["marker"];
+      export type Deferred<T extends Matrix<readonly [boolean, number], readonly [number, boolean]>> = T[number];
+    ` }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const file = checked.getSourceFile("/indexed-tuple/use.ts");
+  assert.ok(file);
+  const { ast, checker, typeShape } = checked.getSourceFileQueries(file);
+  const [selected, property, deferred] = findNodes(file, ast.children, ast.is.IsIndexedAccessTypeNode);
+  const [declaration] = findNodes(file, ast.children, ast.is.IsIndexSignatureDeclaration);
+  const syntax = ast.as.AsIndexedAccessTypeNode(selected);
+  assert.ok(syntax);
+  const trace: unknown[] = [];
+  const result = checker.acquireSourceType({ kind: "annotation", node: selected }, (axis, units) => {
+    trace.push([axis, units]);
+    return null;
+  });
+  assert.ok(result.kind === "complete" && result.value.indexedRead?.kind === "declared-index-read");
+  const { indexedRead, type } = result.value;
+  assert.equal(indexedRead.annotation === selected && indexedRead.declaration === declaration && indexedRead.result === type, true);
+  assert.equal(indexedRead.receiver === checker.getTypeFromTypeNode(syntax.ObjectType)?.type, true);
+  assert.equal(indexedRead.index === checker.getTypeFromTypeNode(syntax.IndexType)?.type, true);
+  const slots = typeShape.getTypeReferenceArgumentInfos(indexedRead.receiver);
+  assert.equal(slots?.[0]?.argument !== type && slots?.[1]?.argument === type, true);
+  assert.equal(typeShape.getTupleInfo(type)?.readonly, true);
+  assert.equal(checker.getTypeFromTypeNode(property)?.indexedRead, undefined);
+  assert.equal(checker.getTypeFromTypeNode(deferred)?.indexedRead, undefined);
+  const original = { resource: "indexed tuple" };
+  for (let cutoff = 0; cutoff < trace.length; ++cutoff) {
+    let reached = 0;
+    const trial = checker.acquireSourceType({ kind: "annotation", node: selected }, (axis, units): typeof original | null => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(trial.kind === "refused" && trial.stop === original && reached === cutoff + 1, true);
   }
 });
 

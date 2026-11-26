@@ -174,7 +174,7 @@ function readSourceTypeAnswer(checker: Checker, node: Node, type: Type,
         && retained.grammarFailure === undefined && retained.declarationFailure === undefined;
       if (source !== undefined && "kind" in source) {
         if (!successful || source.annotation !== current) return withCause(type);
-        if (source.kind === "index-parameter-read") {
+        if (source.kind === "declared-index-read") {
           admitNativeChecker(checker, "work");
           if (source.result !== type) return withCause(type);
         }

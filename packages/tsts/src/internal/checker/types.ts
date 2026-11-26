@@ -856,7 +856,7 @@ export interface TypeNodeLinks {
 
 export type IndexedTypeReadSource =
   | { readonly kind: "indexed-read"; readonly annotation: Node; readonly properties: readonly [Node, Node, ...Node[]] }
-  | { readonly kind: "index-parameter-read"; readonly annotation: Node; readonly receiver: Type;
+  | { readonly kind: "declared-index-read"; readonly annotation: Node; readonly receiver: Type;
       readonly index: Type; readonly declaration: Node; readonly result: Type };
 
 /**
