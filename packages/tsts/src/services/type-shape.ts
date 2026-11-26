@@ -49,7 +49,7 @@ import {
   Checker_getInstantiatedBaseTypes,
   Checker_resolveStructuredTypeMembers,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getBaseTypeOfLiteralType, Checker_getPropertiesOfObjectType, Checker_iteratePropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_getElementTypeOfArrayType, Checker_getPropertiesOfObjectType, Checker_iteratePropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType, Checker_isReadonlyArrayType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
@@ -170,6 +170,19 @@ export interface TypePropertyInfo extends TypePropertyHeader {
 
 export type TypePropertyRead<Stop extends object> = NativeCheckerResult<TypePropertyInfo | null, Stop>;
 
+export interface NativeArrayTypeInfo {
+  readonly element: Type;
+  readonly readonly: boolean;
+}
+
+export function readNativeArrayType(checker: Checker, type: Type): NativeArrayTypeInfo | undefined {
+  admitNativeChecker(checker, "work");
+  const element = Checker_getElementTypeOfArrayType(checker, type);
+  if (element === undefined) return undefined;
+  admitNativeChecker(checker, "retained");
+  return Object.freeze({ element, readonly: Checker_isReadonlyArrayType(checker, type) });
+}
+
 interface NativePropertyInventory<Value> {
   readonly length: number;
   readonly read: <Stop extends object>(index: number, admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<Value, Stop>;
@@ -274,6 +287,8 @@ export interface TypeShapeQueries {
   readonly couldContainTypeVariables: (type: GoPtr<Type>) => boolean;
   readonly getUnionOrIntersectionTypes: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceTarget: (type: GoPtr<Type>) => GoPtr<Type>;
+  readonly acquireNativeArrayType: <Stop extends object>(type: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
+    NativeCheckerResult<NativeArrayTypeInfo, Stop>;
   readonly getTypeArguments: (type: GoPtr<Type>) => readonly GoPtr<Type>[];
   readonly getTypeReferenceArgumentInfos: (type: GoPtr<Type>) => readonly TypeReferenceArgumentInfo[] | undefined;
   readonly acquireInterfaceDeclarations: <Stop extends object>(target: GoPtr<Type>, admit: NativeCheckerAdmission<Stop>) =>
@@ -336,6 +351,7 @@ export function createTypeShapeQueries(program: GoPtr<Program>, defaultOptions: 
     return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
   };
   const queries: TypeShapeQueries = {
+    acquireNativeArrayType: (type, admit) => acquireTypeEvidence(type, admit, readNativeArrayType),
     typeToString: (type) => withCheckerForType(program, type, defaultOptions, (checker) => Checker_TypeToString(checker, type)) ?? "",
     getTypeFromTypeNode: (node) => querySourceType(program, defaultOptions, { kind: "annotation", node }),
     instantiateTypeAlias: (declaration, arguments_) => withCheckerForNode(

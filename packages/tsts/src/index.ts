@@ -140,7 +140,6 @@ export type {
   ResolvedSourceCallInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,
-  ResolvedNativeArrayIndex,
   ResolvedSourceFlowCondition,
   ResolvedSourceFlowConditionInfo,
   ResolvedSourceIntrinsicValueInfo,
@@ -193,6 +192,7 @@ export type {
   TypeShapeQueries,
   TypeTupleElementInfo,
   TypeTupleInfo,
+  NativeArrayTypeInfo,
 } from "./services/type-shape.js";
 export type { RetainedTypeAliasApplication, TypeAliasApplicationInfo, TypeAliasConditionalStep } from "./services/type-applications.js";
 export type { TypeIndexedAccessComponents, TypeIndexedAccessMember, TypeIndexedAccessSelection } from "./services/type-indexed-access.js";

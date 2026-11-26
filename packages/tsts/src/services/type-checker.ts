@@ -25,7 +25,8 @@ export type { SourceTypeRequest } from "./source-type-answer.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import type { CheckerDiagnosticMembership, ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
 export type { ResolvedSourceTypeInfo } from "../internal/checker/checker/source-type-answers.js";
-import type { TypeIndexInfo, TypePropertyHeader } from "./type-shape.js";
+import { readNativeArrayType } from "./type-shape.js";
+import type { NativeArrayTypeInfo, TypeIndexInfo, TypePropertyHeader } from "./type-shape.js";
 import {
   NodeFlagsOptionalChain,
   SymbolFlagsAlias,
@@ -120,9 +121,7 @@ import type {
 import {
   Checker_getApparentTypeOfContextualType,
   Checker_getAwaitedType,
-  Checker_getElementTypeOfArrayType,
   Checker_GetTypeAtLocation,
-  Checker_isReadonlyArrayType,
 } from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
 import { AssignmentKindDefinite, AssignmentKindNone, getAssignmentTargetKind, isReservedMemberName } from "../internal/checker/utilities.js";
@@ -218,13 +217,9 @@ export type ResolvedSourcePropertyAccessInfo =
       readonly property: TypePropertyHeader | null;
     })
   | { readonly kind: "module-exported-value"; readonly target: Symbol | undefined };
-export interface ResolvedNativeArrayIndex {
-  readonly element: Type;
-  readonly readonly: boolean;
-}
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
   readonly receiver: CheckerResolvedSourceElementAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
-  readonly nativeArray: ResolvedNativeArrayIndex | null;
+  readonly nativeArray: NativeArrayTypeInfo | null;
 };
 export type ResolvedSourceIterationInfo = ExtensionCheckedIterationSelection;
 
@@ -1047,20 +1042,17 @@ function withResolvedPropertyAccessEvidence(
   return value;
 }
 
-function nativeArrayIndexOf(checker: Checker, selected: CheckerResolvedSourceElementAccessInfo): ResolvedNativeArrayIndex | null {
+function nativeArrayIndexOf(checker: Checker, selected: CheckerResolvedSourceElementAccessInfo): NativeArrayTypeInfo | null {
   admitNativeChecker(checker, "work");
   if (selected.sourceSymbol !== undefined || selected.optionalChain || selected.selectedDeclaration === undefined) return null;
   admitNativeChecker(checker, "work");
-  const receiver = selected.receiver.type;
-  const element = Checker_getElementTypeOfArrayType(checker, receiver);
-  if (element === undefined) return null;
+  const array = readNativeArrayType(checker, selected.receiver.type);
+  if (array === undefined) return null;
   admitNativeChecker(checker, "work");
-  if ((selected.sourceReadType !== undefined && selected.sourceReadType !== element)
-    || (selected.sourceWriteType !== undefined && selected.sourceWriteType !== element)) return null;
-  const readonly = Checker_isReadonlyArrayType(checker, receiver);
-  if (readonly === selected.writable) return null;
-  admitNativeChecker(checker, "retained");
-  return Object.freeze({ element, readonly });
+  if ((selected.sourceReadType !== undefined && selected.sourceReadType !== array.element)
+    || (selected.sourceWriteType !== undefined && selected.sourceWriteType !== array.element)
+    || array.readonly === selected.writable) return null;
+  return array;
 }
 
 function withResolvedSourceReceiverValueEvidence<

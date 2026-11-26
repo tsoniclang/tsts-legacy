@@ -311,6 +311,15 @@ test("only the actual checker array index carries the native element slot", () =
   assert.equal(read.value.nativeArray?.readonly, true);
   assert.equal(foreign.value.nativeArray, null);
   assert.equal(named.value.nativeArray, null);
+  for (const matching of [store, read]) {
+    const offered = actual.source.typeShape.acquireNativeArrayType(matching.value.receiver.type, () => null);
+    assert.ok(offered.kind === "complete");
+    assert.equal(offered.value.element === matching.value.nativeArray?.element, true);
+    assert.equal(offered.value.readonly, matching.value.nativeArray?.readonly);
+  }
+  assert.equal(actual.source.typeShape.acquireNativeArrayType(foreign.value.receiver.type, () => null).kind, "unavailable");
+  assert.equal(open().source.typeShape.acquireNativeArrayType(store.value.receiver.type,
+    () => assert.fail("a foreign array type cannot spend the local lease")).kind, "unavailable");
   const original = { resource: "native index identity" };
   for (let cut = 0; cut < trace.length; cut += 1) {
     const trial = open();
