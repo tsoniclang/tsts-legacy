@@ -140,6 +140,7 @@ export type {
   ResolvedSourceCallInfo,
   ResolvedSourceCallableCompletionInfo,
   ResolvedSourceElementAccessInfo,
+  ResolvedNativeArrayIndex,
   ResolvedSourceFlowCondition,
   ResolvedSourceFlowConditionInfo,
   ResolvedSourceIntrinsicValueInfo,

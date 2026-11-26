@@ -282,6 +282,50 @@ test("bounded element acquisition retains the original checked write and exact i
     () => assert.fail("a foreign element cannot spend the local checker lease")).kind, "unavailable");
 });
 
+test("only the actual checker array index carries the native element slot", () => {
+  const open = () => {
+    const source = checkedQueries(`
+      declare global { interface ReadonlyArray<T> { readonly length: number; readonly [index: number]: T } }
+      interface Indexable { [index: number]: boolean }
+      export function store(target: boolean[], word: boolean) { target[0] = word; }
+      export function read(target: readonly boolean[]) { return target[0]; }
+      export function foreign(target: Indexable) { return target[0]; }
+      export function named(target: boolean[]) { return target["length"]; }
+    `);
+    return { source, accesses: findNodes(source.sourceFile, source.ast.children, source.ast.is.IsElementAccessExpression) };
+  };
+  const actual = open();
+  assert.equal(actual.accesses.length, 4);
+  const trace: unknown[] = [];
+  const selections = actual.accesses.map((node, position) => actual.source.checker.acquireResolvedElementAccess(node, (axis, units) => {
+    if (position === 0) trace.push([axis, units]);
+    return null;
+  }));
+  const [store, read, foreign, named] = selections;
+  assert.ok(store?.kind === "complete" && read?.kind === "complete" && foreign?.kind === "complete" && named?.kind === "complete");
+  assert.equal(store.value.nativeArray?.element === store.value.sourceWriteType, true);
+  assert.equal(store.value.sourceReadType, undefined);
+  assert.equal(store.value.nativeArray?.readonly, false);
+  assert.equal(read.value.nativeArray?.element === read.value.sourceReadType, true);
+  assert.equal(read.value.sourceWriteType, undefined);
+  assert.equal(read.value.nativeArray?.readonly, true);
+  assert.equal(foreign.value.nativeArray, null);
+  assert.equal(named.value.nativeArray, null);
+  const original = { resource: "native index identity" };
+  for (let cut = 0; cut < trace.length; cut += 1) {
+    const trial = open();
+    let visited = 0;
+    const stopped = trial.source.checker.acquireResolvedElementAccess(trial.accesses[0], (axis, units) => {
+      assert.deepEqual([axis, units], trace[visited]);
+      return visited++ === cut ? original : null;
+    });
+    assert.equal(visited, cut + 1);
+    assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+  }
+  const replay = actual.source.checker.acquireResolvedElementAccess(actual.accesses[0], () => null);
+  assert.equal(replay.kind === "complete" && replay.value === store.value, true);
+});
+
 test("checked source exposes operator syntax and checker-owned operand and result types directly", () => {
   const source = checkedQueries(`
     declare let count: number;

@@ -120,7 +120,9 @@ import type {
 import {
   Checker_getApparentTypeOfContextualType,
   Checker_getAwaitedType,
+  Checker_getElementTypeOfArrayType,
   Checker_GetTypeAtLocation,
+  Checker_isReadonlyArrayType,
 } from "../internal/checker/checker/types.js";
 import { Checker_isAssignmentToReadonlyEntity } from "../internal/checker/checker/relations.js";
 import { AssignmentKindDefinite, AssignmentKindNone, getAssignmentTargetKind, isReservedMemberName } from "../internal/checker/utilities.js";
@@ -216,8 +218,13 @@ export type ResolvedSourcePropertyAccessInfo =
       readonly property: TypePropertyHeader | null;
     })
   | { readonly kind: "module-exported-value"; readonly target: Symbol | undefined };
+export interface ResolvedNativeArrayIndex {
+  readonly element: Type;
+  readonly readonly: boolean;
+}
 export type ResolvedSourceElementAccessInfo = CheckerResolvedSourceElementAccessInfo & {
   readonly receiver: CheckerResolvedSourceElementAccessInfo["receiver"] & ResolvedSourceReceiverValueEvidence;
+  readonly nativeArray: ResolvedNativeArrayIndex | null;
 };
 export type ResolvedSourceIterationInfo = ExtensionCheckedIterationSelection;
 
@@ -442,11 +449,12 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         if (known !== undefined) return known;
         const selected = Checker_getResolvedSourceElementAccessInfo(checker, node);
         if (selected === undefined || isSyntheticDefaultMember(checker, selected.sourceSymbol)) return undefined;
-        const offered = withResolvedSourceReceiverValueEvidence(checker, selected);
-        if (offered !== undefined) {
-          admitNativeChecker(checker, "retained");
-          elementAccessInfos.set(node, offered);
-        }
+        const resolved = withResolvedSourceReceiverValueEvidence(checker, selected);
+        if (resolved === undefined) return undefined;
+        const nativeArray = nativeArrayIndexOf(checker, selected);
+        admitNativeChecker(checker, "retained", 2);
+        const offered: ResolvedSourceElementAccessInfo = Object.freeze({ ...resolved, nativeArray });
+        elementAccessInfos.set(node, offered);
         return offered;
       }));
     if (result === undefined || result.kind === "unavailable") return { kind: "unavailable" };
@@ -1037,6 +1045,22 @@ function withResolvedPropertyAccessEvidence(
     }),
   };
   return value;
+}
+
+function nativeArrayIndexOf(checker: Checker, selected: CheckerResolvedSourceElementAccessInfo): ResolvedNativeArrayIndex | null {
+  admitNativeChecker(checker, "work");
+  if (selected.sourceSymbol !== undefined || selected.optionalChain || selected.selectedDeclaration === undefined) return null;
+  admitNativeChecker(checker, "work");
+  const receiver = selected.receiver.type;
+  const element = Checker_getElementTypeOfArrayType(checker, receiver);
+  if (element === undefined) return null;
+  admitNativeChecker(checker, "work");
+  if ((selected.sourceReadType !== undefined && selected.sourceReadType !== element)
+    || (selected.sourceWriteType !== undefined && selected.sourceWriteType !== element)) return null;
+  const readonly = Checker_isReadonlyArrayType(checker, receiver);
+  if (readonly === selected.writable) return null;
+  admitNativeChecker(checker, "retained");
+  return Object.freeze({ element, readonly });
 }
 
 function withResolvedSourceReceiverValueEvidence<
