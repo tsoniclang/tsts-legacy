@@ -235,6 +235,53 @@ test("bounded property acquisition retains the actual named receiver and member 
     () => assert.fail("foreign property access cannot consume the owner account")).kind, "unavailable");
 });
 
+test("bounded element acquisition retains the original checked write and exact indexed operands", () => {
+  const open = () => {
+    const source = checkedQueries(
+      "interface Flags { [index: number]: boolean } export function set(values: Flags, index: number, flag: boolean) { values[index] = flag; }",
+    );
+    const [node] = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsElementAccessExpression);
+    assert.ok(node);
+    return { source, node };
+  };
+  const actual = open();
+  const trace: unknown[] = [];
+  const complete = actual.source.checker.acquireResolvedElementAccess(actual.node, (axis, units) => {
+    trace.push([axis, units]);
+    return null;
+  });
+  assert.ok(complete.kind === "complete");
+  const syntax = actual.source.ast.as.AsElementAccessExpression(actual.node);
+  const { value } = complete;
+  assert.equal(value.expression === actual.node &&
+    value.receiver.expression === syntax?.Expression && value.argument.expression === syntax.ArgumentExpression, true);
+  assert.equal(value.accessMode, "write");
+  assert.equal(value.sourceReadType, undefined);
+  assert.equal(value.writable, true);
+  assert.equal(actual.source.ast.is.IsIndexSignatureDeclaration(value.selectedDeclaration), true);
+  assert.equal(actual.source.checker.typeToString(value.sourceWriteType), "boolean");
+  const warmTrace: unknown[] = [];
+  const warm = actual.source.checker.acquireResolvedElementAccess(actual.node, (axis, units) => {
+    warmTrace.push([axis, units]);
+    return null;
+  });
+  assert.deepEqual(warmTrace, [["work", 1]]);
+  assert.equal(warm.kind === "complete" && warm.value === value, true);
+  const original = { resource: "element selection" };
+  for (let maximum = 0; maximum < trace.length; maximum += 1) {
+    const trial = open();
+    let reached = 0;
+    const result = trial.source.checker.acquireResolvedElementAccess(trial.node, (axis, units) => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === maximum ? original : null;
+    });
+    assert.equal(reached, maximum + 1);
+    assert.equal(result.kind === "refused" && result.stop === original, true);
+  }
+  assert.equal(open().source.checker.acquireResolvedElementAccess(actual.node,
+    () => assert.fail("a foreign element cannot spend the local checker lease")).kind, "unavailable");
+});
+
 test("checked source exposes operator syntax and checker-owned operand and result types directly", () => {
   const source = checkedQueries(`
     declare let count: number;

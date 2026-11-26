@@ -332,7 +332,8 @@ export interface TypeCheckerQueries {
     admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourceCallInfo, Stop>;
   readonly acquireResolvedPropertyAccess: <Stop extends object>(node: GoPtr<Node>,
     admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourcePropertyAccessInfo, Stop>;
-  readonly getResolvedElementAccessInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceElementAccessInfo>;
+  readonly acquireResolvedElementAccess: <Stop extends object>(node: GoPtr<Node>,
+    admit: NativeCheckerAdmission<Stop>) => NativeCheckerResult<ResolvedSourceElementAccessInfo, Stop>;
   readonly getResolvedIterationInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceIterationInfo>;
   readonly getResolvedObjectLiteralElementInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceObjectLiteralElementInfo>;
   readonly getResolvedStorageInfo: (node: GoPtr<Node>) => GoPtr<ResolvedSourceStorageInfo>;
@@ -430,6 +431,28 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
   };
   const elementAccessInfos = new WeakMap<Node, ResolvedSourceElementAccessInfo>();
+  const readElement = <Stop extends object>(node: GoPtr<Node>, admit: NativeCheckerAdmission<Stop>):
+    NativeCheckerResult<ResolvedSourceElementAccessInfo, Stop> => {
+    if (node === undefined || !IsElementAccessExpression(node)) return { kind: "unavailable" };
+    const context = defaultOptions.context ?? Background();
+    const result = withSourceFileChecker(program, defaultOptions.sourceFile, GetSourceFileOfNode(node), context, checker =>
+      acquireLeasedChecker(checker, WithCheckerLifetime(context, CheckerLifetimeDiagnostics), admit, () => {
+        admitNativeChecker(checker, "work");
+        const known = elementAccessInfos.get(node);
+        if (known !== undefined) return known;
+        const selected = Checker_getResolvedSourceElementAccessInfo(checker, node);
+        if (selected === undefined || isSyntheticDefaultMember(checker, selected.sourceSymbol)) return undefined;
+        const offered = withResolvedSourceReceiverValueEvidence(checker, selected);
+        if (offered !== undefined) {
+          admitNativeChecker(checker, "retained");
+          elementAccessInfos.set(node, offered);
+        }
+        return offered;
+      }));
+    if (result === undefined || result.kind === "unavailable") return { kind: "unavailable" };
+    if (result.kind === "refused") return result;
+    return result.value === undefined ? { kind: "unavailable" } : { kind: "complete", value: result.value };
+  };
   const iterationInfos = new WeakMap<Node, ResolvedSourceIterationInfo>();
   const objectLiteralElementInfos = new WeakMap<Node, ResolvedSourceObjectLiteralElementInfo>();
   const objectLiteralElementSymbols = new WeakMap<Type, ReadonlyMap<Node, Symbol>>();
@@ -620,15 +643,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
     },
     acquireResolvedCall: (node, admit) => readCall(node, { kind: "ready", admit }),
     acquireResolvedPropertyAccess: readProperty,
-    getResolvedElementAccessInfo: (node) =>
-      memoizeResolvedNodeQuery(elementAccessInfos, node, () =>
-        withCheckerForNode(program, node, defaultOptions, (checker) => {
-          const selected = Checker_getResolvedSourceElementAccessInfo(checker, node);
-          // An element access that reads the made default member would name the first module's value: nothing.
-          return isSyntheticDefaultMember(checker, selected?.sourceSymbol)
-            ? undefined
-            : withResolvedSourceReceiverValueEvidence(checker, selected);
-        })),
+    acquireResolvedElementAccess: readElement,
     getResolvedIterationInfo: (node) =>
       memoizeResolvedNodeQuery(iterationInfos, node, () =>
         withCheckerForNode(program, node, defaultOptions, (checker) =>

@@ -1,4 +1,4 @@
-import { propertyAccess } from "../services/type-checker-test-support.js";
+import { elementAccess, propertyAccess } from "../services/type-checker-test-support.js";
 import { requireApplicableCallInfo } from "../services/type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -373,7 +373,7 @@ test("provider index signatures expose exact declaration evidence without fabric
     checked.ast.children,
     checked.ast.is.IsElementAccessExpression,
   )[0];
-  const info = source.checker.getResolvedElementAccessInfo(element);
+  const info = elementAccess(source.checker, element);
   assert.equal(info?.selectedSymbol === undefined, true);
   assert.ok(info?.selectedDeclaration !== undefined);
   assert.equal(

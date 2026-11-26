@@ -1,4 +1,4 @@
-import { propertyAccess } from "./type-checker-test-support.js";
+import { elementAccess, propertyAccess } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Background } from "../go/context.js";
@@ -45,7 +45,7 @@ for (const operator of ["??=", "||=", "&&=", "+=", "="]) {
       const node = nodes[0];
       assert.ok(node);
       const query = () => bracket
-        ? queries.getResolvedElementAccessInfo(node)
+        ? elementAccess(queries, node)
         : memberAccess(propertyAccess(queries, node));
       const selected = query();
       assert.ok(selected);
@@ -84,10 +84,10 @@ test("logical indexed assignments preserve read unions and write intersections",
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const node = findNodesByKind(index, KindElementAccessExpression)[0];
   assert.ok(node);
-  const selected = queries.getResolvedElementAccessInfo(node);
+  const selected = elementAccess(queries, node);
   assert.equal(selected?.accessMode, "read-write");
   assert.equal(queries.typeToString(selected?.sourceReadType), "number | undefined");
   assert.equal(queries.typeToString(selected?.sourceWriteType), "number");
-  assert.equal(queries.getResolvedElementAccessInfo(node), selected);
+  assert.equal(elementAccess(queries, node), selected);
   assertCleanSemanticDiagnostics(program, index);
 });

@@ -1,4 +1,4 @@
-import { propertyAccess } from "./type-checker-test-support.js";
+import { elementAccess, propertyAccess } from "./type-checker-test-support.js";
 import { requireApplicableCallInfo } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -209,13 +209,13 @@ test("checked source program exposes one exact AST and direct checker decision s
     "Optional and ordinary access must select the same declared property.",
   );
 
-  const explicitElementInfo = source.checker.getResolvedElementAccessInfo(elements[0]);
+  const explicitElementInfo = elementAccess(source.checker, elements[0]);
   assert.equal(explicitElementInfo?.accessMode, "read");
   assert.equal(explicitElementInfo?.selectedSymbol !== undefined, true);
   assert.equal(explicitElementInfo?.selectedDeclaration !== undefined, true);
   assert.equal(source.checker.typeToString(explicitElementInfo?.sourceReadType), "number");
 
-  const indexSignatureInfo = source.checker.getResolvedElementAccessInfo(elements[1]);
+  const indexSignatureInfo = elementAccess(source.checker, elements[1]);
   assert.equal(indexSignatureInfo?.accessMode, "read");
   assert.equal(indexSignatureInfo?.selectedSymbol === undefined, true);
   assert.equal(indexSignatureInfo?.selectedDeclaration !== undefined, true);

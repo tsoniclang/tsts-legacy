@@ -1,4 +1,4 @@
-import { propertyAccess } from "./type-checker-test-support.js";
+import { elementAccess, propertyAccess } from "./type-checker-test-support.js";
 import { propertyRows, requireApplicableCallInfo } from "./type-checker-test-support.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -383,9 +383,9 @@ test("receiver evidence identifies the intrinsic global object without spelling 
     assert.ok(Object.isFrozen(info?.receiver));
   }
   const element = findNodesByKind(index, KindElementAccessExpression)[0];
-  const info = queries.getResolvedElementAccessInfo(element);
+  const info = elementAccess(queries, element);
   assert.equal(info?.receiver.intrinsic, "global-object");
-  assert.ok(queries.getResolvedElementAccessInfo(element) === info, "a repeated element read returns the cached record");
+  assert.ok(elementAccess(queries, element) === info, "a repeated element read returns the cached record");
 });
 
 test("property access info preserves compound read-write and optional-chain roles", () => {
@@ -491,7 +491,7 @@ test("element access info preserves mapped declarations and proven tuple ordinal
   const accesses = findNodesByKind(index, KindElementAccessExpression);
   assert.equal(accesses.length, 2);
 
-  const mapped = queries.getResolvedElementAccessInfo(accesses[0]);
+  const mapped = elementAccess(queries, accesses[0]);
   assert.ok(mapped?.accessMode === "read", "Mapped element access must be a checked read.");
   assert.equal(mapped?.selectedSymbol === undefined, true);
   assert.ok(mapped?.selectedDeclaration !== undefined);
@@ -505,13 +505,13 @@ test("element access info preserves mapped declarations and proven tuple ordinal
     "Element receiver evidence must retain the exact lexically selected symbol.",
   );
 
-  const tuple = queries.getResolvedElementAccessInfo(accesses[1]);
+  const tuple = elementAccess(queries, accesses[1]);
   assert.ok(tuple?.accessMode === "read", "Tuple element access must be a checked read.");
   assert.equal(tuple?.selectedElementIndex, 1);
   assert.equal(tuple.sourceReadType.flags & TypeFlagsNumber, TypeFlagsNumber);
 
   assertCleanSemanticDiagnostics(program, index);
-  const repeatedMapped = queries.getResolvedElementAccessInfo(accesses[0]);
+  const repeatedMapped = elementAccess(queries, accesses[0]);
   assert.ok(
     repeatedMapped === mapped,
     "Repeated mapped-element queries must retain the exact resolved access result.",
@@ -526,7 +526,7 @@ test("element access info preserves mapped declarations and proven tuple ordinal
   );
   assert.equal(repeatedMapped?.selectedElementIndex, mapped?.selectedElementIndex);
 
-  const repeatedTuple = queries.getResolvedElementAccessInfo(accesses[1]);
+  const repeatedTuple = elementAccess(queries, accesses[1]);
   assert.ok(
     repeatedTuple === tuple,
     "Repeated tuple-element queries must retain the exact resolved access result.",
@@ -604,7 +604,7 @@ test("element access exposes no fixed tuple ordinal without one exact checker pr
   assert.equal(accesses.length, 4);
 
   for (const access of accesses) {
-    const selected = queries.getResolvedElementAccessInfo(access);
+    const selected = elementAccess(queries, access);
     assert.equal(selected?.accessMode, "read");
     assert.equal(selected?.selectedElementIndex, undefined);
   }
@@ -627,9 +627,9 @@ test("element access info distinguishes read, write, and read-write index operat
   const accesses = findNodesByKind(index, KindElementAccessExpression);
   assert.equal(accesses.length, 3);
 
-  const read = queries.getResolvedElementAccessInfo(accesses[0]);
-  const write = queries.getResolvedElementAccessInfo(accesses[1]);
-  const readWrite = queries.getResolvedElementAccessInfo(accesses[2]);
+  const read = elementAccess(queries, accesses[0]);
+  const write = elementAccess(queries, accesses[1]);
+  const readWrite = elementAccess(queries, accesses[2]);
   assert.equal(read?.accessMode, "read");
   assert.equal(write?.accessMode, "write");
   assert.equal(readWrite?.accessMode, "read-write");
@@ -659,7 +659,7 @@ test("element access info preserves optional-chain source selection", () => {
   `);
   const queries = createTypeCheckerQueries(program, { sourceFile: index });
   const access = findNodesByKind(index, KindElementAccessExpression)[0];
-  const selected = queries.getResolvedElementAccessInfo(access);
+  const selected = elementAccess(queries, access);
 
   assert.equal(selected?.accessMode, "read");
   assert.equal(selected?.optionalChain, true);

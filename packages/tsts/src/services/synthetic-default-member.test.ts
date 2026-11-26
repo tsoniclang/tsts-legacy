@@ -1,4 +1,4 @@
-import { propertyAccess } from "./type-checker-test-support.js";
+import { elementAccess, propertyAccess } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -129,7 +129,7 @@ test("a really declared default export and an ordinary member are members; the m
   assert.ok(program.checker.getAliasedSymbol(member) === undefined, "the made member has no final target");
   assert.ok(program.checker.getAliasStep(member) === undefined, "the made member has no alias step");
   // The element access that reads it: nothing. Before, its record's selected symbol was `first` in one.d.cts.
-  assert.ok(program.checker.getResolvedElementAccessInfo(program.only("ElementAccessExpression", "n2[\"default\"]")) === undefined, "the element access that reads the made member gives nothing");
+  assert.ok(elementAccess(program.checker, program.only("ElementAccessExpression", "n2[\"default\"]")) === undefined, "the element access that reads the made member gives nothing");
   // The destructured property name denotes the same member symbol, and the alias queries give nothing for it.
   const binding = program.only("BindingElement", "default: destructured");
   let propertyName: Node | undefined;

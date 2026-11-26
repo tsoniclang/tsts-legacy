@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { ResolvedSourceCallInfo, ResolvedSourcePropertyAccessInfo, TypeCheckerQueries } from "./type-checker.js";
+import type { ResolvedSourceCallInfo, ResolvedSourceElementAccessInfo, ResolvedSourcePropertyAccessInfo, TypeCheckerQueries } from "./type-checker.js";
 import type { TypePropertyInfo, TypeShapeQueries } from "./type-shape.js";
 import type { RetainedTypeAliasApplication } from "./type-applications.js";
 import type { Type } from "../internal/checker/types.js";
@@ -48,6 +48,12 @@ export function aliasApplication(shape: TypeShapeQueries, type: GoPtr<Type>): Re
 
 export function propertyAccess(checker: TypeCheckerQueries, node: GoPtr<Node>): GoPtr<ResolvedSourcePropertyAccessInfo> {
   const result = checker.acquireResolvedPropertyAccess(node, () => null);
+  assert.notEqual(result.kind, "refused");
+  return result.kind === "complete" ? result.value : undefined;
+}
+
+export function elementAccess(checker: TypeCheckerQueries, node: GoPtr<Node>): GoPtr<ResolvedSourceElementAccessInfo> {
+  const result = checker.acquireResolvedElementAccess(node, () => null);
   assert.notEqual(result.kind, "refused");
   return result.kind === "complete" ? result.value : undefined;
 }
