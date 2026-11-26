@@ -15799,7 +15799,7 @@ export function Checker_getTypeFromIndexedAccessTypeNode(receiver: GoPtr<Checker
     const objectType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.ObjectType);
     const indexType = Checker_getTypeFromTypeNode(receiver, AsIndexedAccessTypeNode(node)!.IndexType);
     const potentialAlias = Checker_getAliasForTypeNode(receiver, node);
-    const source: IndexedTypeSourceOutput = { value: undefined };
+    const source: IndexedTypeSourceOutput = { receiver: objectType, index: indexType, value: undefined };
     links!.resolvedType = indexedAccessTypeEx(receiver, objectType, indexType, AccessFlagsNone, node, potentialAlias, source);
     if (source.value !== undefined) links!.resolvedTypeSource = source.value;
   }
@@ -17657,7 +17657,11 @@ export function Checker_getIndexedAccessTypeEx(receiver: GoPtr<Checker>, objectT
   return indexedAccessTypeEx(receiver, objectType, indexType, accessFlags, accessNode, alias);
 }
 
-type IndexedTypeSourceOutput = { value: GoPtr<Node> | IndexedTypeReadSource };
+type IndexedTypeSourceOutput = {
+  readonly receiver: GoPtr<Type>;
+  readonly index: GoPtr<Type>;
+  value: GoPtr<Node> | IndexedTypeReadSource;
+};
 
 function indexedAccessTypeEx(receiver: GoPtr<Checker>, objectType: GoPtr<Type>, indexType: GoPtr<Type>, accessFlags: AccessFlags,
   accessNode: GoPtr<Node>, alias: GoPtr<TypeAlias>, source?: IndexedTypeSourceOutput): GoPtr<Type> {
@@ -18218,7 +18222,19 @@ function getPropertyTypeForIndexTypeObserved(
       ) {
         return Checker_getUnionType(receiver, [indexInfo!.valueType, receiver!.missingType]);
       }
-      return indexInfo!.valueType;
+      const result = indexInfo.valueType;
+      if (source !== undefined && accessNode !== undefined && IsIndexedAccessTypeNode(accessNode)
+        && (accessFlags & AccessFlagsWriting) === 0 && indexType === fullIndexType
+        && source.receiver !== undefined && source.index !== undefined && result !== undefined && (result.flags & TypeFlagsTypeParameter) !== 0) {
+        admitNativeChecker(receiver, "work");
+        const declaration = indexInfo.declaration;
+        if (declaration !== undefined) {
+          admitNativeChecker(receiver, "retained");
+          source.value = { kind: "index-parameter-read", annotation: accessNode, receiver: source.receiver,
+            index: source.index, declaration, result };
+        }
+      }
+      return result;
     }
     if ((indexType!.flags & TypeFlagsNever) !== 0) {
       return receiver!.neverType;

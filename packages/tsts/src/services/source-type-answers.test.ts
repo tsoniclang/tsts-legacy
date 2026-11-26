@@ -288,6 +288,55 @@ for (const checkers of [1, 4]) test(`completed type answers preserve their exact
   assert.equal(checker.getTypeFromTypeNode(occurrences[0])?.typeSource === first.typeSource, true, "warm reads retain the same source");
 });
 
+test("a selected declared index provides its actual parameter result without borrowing a property lookup", () => {
+  const open = () => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/index-parameter", includeBundledLibraries: false,
+      files: { "/index-parameter/core.d.ts": testCoreDeclarations, "/index-parameter/use.ts": `
+        export interface Matrix<T> { [index: number]: T; marker: boolean; }
+        export interface Matrix<T> { enabled: boolean; }
+        export interface Holder<Value> { observed: Matrix<Value>[number]; }
+        export interface Holder<Value> { ordinary: Matrix<Value>["marker"]; }
+      ` }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+    const checked = session.checkSource();
+    assert.equal(checked.diagnostics.length, 0);
+    const file = checked.getSourceFile("/index-parameter/use.ts");
+    assert.ok(file);
+    const source = checked.getSourceFileQueries(file);
+    const { ast } = source;
+    const [selected, property] = findNodes(file, ast.children, ast.is.IsIndexedAccessTypeNode);
+    const [declaration] = findNodes(file, ast.children, ast.is.IsIndexSignatureDeclaration);
+    assert.ok(selected && property && declaration);
+    return { source, selected, property, declaration };
+  };
+  const { source, selected, property, declaration } = open();
+  const trace: unknown[] = [];
+  const read = source.checker.acquireSourceType({ kind: "annotation", node: selected }, (axis, units) => {
+    trace.push([axis, units]);
+    return null;
+  });
+  assert.ok(read.kind === "complete" && read.value.indexedRead?.kind === "index-parameter-read");
+  const retained = read.value.indexedRead;
+  const actual = source.ast.as.AsIndexedAccessTypeNode(selected);
+  assert.ok(actual);
+  assert.equal(retained.annotation === selected && retained.declaration === declaration && retained.result === read.value.type, true);
+  assert.equal(retained.receiver === source.checker.getTypeFromTypeNode(actual.ObjectType)?.type, true);
+  assert.equal(retained.index === source.checker.getTypeFromTypeNode(actual.IndexType)?.type, true);
+  assert.equal(source.checker.getSymbolDeclarations(source.checker.getTypeSymbol(retained.result)).length, 2);
+  assert.equal(source.checker.getTypeFromTypeNode(selected)?.indexedRead === retained, true);
+  assert.equal(source.checker.getTypeFromTypeNode(property)?.indexedRead, undefined);
+  const original = { resource: "indexed parameter" };
+  for (let cutoff = 0; cutoff < trace.length; ++cutoff) {
+    const trial = open();
+    let reached = 0;
+    const result = trial.source.checker.acquireSourceType({ kind: "annotation", node: trial.selected }, (axis, units): typeof original | null => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(reached, cutoff + 1);
+    assert.equal(result.kind === "refused" && result.stop === original, true);
+  }
+});
+
 for (const checkers of [1, 4]) test(`closed indexed annotations retain only their actual required property sources with ${checkers} checkers`, () => {
   const files = {
     "/indexed/core.d.ts": testCoreDeclarations,
@@ -345,7 +394,7 @@ for (const checkers of [1, 4]) test(`closed indexed annotations retain only thei
       assert.ok(own >= 0);
       return property(annotation, own);
     });
-    assert.ok(answer.indexedRead);
+    assert.ok(answer.indexedRead?.kind === "indexed-read");
     assert.equal(answer.indexedRead.annotation === annotation, true);
     assert.equal(answer.indexedRead.properties.length, names.length);
     assert.equal(answer.indexedRead.properties.every((source, index) => source === properties[index]), true);

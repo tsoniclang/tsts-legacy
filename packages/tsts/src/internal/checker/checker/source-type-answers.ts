@@ -172,8 +172,14 @@ function readSourceTypeAnswer(checker: Checker, node: Node, type: Type,
       const source = mayBorrow && retained.resolvedType !== undefined ? completedTypeSource(retained) : undefined;
       const successful = type !== checker.errorType && retained.resolvedType !== checker.errorType && mayBorrow && retained.resolutionFailure === undefined
         && retained.grammarFailure === undefined && retained.declarationFailure === undefined;
-      if (source !== undefined && "kind" in source)
-        return successful && source.annotation === current ? { type, causes: [], indexedRead: source } : withCause(type);
+      if (source !== undefined && "kind" in source) {
+        if (!successful || source.annotation !== current) return withCause(type);
+        if (source.kind === "index-parameter-read") {
+          admitNativeChecker(checker, "work");
+          if (source.result !== type) return withCause(type);
+        }
+        return { type, causes: [], indexedRead: source };
+      }
       if (source !== undefined) return successful && "Kind" in source && isCompletedSourceType(checker, source, retained.resolvedType)
         ? { type, causes: [], borrowedFrom: source, typeSource: source }
         : { type, causes: [], borrowedFrom: source };
