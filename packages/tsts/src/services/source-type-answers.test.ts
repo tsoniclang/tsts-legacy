@@ -9,6 +9,7 @@ import { getDiagnosticRunMembers } from "./diagnostic-run-members.js";
 import { Program_GetTypeCheckerForFileExclusive } from "../internal/compiler/program.js";
 import { CheckerLifetimeDiagnostics, WithCheckerLifetime } from "../internal/core/context.js";
 import { CheckModeContextual, CheckModeInferential, CheckModeNormal, CheckModeTypeOnly } from "../internal/checker/checker/state.js";
+import type { NativeCheckerResult } from "../internal/checker/resource-admission.js";
 import { Checker_checkExpressionEx } from "../internal/checker/checker/syntax-checking.js";
 import { maxSerializationLevel } from "../internal/checker/checker.js";
 import { Background } from "../go/context.js";
@@ -377,6 +378,48 @@ test("a selected declared index retains its actual tuple result and not another 
       return reached++ === cutoff ? original : null;
     });
     assert.equal(trial.kind === "refused" && trial.stop === original && reached === cutoff + 1, true);
+  }
+});
+
+test("a contextual tuple return retains the direct return annotation, not the value or an inferred closure", () => {
+  const session = createCompilerSessionFromFiles({ currentDirectory: "/return-context", includeBundledLibraries: false,
+    files: { "/return-context/core.d.ts": testCoreDeclarations, "/return-context/use.ts": `
+      export function direct(value: readonly [number, boolean]): (readonly [number, boolean]) {
+        return value;
+      }
+      export const inferred: (value: readonly [number, boolean]) => readonly [number, boolean] =
+        value => { return value; };
+    ` }, compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 0);
+  const file = checked.getSourceFile("/return-context/use.ts");
+  assert.ok(file);
+  const { ast, checker } = checked.getSourceFileQueries(file);
+  const [first, inferred] = findNodes(file, ast.children, ast.is.IsReturnStatement).map(Node_Expression);
+  const [declaration] = findNodes(file, ast.children, ast.is.IsFunctionDeclaration);
+  const parameter = ast.typeNode(ast.parameters(declaration)[0]);
+  const annotation = ast.as.AsParenthesizedTypeNode(ast.typeNode(declaration))?.Type;
+  assert.ok(first && inferred && parameter && annotation);
+  const trace: unknown[] = [];
+  const result = checker.acquireSourceType({ kind: "contextual", node: first }, (axis, units) => {
+    trace.push([axis, units]);
+    return null;
+  });
+  assert.ok(result.kind === "complete" && result.value.causes.length === 0);
+  assert.equal(result.value.typeSource === annotation && result.value.typeSource !== parameter, true);
+  assert.equal(result.value.type === checker.getTypeAtLocation(first)?.type, true);
+  const fromInference = checker.getContextualType(inferred);
+  assert.equal(fromInference?.type === result.value.type, true);
+  assert.equal(fromInference?.typeSource, undefined);
+  const original = { resource: "written return context" };
+  for (let cutoff = 0; cutoff < trace.length; ++cutoff) {
+    let reached = 0;
+    const selected: NativeCheckerResult<ResolvedSourceTypeInfo, typeof original> = checker.acquireSourceType(
+      { kind: "contextual", node: first }, (axis, units): typeof original | null => {
+      assert.deepEqual([axis, units], trace[reached]);
+      return reached++ === cutoff ? original : null;
+    });
+    assert.equal(selected.kind === "refused" && selected.stop === original && reached === cutoff + 1, true);
   }
 });
 
