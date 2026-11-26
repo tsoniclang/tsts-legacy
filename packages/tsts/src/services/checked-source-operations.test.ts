@@ -130,6 +130,53 @@ test("bounded call acquisition borrows the originally completed contextual inner
   }
 });
 
+test("bounded calls complete the originally selected circular return without rechecking the expression", () => {
+  const first = "export function first() { return second(); }";
+  const second = "export function second() { return first(); }";
+  for (const text of [first + "\n" + second, second + "\n" + first]) {
+    const open = () => {
+      const session = createCompilerSessionFromFiles({
+        currentDirectory: "/src",
+        rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+        files: { "/src/core.d.ts": testCoreDeclarations, "/src/index.ts": text },
+        compilerOptions: { ...testNoLibCompilerOptions, strict: true },
+      });
+      const checked = session.checkSource();
+      assert.deepEqual(checked.diagnostics.map(diagnostic => diagnostic?.code), [7023, 7023]);
+      const file = checked.getSourceFile("/src/index.ts");
+      assert.ok(file);
+      const source = checked.getSourceFileQueries(file);
+      const [outer, inner] = findNodes(file, source.ast.children, source.ast.is.IsCallExpression);
+      assert.ok(outer && inner);
+      return { source, outer, inner };
+    };
+    const { source, outer, inner } = open();
+    const trace: unknown[] = [];
+    const selected = source.checker.acquireResolvedCall(inner, (axis, units) => { trace.push([axis, units]); return null; });
+    assert.ok(selected.kind === "complete" && selected.value.kind === "applicable");
+    assert.equal(selected.value.call === inner, true);
+    assert.equal(selected.value.resultType === selected.value.selection.application.instantiatedSignature.resolvedReturnType, true);
+    assert.equal(source.checker.typeToString(selected.value.resultType), "any");
+    assert.deepEqual(trace, [["work", 1], ["work", 1], ["work", 1], ["retained", 1], ["retained", 1]]);
+    assert.equal(source.checker.getResolvedCallInfo(inner) === selected.value, true);
+    const other = source.checker.acquireResolvedCall(outer, () => null);
+    assert.ok(other.kind === "complete" && other.value.kind === "applicable");
+    assert.equal(other.value.call === outer && other.value.selection.application.instantiatedSignature !==
+      selected.value.selection.application.instantiatedSignature, true);
+    const original = { resource: "circular call acquisition" };
+    for (let cut = 0; cut < trace.length; cut += 1) {
+      const trial = open();
+      let reached = 0;
+      const stopped = trial.source.checker.acquireResolvedCall(trial.inner, (axis, units): typeof original | null => {
+        assert.deepEqual([axis, units], trace[reached]);
+        return reached++ === cut ? original : null;
+      });
+      assert.equal(reached, cut + 1);
+      assert.equal(stopped.kind === "refused" && stopped.stop === original, true);
+    }
+  }
+});
+
 test("a rejected preliminary overload cannot own the completed contextual result", () => {
   const source = checkedQueries(`
     declare function overloaded(value: boolean, tag: "discard"): "discard";

@@ -51,7 +51,7 @@ import { ContextFlagsSkipBindingPatterns } from "../types.js";
 import { TypeFlagsESSymbolLike } from "../types.js";
 import type { ConstrainedType, ContextFlags, DeclaredTypeLinks, IndexInfo, ObjectFlags, ResolvedCallArgumentEvidence, ResolvedCallEvidence, ResolvedCallSelectedSignatureParameterEvidence, ResolvedCallSelectionEvidence, ResolvedCallSourceValueEvidence, Signature, SignatureFlags, SignatureKind, SignatureLinks, SymbolReferenceLinks, TupleElementInfo, Type, TypeAliasLinks, TypeComparer, TypeData, TypeFlags, TypeParameter, TypePredicate, TypeReference, ValueSymbolLinks } from "../types.js";
 import { CheckModeInferential, CheckModeNormal, CheckModeSkipContextSensitive, CheckModeSkipGenericFunctions, InferenceFlagsAnyDefault, InferenceFlagsNone, InferenceFlagsNoDefault, InferenceFlagsSkippedGenericFunction, InferencePriorityNone, InferencePriorityReturnType, hasRestParameter, isInstancePropertyWithInitializerOrPrivateIdentifierProperty, isRestParameter, isSpreadArgument, isTupleType, signatureHasRestParameter, signatureHasLiteralTypes, acceptsVoid, thisAssignmentDeclarationNone, thisAssignmentDeclarationTyped, thisAssignmentDeclarationConstructor, thisAssignmentDeclarationMethod, isIdentifierThatStartsWithUnderscore, getStringLiteralValue, isUnitType, hasTypeParameterByName, getUniqueTypeParameterName, SignatureKeyErased, SignatureKeyCanonical, SignatureKeyBase, SignatureKeyInner, SignatureKeyOuter, getTypeListKey, isLateBindableAST, nodeImmediatelyReferencesSuperOrThis, superCallIsRootLevelInConstructor, TypeSystemPropertyNameType, TypeSystemPropertyNameResolvedReturnType, TypeSystemPropertyNameResolvedTypeArguments, UnionReductionLiteral, UnionReductionSubtype, IterationTypeKindYield, IterationTypeKindNext, IterationUseSpread, IterationUseGeneratorReturnType, IterationUseAsyncGeneratorReturnType, UnusedKindParameter, CachedTypeKindRestrictiveTypeParameter, getThisParameterFromNodeContext, getTargetType, someType, importClauseFromImported, WideningKindFunctionReturn, WideningKindGeneratorNext, WideningKindGeneratorYield } from "./state.js";
-import { CheckModeIsForSignatureHelp } from "./state.js";
+import { CheckModeContextual, CheckModeIsForSignatureHelp } from "./state.js";
 import { getBaseTypeNodeOfClass, TypeSystemPropertyNameResolvedBaseConstructorType } from "./state.js";
 import type { CachedSignatureKey, CachedTypeKey, CallState, Checker, CheckMode, InferenceContext, InferenceInfo, InferencePriority, IterationTypeKind, IterationTypes, IterationUse, thisAssignmentDeclarationKind } from "./state.js";
 import { GetThisParameter, GetNameOfDeclaration, GetSourceFileOfNode, GetClassLikeDeclarationOfSymbol, IsFunctionExpressionOrArrowFunction, IsFunctionLikeDeclaration, IsObjectLiteralMethod, IsInJSFile, IsJsonSourceFile, NodeKindIs, IsAccessExpression, IsAccessor, IsFunctionLike, IsOptionalChain, IsOptionalChainRoot, FindAncestorOrQuit, FindAncestorTrue, FindAncestorQuit, FindAncestorFalse, IsCallOrNewExpression, GetThisContainer, GetContainingClass, GetContainingFunction, GetExtendsHeritageClauseElement, IsThisParameter, HasAccessorModifier, HasSyntacticModifier, HasModifier, IsBindingPattern, SkipOuterExpressions, OEKAll, GetAssignmentDeclarationKind, JSDeclarationKindThisProperty, IsStringOrNumericLiteralLike, IsMethodOrAccessor, GetDeclarationOfKind, IsClassLike, IsStatic, GetRestParameterElementType, HasStaticModifier, IsPartOfTypeNode, WalkUpBindingElementsAndPatterns, SkipParentheses, IsEntityNameExpression, GetImmediatelyInvokedFunctionExpression, IsImportCall, IsAssignmentTarget, IsJsxOpeningLikeElement, IsJsxCallLike, IsSuperProperty, IsUnterminatedLiteral, NodeIsMissing, NodeIsPresent, GetReparsedNodeForNode, IsPropertyNameLiteral, GetRootDeclaration, IsAmbientModule, WalkUpParenthesizedExpressions, IsAssignmentExpression, GetFirstIdentifier, IsThisIdentifier } from "../../ast/utilities.js";
@@ -2310,7 +2310,7 @@ export function Checker_checkImportCallExpression(receiver: GoPtr<Checker>, node
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.checkCallExpression","kind":"method","status":"implemented","sigHash":"c7077a9359a5dabbb7b33b07409cf7ae319dc8d4ee9862f71076afb9296c19cc","bodyHash":"8d143d4d304de3843b2932373cebb5a3e5a974a05b6bbf1f1e0ea960bebc8d4e"}
- * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"R5-23 retains the explicit native result-construction publication owner without changing native checking or caching decisions.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
+ * @tsgo-override {"category":"extension-host","allow":["body","signature"],"reason":"Preserve the native result-construction owner and its exact circular return receipt without changing native checking or result caching.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::CheckMode,?packages/tsts/src/internal/checker/checker/literal-creation.ts::LiteralConstructionOwner)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/types.ts::Type>"}
  *
  * Go source:
  * func (c *Checker) checkCallExpression(node *ast.Node, checkMode CheckMode) *Type {
@@ -2378,6 +2378,11 @@ export function Checker_checkCallExpression(receiver: GoPtr<Checker>, node: GoPt
     return Checker_resolveExternalModuleTypeByLiteral(receiver, (Node_Arguments(node) ?? [])[0]);
   }
   const returnType = Checker_getReturnTypeOfSignature(receiver, signature);
+  if (receiver !== undefined && node !== undefined && signature !== undefined && returnType === receiver.errorType
+    && signature.resolvedReturnType === undefined && receiver.flowLoopStack.length === 0
+    && (checkMode === CheckModeNormal || checkMode === CheckModeContextual)) {
+    recordCircularCallResult(receiver, node, signature);
+  }
   if ((returnType!.flags & TypeFlagsESSymbolLike) !== 0 && Checker_isSymbolOrSymbolForCall(receiver, node)) {
     return Checker_getESSymbolLikeTypeForNode(receiver, WalkUpParenthesizedExpressions(node!.Parent as GoPtr<Expression>));
   }
@@ -2603,9 +2608,14 @@ export function Checker_finalizeResolvedCallEvidence(
   if (evidence?.kind === "applicable" && evidence.resultType !== resultType) {
     throw new Error("A checked call produced conflicting final instantiated source result types.");
   }
-  if (evidence !== undefined) {
+  if (evidence !== undefined && evidence.kind !== "circular-result") {
     return evidence;
   }
+  return publishCallEvidence(receiver, links, selection, resultType);
+}
+
+function publishCallEvidence(receiver: Checker, links: SignatureLinks, selection: ResolvedCallSelectionEvidence,
+  resultType: Type): ResolvedCallEvidence {
   const finalized: ResolvedCallEvidence = selection.kind === "applicable"
     ? Object.freeze({ ...selection, resultType }) : selection;
   journalSelectedCallEvidence(receiver, links);
@@ -2633,6 +2643,24 @@ function completedCallLinks(receiver: GoPtr<Checker>, node: GoPtr<Node>): Signat
     throw new Error("Checked call selection lost its exact completed resolver cache owner.");
   }
   return links;
+}
+
+function recordCircularCallResult(receiver: Checker, node: Node, signature: Signature): void {
+  const links = completedCallLinks(receiver, node);
+  const selection = links?.resolvedCallSelectionEvidence;
+  if (links === undefined || links.resolvedCallEvidence !== undefined || selection?.kind !== "applicable"
+    || selection.selection.application.instantiatedSignature !== signature) return;
+  for (let index = receiver.typeResolutions.length - 1; index >= 0; index -= 1) {
+    admitNativeChecker(receiver, "work");
+    const resolution = receiver.typeResolutions[index];
+    if (resolution?.target !== signature || resolution.propertyName !== TypeSystemPropertyNameResolvedReturnType) continue;
+    if (!resolution.result) {
+      admitNativeChecker(receiver, "retained");
+      journalSelectedCallEvidence(receiver, links);
+      links.resolvedCallEvidence = { kind: "circular-result" };
+    }
+    return;
+  }
 }
 
 type ConditionalCall = Extract<ResolvedCallSelectionEvidence, { readonly kind: "conditional-candidates" }>;
@@ -2674,7 +2702,18 @@ export function Checker_getCompletedCallEvidence(receiver: Checker, node: Node,
   const selection = links.resolvedCallSelectionEvidence;
   if (selection?.kind !== "applicable")
     return selection?.kind === "conditional-candidates" ? callSelectionWithBacking(receiver, selection) : selection;
-  const final = links.resolvedCallEvidence ?? (complete === null ? undefined : Checker_finalizeResolvedCallEvidence(receiver, node, complete()));
+  const recorded = links.resolvedCallEvidence;
+  if (recorded?.kind === "circular-result") {
+    const signature = selection.selection.application.instantiatedSignature;
+    if (signature !== links.resolvedSignature) throw new Error("A circular call result retains its actual selected signature.");
+    admitNativeChecker(receiver, "work");
+    const resultType = signature.resolvedReturnType;
+    if (resultType === undefined) return undefined;
+    if (resultType !== receiver.anyType) throw new Error("A circular call result requires the actual settled native recovery.");
+    admitNativeChecker(receiver, "retained");
+    return publishCallEvidence(receiver, links, selection, resultType);
+  }
+  const final = recorded ?? (complete === null ? undefined : Checker_finalizeResolvedCallEvidence(receiver, node, complete()));
   if (final === undefined) return undefined;
   if (final.kind !== "applicable" || final.selection !== selection.selection || final.call !== node)
     throw new Error("A completed call retains its actual settled applicable selection and result.");
