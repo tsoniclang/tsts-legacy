@@ -159,6 +159,54 @@ test("a tuple receiver result retains the actual passive mapping of its own writ
   }
 });
 
+test("a direct tuple return is available without a projected native signature", () => {
+  const open = () => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/tuple-result", includeBundledLibraries: false,
+      files: { "/tuple-result/core.d.ts": testCoreDeclarations,
+        "/tuple-result/source.ts": "export function pair(flag: boolean): readonly [boolean, number] { return [flag, 1]; }" },
+      compilerOptions: { ...testNoLibCompilerOptions, strict: true } });
+    const checked = session.checkSource();
+    assert.equal(checked.diagnostics.length, 0);
+    const file = checked.getSourceFile("/tuple-result/source.ts");
+    assert.ok(file);
+    const { ast, checker, typeShape } = checked.getSourceFileQueries(file);
+    const declaration = findNodes(file, ast.children, ast.is.IsFunctionDeclaration)[0];
+    assert.ok(declaration);
+    const annotation = Node_Type(declaration);
+    assert.ok(annotation);
+    const authored = checker.getTypeFromTypeNode(annotation);
+    const signature = checker.getSignatureFromDeclaration(declaration);
+    assert.ok(signature);
+    assert.equal(signature.target === undefined, true);
+    return { checker, typeShape, signature, annotation, authored };
+  };
+  const actual = open();
+  const charges: [axis: "work" | "retained", units: number][] = [];
+  const result = actual.checker.acquireSourceType({ kind: "signature-return", signature: actual.signature }, (axis, units) => {
+    charges.push([axis, units]);
+    return null;
+  });
+  if (result.kind !== "complete") assert.fail("The direct signature retains its written tuple result.");
+  assert.equal(result.value.type === actual.authored?.type, true);
+  assert.equal(result.value.typeSource === actual.annotation, true);
+  assert.equal(result.value.projectedReturn, undefined);
+  const tuple = actual.typeShape.getTupleInfo(result.value.type);
+  assert.equal(tuple?.readonly, true);
+  assert.equal(tuple?.elements.length, 2);
+  const original = { resource: "direct tuple return" };
+  for (const [cut, expected] of charges.entries()) {
+    const trial = open();
+    let reached = 0;
+    const refused = trial.checker.acquireSourceType({ kind: "signature-return", signature: trial.signature }, (axis, units) => {
+      if (reached++ !== cut) return null;
+      assert.deepEqual([axis, units], expected, `cut ${cut}`);
+      return original;
+    });
+    assert.equal(reached, cut + 1);
+    assert.equal(refused.kind === "refused" && refused.stop === original, true);
+  }
+});
+
 test("paid source typing retains genuine primitive binary results in their owning checker and reuses them linearly", () => {
   const create = (terms: number) => {
     const source = "export function sum(value: number): number { return " + Array.from({ length: terms }, () => "value").join(" + ") + "; }";
