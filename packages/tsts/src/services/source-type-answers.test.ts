@@ -2,7 +2,7 @@ import { propertyAccess } from "./type-checker-test-support.js";
 import { propertyRows } from "./type-checker-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCompilerSessionFromFiles, createCompilerSessionFromProgram, type ResolvedSourceTypeInfo } from "../index.js";
+import { createCompilerSessionFromFiles, createCompilerSessionFromProgram, hasDeclaredIndexReadEvidence, type ResolvedSourceTypeInfo } from "../index.js";
 import { getExtensionHost } from "../extensions/index.js";
 import { findNodes, testCoreDeclarations, testNoLibCompilerOptions } from "../extensions/source-provider-test-support.js";
 import { getDiagnosticRunMembers } from "./diagnostic-run-members.js";
@@ -317,6 +317,9 @@ test("a selected declared index provides its actual parameter result without bor
   });
   assert.ok(read.kind === "complete" && read.value.indexedRead?.kind === "declared-index-read");
   const retained = read.value.indexedRead;
+  assert.equal(hasDeclaredIndexReadEvidence(retained), true);
+  assert.equal(hasDeclaredIndexReadEvidence({ ...retained, declaration }), false);
+  assert.equal(Object.isFrozen(retained), true);
   const actual = source.ast.as.AsIndexedAccessTypeNode(selected);
   assert.ok(actual);
   assert.equal(retained.annotation === selected && retained.declaration === declaration && retained.result === read.value.type, true);
