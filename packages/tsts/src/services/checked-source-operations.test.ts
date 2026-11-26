@@ -777,6 +777,30 @@ test("type-shape signature evidence preserves unexpanded array-rest ownership", 
   }]);
 });
 
+test("open rest tuples retain one actual formal with every sequence segment", () => {
+  const source = checkedQueries(`
+    declare function both<Left extends readonly unknown[], Right extends readonly unknown[]>(...args: [...Left, ...Right]): void;
+    declare function anchored<Middle extends readonly unknown[]>(...args: [start: string, ...Middle, end: boolean]): void;
+  `);
+  const declarations = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsFunctionDeclaration);
+  assert.equal(declarations.length, 2);
+  for (const [position, declaration] of declarations.entries()) {
+    const signature = source.checker.getSignatureFromDeclaration(declaration);
+    assert.ok(signature);
+    const result = source.typeShape.acquireSignatureParameters(signature, () => null);
+    assert.ok(result.kind === "complete");
+    assert.equal(result.value.length, 1);
+    const [formal] = result.value;
+    assert.ok(formal);
+    assert.equal(formal.parameterKind, "rest");
+    assert.equal(formal.sourceSymbol === signature.parameters[0], true);
+    assert.equal(formal.declaration !== undefined && source.ast.parent(formal.declaration) === declaration, true);
+    const tuple = source.typeShape.getTupleInfo(formal.type);
+    assert.deepEqual(tuple?.elements.map(slot => slot.elementKind),
+      position === 0 ? ["variadic", "variadic"] : ["required", "variadic", "required"]);
+  }
+});
+
 test("bounded signature acquisition owns every actual expanded formal and the original refusal", () => {
   const text = "declare function read(prefix: string, ...rest: [value: boolean, count?: number]): boolean;";
   const open = () => {
