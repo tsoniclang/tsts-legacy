@@ -272,7 +272,7 @@ export type {
   ResolvedOriginalSignatureEvidence,
 } from "./internal/checker/types.js";
 export { readOriginalSignature } from "./internal/checker/original-signature-evidence.js";
-export { hasDeclaredIndexReadEvidence } from "./internal/checker/declared-index-evidence.js";
+export { hasDeclaredIndexReadEvidence } from "./internal/checker/checker/source-type-answers.js";
 export { ContextFlagsSkipBindingPatterns, TypeFlagsConditional, TypeFlagsEnumLike, TypeFlagsIndexedAccess, TypeFlagsUniqueESSymbol } from "./internal/checker/types.js";
 export { prepareSourceImports } from "./services/compiler-session.js";
 export type { PreparedImportDiagnostic, SourceImportPreparation, SourceImportPreparationInput } from "./services/compiler-session.js";
