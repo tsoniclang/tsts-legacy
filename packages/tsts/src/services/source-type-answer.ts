@@ -13,7 +13,7 @@ import type { Checker } from "../internal/checker/checker/state.js";
 import { ContextFlagsNone, TypeFlagsTypeParameter, type ContextFlags, type Signature, type Type } from "../internal/checker/types.js";
 import { TypeMapper_Kind, TypeMapper_Map, TypeMapperKindArray, TypeMapperKindSimple } from "../internal/checker/mapper.js";
 import { admitNativeChecker, type NativeCheckerAdmission, type NativeCheckerResult } from "../internal/checker/resource-admission.js";
-import { borrowedSourceTypeAnswer, completedAnnotationSource, originalSignatureDeclaration, type CheckerDiagnosticMembership, type ResolvedSourceTypeInfo,
+import { borrowedSourceTypeAnswer, completedAnnotationSource, completedCallErrorAnswer, originalSignatureDeclaration, type CheckerDiagnosticMembership, type ResolvedSourceTypeInfo,
   signatureReturnAnswer, sourceTypeAnswer, type SourceTypeAnswer, type SourceTypeAnswerOutput } from "../internal/checker/checker/source-type-answers.js";
 import { acquireLeasedChecker, withCheckerById, withSourceFileChecker } from "./checker-ownership.js";
 
@@ -85,7 +85,8 @@ function selectedSignatureReturn(checker: Checker, signature: Signature | undefi
 function readHead(checker: Checker, request: SourceTypeRequest, admits: CheckerDiagnosticMembership | undefined): SourceTypeAnswer | undefined {
   admitNativeChecker(checker, "work");
   switch (request.kind) {
-    case "expression": return sourceTypeAnswer(checker, request.node, Checker_GetTypeAtLocation(checker, request.node), admits);
+    case "expression": return completedCallErrorAnswer(checker, request.node, admits)
+      ?? sourceTypeAnswer(checker, request.node, Checker_GetTypeAtLocation(checker, request.node), admits);
     case "annotation": return sourceTypeAnswer(checker, request.node, Checker_GetTypeFromTypeNode(checker, request.node), admits);
     case "signature-return": return selectedSignatureReturn(checker, request.signature, Checker_GetReturnTypeOfSignature(checker, request.signature), admits);
     case "contextual": {

@@ -850,24 +850,32 @@ export function Checker_unusedIsError(receiver: GoPtr<Checker>, kind: UnusedKind
  * }
  */
 export function Checker_checkNonNullTypeWithReporter(receiver: GoPtr<Checker>, t: GoPtr<Type>, node: GoPtr<Node>, reportError: (c: GoPtr<Checker>, node: GoPtr<Node>, facts: TypeFacts) => void): GoPtr<Type> {
+  const checked = checkNonNullTypeWithReporter(receiver, t, node, reportError);
+  return checked !== undefined && "code" in checked ? receiver!.errorType : checked;
+}
+
+export function checkInvocationCallee(receiver: GoPtr<Checker>, t: GoPtr<Type>, node: GoPtr<Node>): GoPtr<Type> | Diagnostic {
+  return checkNonNullTypeWithReporter(receiver, t, node, Checker_reportCannotInvokePossiblyNullOrUndefinedError);
+}
+
+function checkNonNullTypeWithReporter(receiver: GoPtr<Checker>, t: GoPtr<Type>, node: GoPtr<Node>,
+  reportError: (checker: GoPtr<Checker>, operand: GoPtr<Node>, facts: TypeFacts) => GoPtr<Diagnostic> | void): GoPtr<Type> | Diagnostic {
   const c = receiver!;
   if (c.strictNullChecks && (t!.flags & TypeFlagsUnknown) !== 0) {
     if (IsEntityNameExpression(node)) {
       const nodeText = entityNameToString(node);
       if (nodeText.length < 100) {
-        Checker_error(receiver, node, X_0_is_of_type_unknown, nodeText);
-        return c.errorType;
+        return Checker_error(receiver, node, X_0_is_of_type_unknown, nodeText) ?? c.errorType;
       }
     }
-    Checker_error(receiver, node, Object_is_of_type_unknown);
-    return c.errorType;
+    return Checker_error(receiver, node, Object_is_of_type_unknown) ?? c.errorType;
   }
   const facts = Checker_getTypeFacts(receiver, t, TypeFactsIsUndefinedOrNull);
   if ((facts & TypeFactsIsUndefinedOrNull) !== 0) {
-    reportError(receiver, node, facts);
+    const cause = reportError(receiver, node, facts);
     const nonNullable = Checker_GetNonNullableType(receiver, t);
     if ((nonNullable!.flags & (TypeFlagsNullable | TypeFlagsNever)) !== 0) {
-      return c.errorType;
+      return cause ?? c.errorType;
     }
     return nonNullable;
   }
@@ -1469,6 +1477,7 @@ export function Checker_getTypeArgumentArityError(receiver: GoPtr<Checker>, node
 
 /**
  * @tsgo-unit {"id":"github.com/microsoft/typescript-go::internal/checker/checker.go::method::Checker.reportCannotInvokePossiblyNullOrUndefinedError","kind":"method","status":"implemented","sigHash":"f61c3fb48bd425a9195ac1530c6b60d2bcaa7203fbc537b619e722c4ba31d639","bodyHash":"c5bc6e5e75ede5e2b560c291612a39e4ee924100aaf5abe7ff43d8f1223ce0d6"}
+ * @tsgo-override {"category":"extension-host","allow":["signature"],"reason":"Return the diagnostic emitted by the native reporter, so a definitely invalid call can retain that original rather than a related error.","goSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::TypeFacts)=>void","tsSignature":"func(packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/checker/checker/state.ts::Checker>,packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/spine.ts::Node>,packages/tsts/src/internal/checker/checker/state.ts::TypeFacts)=>packages/tsts/src/go/compat.ts::GoPtr<packages/tsts/src/internal/ast/diagnostic.ts::Diagnostic>"}
  *
  * Go source:
  * func (c *Checker) reportCannotInvokePossiblyNullOrUndefinedError(node *ast.Node, facts TypeFacts) {
@@ -1479,8 +1488,8 @@ export function Checker_getTypeArgumentArityError(receiver: GoPtr<Checker>, node
  * 		diagnostics.Cannot_invoke_an_object_which_is_possibly_null))
  * }
  */
-export function Checker_reportCannotInvokePossiblyNullOrUndefinedError(receiver: GoPtr<Checker>, node: GoPtr<Node>, facts: TypeFacts): void {
-  Checker_error(receiver, node, IfElse((facts & TypeFactsIsUndefined) !== 0,
+export function Checker_reportCannotInvokePossiblyNullOrUndefinedError(receiver: GoPtr<Checker>, node: GoPtr<Node>, facts: TypeFacts): GoPtr<Diagnostic> {
+  return Checker_error(receiver, node, IfElse((facts & TypeFactsIsUndefined) !== 0,
     IfElse((facts & TypeFactsIsNull) !== 0,
       Cannot_invoke_an_object_which_is_possibly_null_or_undefined,
       Cannot_invoke_an_object_which_is_possibly_undefined),

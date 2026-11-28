@@ -817,6 +817,70 @@ for (const checkers of [1, 4]) test(`an ordinary call on a failed callee keeps t
   assert.equal(checker.getResolvedCallInfo(healthy)?.kind, "applicable");
 });
 
+for (const checkers of [1, 4]) test(`a rejected callee type retains its own call diagnostic on ${checkers} checkers`, () => {
+  const files = { "/answers/core.d.ts": testCoreDeclarations,
+    "/answers/main.ts": "export function named(callee:unknown):boolean{return callee(missingArgument);}"
+      + "export function expression(left:unknown,right:unknown,choose:boolean):boolean{return (choose?left:right)();}"
+      + "export function absent(callee:undefined):boolean{return callee();}"
+      + "export function filtered(callee:unknown):boolean{\n// @ts-expect-error\nreturn callee();}",
+    "/answers/other.ts": "export const other=true;", "/answers/third.ts": "export const third=true;" };
+  const open = () => {
+    const session = createCompilerSessionFromFiles({ currentDirectory: "/answers", files, rootFiles: Object.keys(files),
+      includeBundledLibraries: false, compilerOptions: { ...testNoLibCompilerOptions, strict: true, checkers } });
+    const checked = session.checkSource();
+    const file = checked.getSourceFile("/answers/main.ts");
+    assert.ok(file);
+    const { ast, checker, typeShape } = checked.getSourceFileQueries(file);
+    const calls = findNodes(file, ast.children, ast.is.IsCallExpression);
+    const members = () => session.getDiagnostics("all").flatMap(root => {
+      assert.ok(root);
+      return getDiagnosticRunMembers(root);
+    });
+    return { file, checker, typeShape, calls, members };
+  };
+  const { file, checker, typeShape, calls, members } = open();
+  const [named, expression, absent, filtered] = calls;
+  assert.ok(named && expression && absent && filtered);
+  const before = members();
+  for (const [ordinal, [node, code]] of ([[named, 18046], [expression, 2571], [absent, 2722]] as const).entries()) {
+    const request = { kind: "expression", node } as const;
+    const original = before.find(diagnostic => diagnostic.code === code);
+    assert.ok(original);
+    assert.equal(original.file === file, true);
+    const charges: ["work" | "retained", number][] = [];
+    const answer = checker.acquireSourceType(request, (cost, units) => { charges.push([cost, units]); return null; });
+    if (answer.kind !== "complete") assert.fail("The original call error needs its own completed source type answer.");
+    assert.equal(typeShape.isError(answer.value.type), true);
+    assert.equal(answer.value.causes.length, 1);
+    assert.equal(answer.value.causes[0] === original, true);
+    const target = checker.getTypeAtLocation(Node_Expression(node));
+    assert.equal(target !== undefined && !typeShape.isError(target.type) && target.causes.length === 0, true);
+    assert.equal(checker.getResolvedCallInfo(node), undefined);
+    const stop = { reason: "original source admission" };
+    assert.ok(charges.length > 0);
+    for (const [cut, charge] of charges.entries()) {
+      const fresh = open();
+      const actual = fresh.calls[ordinal];
+      assert.ok(actual);
+      let reached = 0;
+      const refused = fresh.checker.acquireSourceType({ kind: "expression", node: actual }, (cost, units) => {
+        if (reached++ !== cut) return null;
+        assert.deepEqual([cost, units], charge);
+        return stop;
+      });
+      assert.equal(refused.kind === "refused" && refused.stop === stop && reached === cut + 1, true);
+    }
+    const warm = checker.acquireSourceType(request, () => stop);
+    assert.equal(warm.kind === "refused" && warm.stop === stop, true);
+    assert.equal(checker.getTypeAtLocation(node)?.causes[0] === original, true);
+  }
+  assert.equal(checker.getTypeAtLocation(Node_Arguments(named)?.[0])?.causes[0]?.code, 2304);
+  const suppressed = checker.getTypeAtLocation(filtered);
+  assert.equal(suppressed !== undefined && typeShape.isError(suppressed.type) && suppressed.causes.length === 0, true);
+  const after = members();
+  assert.equal(after.length === before.length && after.every((original, index) => original === before[index]), true);
+});
+
 for (const checkers of [1, 4]) test(`a genuinely noncallable invocation retains its own actual report on ${checkers} checkers`, () => {
   const files = { "/answers/core.d.ts": testCoreDeclarations + "\ninterface Function { readonly length: number; }",
     "/answers/main.ts": "function pass(value:boolean):boolean{return value;}"
