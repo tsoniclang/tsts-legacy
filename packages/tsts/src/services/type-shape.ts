@@ -49,7 +49,7 @@ import {
   Checker_getInstantiatedBaseTypes,
   Checker_resolveStructuredTypeMembers,
 } from "../internal/checker/checker/symbols.js";
-import { Checker_getBaseTypeOfLiteralType, Checker_getElementTypeOfArrayType, Checker_getPropertiesOfObjectType, Checker_iteratePropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType, Checker_isReadonlyArrayType } from "../internal/checker/checker/types.js";
+import { Checker_getBaseTypeOfLiteralType, Checker_getElementTypeOfArrayType, Checker_getPropertiesOfObjectType, Checker_iteratePropertiesOfUnionOrIntersectionType, Checker_getReducedApparentType, Checker_GetNonNullableType } from "../internal/checker/checker/types.js";
 import { Checker_isOptionalParameter } from "../internal/checker/utilities.js";
 import { Checker_getSignatureFromDeclaration } from "../internal/checker/checker/signatures.js";
 import {
@@ -180,7 +180,7 @@ export function readNativeArrayType(checker: Checker, type: Type): NativeArrayTy
   const element = Checker_getElementTypeOfArrayType(checker, type);
   if (element === undefined) return undefined;
   admitNativeChecker(checker, "retained");
-  return Object.freeze({ element, readonly: Checker_isReadonlyArrayType(checker, type) });
+  return Object.freeze({ element, readonly: Type_Target(type) !== checker.globalArrayType });
 }
 
 interface NativePropertyInventory<Value> {

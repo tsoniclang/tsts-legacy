@@ -282,6 +282,26 @@ test("bounded element acquisition retains the original checked write and exact i
     () => assert.fail("a foreign element cannot spend the local checker lease")).kind, "unavailable");
 });
 
+test("a mutable array stays mutable without a ReadonlyArray declaration", () => {
+  const source = checkedQueries(`
+    export function exchange(target: boolean[], word: boolean) {
+      target[0] = word;
+      return target[0];
+    }
+  `);
+  const accesses = findNodes(source.sourceFile, source.ast.children, source.ast.is.IsElementAccessExpression);
+  assert.equal(accesses.length, 2);
+  for (const node of accesses) {
+    const access = source.checker.acquireResolvedElementAccess(node, () => null);
+    assert.ok(access.kind === "complete" && access.value !== undefined);
+    const carrier = source.typeShape.acquireNativeArrayType(access.value.receiver.type, () => null);
+    assert.ok(carrier.kind === "complete");
+    assert.equal(carrier.value.readonly, false);
+    assert.equal(access.value.nativeArray?.readonly, false);
+    assert.equal(access.value.nativeArray?.element === carrier.value.element, true);
+  }
+});
+
 test("only the actual checker array index carries the native element slot", () => {
   const open = () => {
     const source = checkedQueries(`
