@@ -442,7 +442,7 @@ export function createTypeCheckerQueries(program: GoPtr<Program>, defaultOptions
         admitNativeChecker(checker, "work");
         const known = elementAccessInfos.get(node);
         if (known !== undefined) return known;
-        const selected = Checker_getResolvedSourceElementAccessInfo(checker, node);
+        const selected = Checker_getResolvedSourceElementAccessInfo(checker, node, defaultOptions.admitsCheckerDiagnostic);
         if (selected === undefined || isSyntheticDefaultMember(checker, selected.sourceSymbol)) return undefined;
         const resolved = withResolvedSourceReceiverValueEvidence(checker, selected);
         if (resolved === undefined) return undefined;
@@ -951,6 +951,7 @@ function getResolvedSourceStorageInfo(
     const selected = Checker_getResolvedSourceElementAccessInfo(
       checker,
       storageExpression,
+      undefined,
     );
     const type = sourceTypeAnswer(checker, storageExpression, selectedAccessType(selected));
     if (selected === undefined || type === undefined) {

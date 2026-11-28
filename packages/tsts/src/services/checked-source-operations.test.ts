@@ -302,6 +302,42 @@ test("a mutable array stays mutable without a ReadonlyArray declaration", () => 
   }
 });
 
+test("a denied index write retains its own original diagnostic apart from its read", () => {
+  const session = createCompilerSessionFromFiles({
+    currentDirectory: "/src",
+    rootFiles: ["/src/core.d.ts", "/src/index.ts"],
+    files: {
+      "/src/core.d.ts": testCoreDeclarations + "\ninterface ReadonlyArray<T> { readonly [index: number]: T; }",
+      "/src/index.ts": `export function update(a: readonly number[], value: number) {
+        a[0] = value;
+        a[1] += value;
+        return a[2];
+      }`,
+    },
+    compilerOptions: testNoLibCompilerOptions,
+  });
+  const checked = session.checkSource();
+  assert.equal(checked.diagnostics.length, 2);
+  const file = checked.getSourceFile("/src/index.ts");
+  assert.ok(file !== undefined);
+  const source = checked.getSourceFileQueries(file);
+  const [write, compound, read] = findNodes(file, source.ast.children, source.ast.is.IsElementAccessExpression);
+  const stop = { kind: "original acquisition cutoff" };
+  for (const [node, position] of [[write, 0], [compound, 1]] as const) {
+    const refused = source.checker.acquireResolvedElementAccess(node, () => stop);
+    assert.equal(refused.kind === "refused" && refused.stop === stop, true);
+    const selection = source.checker.acquireResolvedElementAccess(node, () => null);
+    assert.ok(selection.kind === "complete" && selection.value !== undefined);
+    assert.equal(selection.value.writable, false);
+    assert.equal(selection.value.writeFailure === checked.diagnostics[position], true);
+    assert.equal(selection.value.sourceWriteType !== undefined, true);
+    assert.equal(selection.value.sourceReadType !== undefined, position === 1);
+  }
+  const selection = source.checker.acquireResolvedElementAccess(read, () => null);
+  assert.ok(selection.kind === "complete" && selection.value !== undefined);
+  assert.equal(selection.value.writeFailure, undefined);
+});
+
 test("only the actual checker array index carries the native element slot", () => {
   const open = () => {
     const source = checkedQueries(`
